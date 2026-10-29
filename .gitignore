@@ -1,0 +1,37 @@
+# Operating system
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Dependencies and generated output
+node_modules/
+dist/
+out/
+build/
+release/
+coverage/
+.cache/
+*.tsbuildinfo
+test-results/
+playwright-report/
+
+# Local settings and credentials; retain safe examples
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.local.json
+
+# Local runtime data and spike evidence; commit sanitized reports separately
+.agenthub-local/
+spikes/**/local/
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.log
+
+# Editor temporary files
+*.swp
+*.swo
+*~
