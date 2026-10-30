@@ -1065,13 +1065,15 @@ Các link sau là **tài liệu bên ngoài** đã được sử dụng để x�
 - Claude Code — Desktop application: <https://code.claude.com/docs/en/desktop>
 - Claude Code — Environment variables (`CLAUDE_CONFIG_DIR`): <https://code.claude.com/docs/en/env-vars>
 - Claude Code — Legal and compliance: <https://code.claude.com/docs/en/legal-and-compliance>
+- Claude Code — Authentication (multiple accounts, credential storage): <https://code.claude.com/docs/en/authentication>
 - Claude Code — Memory/Project instructions: <https://code.claude.com/docs/en/memory>
 
 ### OpenAI / Codex
 
 - Codex CLI / Developer commands: <https://developers.openai.com/codex/cli/reference>
 - Codex CLI overview: <https://developers.openai.com/codex/cli>
-- Codex — `AGENTS.md`: <https://developers.openai.com/codex/guides/agents-md>
+- Codex — `AGENTS.md`: <https://learn.chatgpt.com/docs/agent-configuration/agents-md> (URL cũ developers.openai.com/codex/guides/agents-md chuyển hướng 308, kiểm tra 2026-10-30)
+- Codex — Authentication: <https://learn.chatgpt.com/docs/auth>
 - Codex App Server (reference for potential future expansion, **not MVP requirement**): <https://developers.openai.com/codex/app-server>
 
 ### General
