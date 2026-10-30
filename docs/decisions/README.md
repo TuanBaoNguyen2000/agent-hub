@@ -11,7 +11,7 @@ Giữ mã ADR ổn định; phân biệt quyết định đã chốt với lựa
 | ADR-003 | Không xây lại chat UI | Accepted | TDD §15 |
 | ADR-004 | SQLite + Markdown local-first | Accepted | TDD §15 |
 | ADR-005 | Rules-based Smart Switch | Accepted | TDD §15 |
-| ADR-006 | Manual fallback cho Desktop account switching | Accepted for MVP; sửa đổi bởi ADR-013 cho Claude Desktop | TDD §15 |
+| ADR-006 | Manual fallback cho Desktop account switching | Accepted for MVP; sửa đổi bởi ADR-013 (Claude Desktop) và ADR-014 (Codex Desktop) | TDD §15 |
 | ADR-007 | Không direct inference API/SDK trong MVP | Accepted | TDD §15 |
 | ADR-008 | Git read-only observation trước | Accepted | TDD §15 |
 | ADR-009 | External/embedded terminal | Open | TDD §15 |
@@ -19,6 +19,7 @@ Giữ mã ADR ổn định; phân biệt quyết định đã chốt với lựa
 | ADR-011 | Context export policy | Open | TDD §15 |
 | ADR-012 | Tách package ngay từ đầu | Accepted | [012-initial-package-boundaries.md](012-initial-package-boundaries.md) |
 | ADR-013 | Instance Claude Desktop riêng cho mỗi account phụ | Accepted for MVP (opt-in, conditional) | [013-claude-desktop-account-instances.md](013-claude-desktop-account-instances.md) |
+| ADR-014 | Nhiều profile Codex qua `CODEX_HOME`, CLI và Desktop | Accepted for MVP (opt-in, conditional) | [014-codex-profiles.md](014-codex-profiles.md) |
 
 Các lựa chọn tooling chưa chốt không được suy ra từ ADR-001. Kết quả capability cần evidence trong [feasibility.md](../feasibility.md), kể cả khi quyết định kiến trúc đã Accepted.
 

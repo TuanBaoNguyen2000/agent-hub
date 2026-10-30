@@ -1,7 +1,7 @@
 # AgentHub — Technical Design Document (TDD)
 
 > **Project:** AgentHub — Cross-platform AI Agent Workspace & Context Manager  
-> **Version:** 0.1.2 (ADR-013 Claude Desktop account instances; pre-implementation)  
+> **Version:** 0.1.3 (ADR-013 Claude Desktop account instances, ADR-014 Codex profiles; pre-implementation)  
 > **Updated:** 2026-10-30  
 > **Status:** Draft for implementation review  
 > **Platforms:** macOS and Windows  
@@ -42,7 +42,7 @@ AgentHub là desktop application chạy trên **macOS và Windows** để quản
 | Storage | SQLite cho metadata; Markdown/YAML cho context artifacts |
 | First integrations | Official Claude Code CLI, Codex CLI, native Desktop launcher |
 | Context | Project + Task + Checkpoint + Handoff; độc lập account/provider |
-| Account handling | Chọn CLI profile; Claude Desktop có thể mở instance riêng cho mỗi account phụ (opt-in, `conditional`, ADR-013); account trên Desktop do người dùng xác nhận |
+| Account handling | Chọn CLI profile; Claude Desktop (ADR-013) và Codex Desktop (ADR-014) có thể mở instance riêng cho mỗi account phụ (opt-in, `conditional`); account trên Desktop và account Codex do người dùng xác nhận |
 | Smart Switch | Rules-based, human-in-the-loop; không dùng model API |
 | Unity/Git | Awareness + safe observation trước; MCP/write automation sau |
 | MVP boundary | Không gọi trực tiếp Claude/OpenAI model APIs; không clone chat history |
@@ -96,7 +96,7 @@ AgentHub là desktop application chạy trên **macOS và Windows** để quản
 ### 1.4. Non-goals (MVP)
 
 - Tạo chat client tương đương Claude/Codex Desktop; hiển thị native transcript trong AgentHub.
-- OAuth impersonation, tự chuyển account trong Desktop app bằng private endpoints, đọc local DB/Keychain của app khác. (Instance riêng theo ADR-013 không thuộc nhóm này: chỉ khởi chạy app chính thức và để app tự đăng nhập.)
+- OAuth impersonation, tự chuyển account trong Desktop app bằng private endpoints, đọc local DB/Keychain của app khác. (Instance riêng theo ADR-013 và ADR-014 không thuộc nhóm này: chỉ khởi chạy app chính thức và để app hoặc CLI chính thức tự đăng nhập.)
 - Tự động đảo account để vượt quota/rate limits, tự động mua/bán hoặc trung gian thanh toán model usage.
 - Gọi trực tiếp Anthropic/OpenAI inference APIs; dùng Claude Agent SDK/Codex App Server để xây chat UI.
 - Agent tự ra quyết định thay người dùng về task/branch/security/approval.
@@ -124,7 +124,7 @@ AgentHub là desktop application chạy trên **macOS và Windows** để quản
 |---|---|---|
 | FR-001 | Add/edit/remove Project | Chọn thư mục, lưu path, validate tồn tại |
 | FR-002 | Add/edit Task per Project | Objective, acceptance criteria, trạng thái, notes |
-| FR-003 | Manage provider/account aliases | 2 Claude + 1 Codex profile, không lưu bí mật |
+| FR-003 | Manage provider/account aliases | 2 Claude + 1 Codex profile, thêm profile Codex là tùy chọn (ADR-014); không lưu bí mật |
 | FR-004 | Choose Desktop/CLI per launch | Không ép người dùng chọn CLI thay cho Desktop |
 | FR-005 | Launch Claude Code CLI with separate config root | Mỗi profile nhận đúng `CLAUDE_CONFIG_DIR` |
 | FR-006 | Launch Codex CLI in target project | Đúng cwd/path, binary chính thức |
@@ -217,8 +217,9 @@ Khi triển khai Electron, **không** ghép shell command từ input; truyền `
 
 - Codex CLI được mở trong directory của project; instructions ổn định dùng `AGENTS.md`.
 - Theo tài liệu chính thức, `codex app PATH` mở ứng dụng/workspace trên macOS; ở Windows, hành vi có thể chỉ mở app và in đường dẫn để người dùng mở. Không coi đây là native thread handoff.
-- Account switching trong Codex Desktop không được coi là capability MVP; nếu chưa có public API, người dùng tự xác nhận/sign in trong app gốc.
-- Config isolation/CLI auth của Codex phải kiểm thử phiên bản cụ thể; **MVP chỉ cần 1 Codex profile** nên không mặc định thêm logic multi-Codex-account.
+- **Nhiều profile Codex là tùy chọn trong MVP** ([ADR-014](decisions/014-codex-profiles.md)): mỗi profile có `CODEX_HOME` riêng; profile phụ mở Codex Desktop bằng instance riêng. Mặc định vẫn là một profile `~/.codex`. (Sửa đổi 2026-10-30; bản trước chỉ yêu cầu một profile Codex.)
+- Account Codex chỉ do người dùng xác nhận qua `/status`, vì `codex login status` không báo account. Khi instance riêng không đạt, người dùng tự sign in trong app gốc (ADR-006).
+- Config isolation/CLI auth của Codex phải kiểm thử theo phiên bản cụ thể; CLI có thể tự cập nhật.
 - Không dùng internal Desktop DB, private endpoints hay credential files để suy ra session/account.
 
 ### 3.4. CLI vs Desktop parity
@@ -870,7 +871,7 @@ Một Task có thể có `worktreeId` và `workspacePath` riêng. Khi tạo/mở
 - Profile alias không đồng nghĩa xác thực: `Claude-A` chỉ là label cấu hình.
 - Chỉ CLI/desktop app chính thức thực hiện login/logout.
 - Không copy auth files hoặc session tokens giữa profiles.
-- Thư mục dữ liệu của Claude Desktop instance (ADR-013) được xem như credential store: AgentHub chỉ tạo thư mục và truyền đường dẫn; không đọc, sao chép, backup, đồng bộ hay ghi log nội dung.
+- Thư mục dữ liệu của Desktop instance (ADR-013, ADR-014) và `auth.json` trong `CODEX_HOME` được xem như credential store: AgentHub chỉ tạo thư mục và truyền đường dẫn; không đọc, sao chép, backup, đồng bộ hay ghi log nội dung.
 - Không tự động tăng cường số lượng account để vượt rate/usage restrictions.
 - Nếu phát hành cho công ty/người dùng khác, thực hiện legal/licensing review và kiểm tra IT/data-handling policy trước release.
 
@@ -1013,7 +1014,7 @@ Một Task có thể có `worktreeId` và `workspacePath` riêng. Khi tạo/mở
 | ADR-003 | No chat UI reconstruction | Accepted | Tránh nhân bản tính năng provider đã làm tốt |
 | ADR-004 | SQLite + Markdown local-first | Accepted | Bền vững, Git-friendly, không phụ thuộc cloud |
 | ADR-005 | Rules-based Smart Switch | Accepted | Predictable, no model API, auditability |
-| ADR-006 | Native Desktop account switch is manual fallback | Accepted for MVP; sửa đổi bởi ADR-013 cho Claude Desktop | Chưa có public capability chung đáng tin cậy; vẫn áp dụng cho Codex Desktop và làm fallback |
+| ADR-006 | Native Desktop account switch is manual fallback | Accepted for MVP; sửa đổi bởi ADR-013 (Claude Desktop) và ADR-014 (Codex Desktop) | Chưa có public capability chung đáng tin cậy; vẫn áp dụng cho app chính và làm fallback |
 | ADR-007 | No direct inference API/SDK in MVP | Accepted | Tránh scope/terms/auth complexity không cần thiết |
 | ADR-008 | Git read-only observation first | Accepted | Giảm nguy cơ sửa nhầm Unity project |
 | ADR-009 | CLI terminal: external vs embedded | Open | MVP external terminal; optional embedded after validation |
@@ -1021,6 +1022,7 @@ Một Task có thể có `worktreeId` và `workspacePath` riêng. Khi tạo/mở
 | ADR-011 | Context export policy | Open | Opt-in per task/project; không tự commit credentials |
 | [ADR-012](decisions/012-initial-package-boundaries.md) | Monorepo package boundaries from the start | Accepted | Tách domain, application, contracts và hạ tầng ngay trong cấu trúc ban đầu |
 | [ADR-013](decisions/013-claude-desktop-account-instances.md) | Claude Desktop account instances | Accepted for MVP (opt-in, conditional) | SPIKE-07: instance với thư mục dữ liệu riêng và `CLAUDE_CONFIG_DIR` giữ account khác; không tài liệu hoá, có manual fallback |
+| [ADR-014](decisions/014-codex-profiles.md) | Codex profiles (CLI and Desktop) | Accepted for MVP (opt-in, conditional) | SPIKE-08: `CODEX_HOME` riêng tách account cho CLI và cho instance ChatGPT.app riêng; không tài liệu hoá, có manual fallback |
 
 Các ADR-001–ADR-011 hiện được ghi trong bảng này. [ADR index](decisions/README.md) dẫn đến nguồn của từng quyết định; chưa tạo bản sao riêng cho các ADR cũ.
 
@@ -1047,7 +1049,7 @@ Các ADR-001–ADR-011 hiện được ghi trong bảng này. [ADR index](decisi
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| Native Desktop account switching không có API | High | Claude Desktop: account instance (ADR-013), kiểm tra theo version; confirm account manually; CLI profile switching |
+| Native Desktop account switching không có API | High | Account instance cho Claude Desktop (ADR-013) và Codex Desktop (ADR-014), kiểm tra theo version; confirm account manually; CLI profile switching |
 | Desktop cập nhật làm hỏng account instance | Medium | Capability gating theo version; manual fallback ADR-006 |
 | Claude integration/policy thay đổi | High | Official binaries, capability gating, periodic review |
 | User hết quota trước checkpoint | High | Periodic user checkpoints; partial handoff từ Git/metadata |
@@ -1111,4 +1113,4 @@ account switching tự động. Báo lại những giả định cần xác minh
 
 ---
 
-**End of TDD v0.1.2.** Revision này thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07 trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.
+**End of TDD v0.1.3.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3. Cả hai chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.

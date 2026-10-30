@@ -1,13 +1,14 @@
 # Project status
 
 **Updated:** 2026-10-30  
-**Stage:** Phase 0 in progress — macOS: SPIKE-01–07 xong; còn toàn bộ Windows  
+**Stage:** Phase 0 in progress — macOS: SPIKE-01–08 xong; còn toàn bộ Windows  
 **Application:** Chưa có implementation hoặc build có thể chạy
 
 ## Đã hoàn thành
 
-- Đưa TDD vào `docs/TDD.md` làm bản chính, hiện là revision 0.1.2.
-- Ghi [ADR-013](decisions/013-claude-desktop-account-instances.md) (2026-10-30): người dùng chọn đưa account instance của Claude Desktop vào MVP, ở dạng opt-in, `conditional`, có manual fallback; ADR-006 vẫn áp dụng cho Codex Desktop.
+- Đưa TDD vào `docs/TDD.md` làm bản chính, hiện là revision 0.1.3.
+- Ghi [ADR-013](decisions/013-claude-desktop-account-instances.md) (2026-10-30): người dùng chọn đưa account instance của Claude Desktop vào MVP, ở dạng opt-in, `conditional`, có manual fallback.
+- Ghi [ADR-014](decisions/014-codex-profiles.md) (2026-10-30): người dùng chọn đưa nhiều profile Codex qua `CODEX_HOME` vào MVP, cho cả CLI và instance ChatGPT.app riêng, cùng mô hình opt-in, `conditional`; TDD §3.3 được sửa theo.
 - Ghi nhận hướng C — Hybrid, Desktop/CLI ngang hàng, macOS/Windows.
 - Tạo bộ tài liệu ban đầu, Codex/Claude entrypoints và `.gitignore`.
 - Tạo cấu trúc app, sáu package, scripts và spikes; các thư mục nguồn trống được giữ bằng `.gitkeep`.
@@ -56,7 +57,7 @@
 
 ## Kiểm chứng
 
-- Đã kiểm tra 126 local links/anchors trong 38 tài liệu Markdown (2026-10-30): không có đích thiếu. Mọi file đang theo dõi dùng LF.
+- Đã kiểm tra 134 local links/anchors trong 39 tài liệu Markdown (2026-10-30): không có đích thiếu. Mọi file đang theo dõi dùng LF.
 - `setup-fixtures.sh` đã chạy thử: tạo đúng ba variant, từ chối thư mục cha có instruction files và thư mục không phải fixture.
 - Các kiểm tra này chỉ xác nhận tài liệu/harness; không phải build, kiểm thử sản phẩm hoặc evidence tích hợp provider.
 
@@ -77,15 +78,14 @@
 - ADR-010: minimum Windows version; Windows 11 x64 là test target ban đầu của TDD.
 - ADR-011: chi tiết context export policy. SPIKE-06 gợi ý ghi `AGENTS.md` và để `CLAUDE.md` import, giới hạn theo 32 KiB của Codex.
 - TDD §16: đang giả định Code tab (câu 1) và personal use (câu 3); cần người dùng xác nhận.
-- Codex multi-account: SPIKE-08 đạt trên macOS cho cả CLI và Desktop. Chờ người dùng quyết định có ghi ADR mới để đưa vào MVP không; TDD §3.3 hiện chỉ yêu cầu một profile Codex và ADR-006 vẫn áp dụng cho Codex Desktop.
-- Đổi account nhanh trên Desktop (mục tiêu chính của người dùng): đã chốt cho Claude Desktop trên macOS bằng ADR-013; còn mở cho Windows (cần SPIKE-07 trên Windows) và Codex Desktop, hiện vẫn manual.
+- Đổi account nhanh trên Desktop (mục tiêu chính của người dùng): đã chốt trên macOS cho Claude Desktop (ADR-013) và Codex Desktop (ADR-014); còn mở cho Windows (cần SPIKE-07 và SPIKE-08 trên Windows).
 - Phân định Git observations tối thiểu trong MVP và Git/Unity mở rộng ở P1: TDD §7/§9/§10 yêu cầu branch/SHA để kiểm tra context, trong khi §2/§13 đặt phần Git/Unity rộng hơn ở P1.
 
 ## Bước tiếp theo
 
-1. Người dùng quyết định có đưa profile Codex (CLI và Desktop) vào MVP theo [SPIKE-08](../spikes/08-codex-profile-isolation/README.md) không. Mục đích là tách account Business (công việc) với Free (cá nhân), không phải tăng quota. Lệnh dọn dẹp profile B và thư mục dữ liệu nằm trong README của SPIKE-01 và SPIKE-07.
-2. Bổ sung bằng chứng trên Windows, gồm SPIKE-07 cho ADR-013; nếu chưa có môi trường thì giữ mục Windows `Not run`, không đánh dấu Phase 0 đã pass.
-3. Tổng hợp capability matrix và manual fallback; chốt các quyết định ảnh hưởng bootstrap.
+1. Bổ sung bằng chứng trên Windows, gồm SPIKE-07 và SPIKE-08 cho ADR-013 và ADR-014; nếu chưa có môi trường thì giữ mục Windows `Not run`, không đánh dấu Phase 0 đã pass.
+2. Tổng hợp capability matrix và manual fallback; chốt các quyết định ảnh hưởng bootstrap.
+3. Các profile và thư mục dữ liệu dùng cho spike vẫn được giữ; lệnh dọn dẹp nằm trong README của SPIKE-01, SPIKE-07 và SPIKE-08.
 
 ## Bàn giao cho phiên tiếp theo
 
