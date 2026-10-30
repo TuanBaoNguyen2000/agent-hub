@@ -1,6 +1,6 @@
 # Feasibility spikes
 
-**Status:** Chưa có harness và chưa chạy spike nào.
+**Status:** Kết quả từng spike nằm trong [feasibility.md](../docs/feasibility.md).
 
 Code thử nghiệm Phase 0 nằm ở đây, tách khỏi app/package sản phẩm. Mỗi spike có thư mục riêng, ví dụ `spikes/01-claude-profile-isolation/`; chỉ tạo khi bắt đầu thử nghiệm tương ứng.
 
