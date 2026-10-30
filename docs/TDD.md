@@ -236,6 +236,7 @@ Khi triển khai Electron, **không** ghép shell command từ input; truyền `
 | SPIKE-05 | Account mapping | Không có tuyên bố sai về account native Desktop hiện tại |
 | SPIKE-06 | Legal/policy review | Documented integration paths, phân biệt personal-only và phân phối |
 | SPIKE-07 | Claude Desktop account instance (bổ sung trong Phase 0) | Instance riêng giữ account khác song song với instance mặc định; Code tab dùng đúng account và config root |
+| SPIKE-08 | Codex profile isolation qua `CODEX_HOME` (bổ sung trong Phase 0) | Hai account tách nhau ở CLI và Desktop; đăng nhập profile mới không đổi profile cũ |
 
 **Fallback:** Nếu một launcher không xác minh được session/account, AgentHub vẫn hỗ trợ `Open app` + `Open folder` + `Copy Handoff Prompt`; không chặn toàn bộ workflow.
 

@@ -48,10 +48,15 @@
   - Mở Desktop với `--user-data-dir` riêng: account B và A chạy song song, chat tách nhau, đăng nhập được giữ sau khi mở lại, không cần terminal. Cơ chế không có trong tài liệu.
   - Code tab dùng account của instance. Config và session đi theo `CLAUDE_CONFIG_DIR`: thiếu biến này, account B nạp `CLAUDE.md` và ghi session vào `~/.claude` của account A; có biến thì tách hẳn sang profile B.
   - Đăng nhập lần đầu phải tắt Desktop chính, vì callback từ browser về Desktop chính. `claude://` và `--desktop --resume` cũng về Desktop chính khi nó đang chạy, nên cửa sổ thứ hai phải tự chọn folder.
+- **SPIKE-08 (macOS) — CLI Pass, Desktop Pass (reported):** [evidence](../spikes/08-codex-profile-isolation/evidence/2026-10-30-macos.md).
+  - `CODEX_HOME` riêng tách được account Business (A) và Free (B): login, `AGENTS.md` của profile và session đều tách; resume chéo bị từ chối; chạy song song được. Logout B không ảnh hưởng A.
+  - Đăng nhập bằng mã bị chặn với account Business cho đến khi admin bật. Browser tái sử dụng phiên chatgpt.com nên lần đầu B vào nhầm A; cửa sổ riêng tư xử lý được.
+  - `codex login status` không báo account nào, nên account Codex chỉ do người dùng xác nhận qua `/status`. CLI tự cập nhật từ 0.155.1 lên 0.166.0 trong ngày.
+  - Codex Desktop: instance thứ hai mở với `--user-data-dir` và `CODEX_HOME` của B đã đăng nhập sẵn B, không cần đăng nhập trong app; app chính vẫn là A; login giữ sau khi mở lại. `codex app` vẫn mở folder ở app chính.
 
 ## Kiểm chứng
 
-- Đã kiểm tra 117 local links/anchors trong 36 tài liệu Markdown (2026-10-30): không có đích thiếu. Mọi file đang theo dõi dùng LF.
+- Đã kiểm tra 126 local links/anchors trong 38 tài liệu Markdown (2026-10-30): không có đích thiếu. Mọi file đang theo dõi dùng LF.
 - `setup-fixtures.sh` đã chạy thử: tạo đúng ba variant, từ chối thư mục cha có instruction files và thư mục không phải fixture.
 - Các kiểm tra này chỉ xác nhận tài liệu/harness; không phải build, kiểm thử sản phẩm hoặc evidence tích hợp provider.
 
@@ -72,13 +77,13 @@
 - ADR-010: minimum Windows version; Windows 11 x64 là test target ban đầu của TDD.
 - ADR-011: chi tiết context export policy. SPIKE-06 gợi ý ghi `AGENTS.md` và để `CLAUDE.md` import, giới hạn theo 32 KiB của Codex.
 - TDD §16: đang giả định Code tab (câu 1) và personal use (câu 3); cần người dùng xác nhận.
-- Codex multi-account: thêm spike `CODEX_HOME` hay ghi `manual` trong MVP.
+- Codex multi-account: SPIKE-08 đạt trên macOS cho cả CLI và Desktop. Chờ người dùng quyết định có ghi ADR mới để đưa vào MVP không; TDD §3.3 hiện chỉ yêu cầu một profile Codex và ADR-006 vẫn áp dụng cho Codex Desktop.
 - Đổi account nhanh trên Desktop (mục tiêu chính của người dùng): đã chốt cho Claude Desktop trên macOS bằng ADR-013; còn mở cho Windows (cần SPIKE-07 trên Windows) và Codex Desktop, hiện vẫn manual.
 - Phân định Git observations tối thiểu trong MVP và Git/Unity mở rộng ở P1: TDD §7/§9/§10 yêu cầu branch/SHA để kiểm tra context, trong khi §2/§13 đặt phần Git/Unity rộng hơn ở P1.
 
 ## Bước tiếp theo
 
-1. Người dùng quyết định có làm spike `CODEX_HOME` không. Lệnh dọn dẹp profile B và thư mục dữ liệu nằm trong README của SPIKE-01 và SPIKE-07.
+1. Người dùng quyết định có đưa profile Codex (CLI và Desktop) vào MVP theo [SPIKE-08](../spikes/08-codex-profile-isolation/README.md) không. Mục đích là tách account Business (công việc) với Free (cá nhân), không phải tăng quota. Lệnh dọn dẹp profile B và thư mục dữ liệu nằm trong README của SPIKE-01 và SPIKE-07.
 2. Bổ sung bằng chứng trên Windows, gồm SPIKE-07 cho ADR-013; nếu chưa có môi trường thì giữ mục Windows `Not run`, không đánh dấu Phase 0 đã pass.
 3. Tổng hợp capability matrix và manual fallback; chốt các quyết định ảnh hưởng bootstrap.
 
