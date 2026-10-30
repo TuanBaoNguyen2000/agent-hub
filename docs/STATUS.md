@@ -1,6 +1,6 @@
 # Project status
 
-**Updated:** 2026-10-29  
+**Updated:** 2026-10-30  
 **Stage:** Repository foundation complete; Phase 0 not started  
 **Application:** Chưa có implementation hoặc build có thể chạy
 
@@ -12,10 +12,11 @@
 - Tạo cấu trúc app, sáu package, scripts và spikes; các thư mục nguồn trống được giữ bằng `.gitkeep`.
 - Ghi nhận package boundaries trong ADR-012; mỗi app/package có README mô tả trách nhiệm.
 - Chốt ngôn ngữ tài liệu: tiếng Việt, tên file và thuật ngữ kỹ thuật tiếng Anh.
+- Review cấu trúc (2026-10-30): CLAUDE.md nạp AGENTS.md qua `@AGENTS.md`; README chỉ tóm tắt cấu trúc và dẫn đến TDD §4.3; thêm `.gitattributes` cho line endings; chốt evidence đã làm sạch ở `spikes/<spike-name>/evidence/`; Git/Unity observer thuộc `platform` (ADR-012 amendment); branch prefix mặc định đổi thành `agent/`.
 
 ## Kiểm chứng repository foundation
 
-- Đã kiểm tra 69 local links/anchors trong 20 tài liệu Markdown: không có đích thiếu.
+- Đã kiểm tra 68 local links/anchors trong 20 tài liệu Markdown sau review cấu trúc 2026-10-30: không có đích thiếu. Mọi file đang theo dõi đều dùng LF, nên `.gitattributes` không làm thay đổi line endings hiện có.
 - Đã kiểm tra 13 thư mục theo cấu trúc đã chốt và tính đồng nhất hướng dẫn ở AGENTS/CLAUDE.
 - TDD chỉ còn một bản chính; chưa có package manifest hoặc dependency được cài.
 - Đã kiểm tra `.gitignore`: bỏ qua file OS, output, env secrets và spike local data; vẫn cho phép env examples, lockfiles và tài liệu/evidence đã làm sạch.
@@ -31,7 +32,7 @@
 
 ## Quyết định còn mở
 
-- Tooling: package manager, build/packaging tool, runtime và dependency versions.
+- Tooling: package manager, build/packaging tool, runtime và dependency versions. Nếu chọn electron-builder, xem lại mục `build/` trong `.gitignore`.
 - ADR-009: terminal lifecycle và external/embedded terminal.
 - ADR-010: minimum Windows version; Windows 11 x64 là test target ban đầu của TDD.
 - ADR-011: chi tiết context export policy.

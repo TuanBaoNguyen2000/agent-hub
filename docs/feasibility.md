@@ -70,13 +70,13 @@ Các bước và command/args đã làm sạch dữ liệu nhạy cảm:
 Expected:
 Observed:
 Result: Pass | Fail | Blocked | Fallback accepted
-Evidence path/link:
+Evidence path/link: spikes/<spike-name>/evidence/...
 Manual steps / limitations:
 Fallback và người xác nhận (nếu có):
 Next action:
 ```
 
-Chỉ điền command sau khi xác minh tài liệu và version thực tế. Harness nằm trong [spikes/](../spikes/README.md); output local nhạy cảm không đưa vào Git. `Supply context` phải phân biệt prompt đã chuẩn bị, người dùng đã cung cấp và agent đã đọc theo evidence có được.
+Chỉ điền command sau khi xác minh tài liệu và version thực tế. Harness nằm trong [spikes/](../spikes/README.md); evidence đã làm sạch nằm trong `spikes/<spike-name>/evidence/`, output local nhạy cảm nằm trong `local/` và không đưa vào Git. `Supply context` phải phân biệt prompt đã chuẩn bị, người dùng đã cung cấp và agent đã đọc theo evidence có được.
 
 ## Exit review
 

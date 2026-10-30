@@ -17,7 +17,7 @@ Tạo `apps/desktop` và sáu package:
 - `contracts`: IPC DTOs, events và validation schemas dùng chung cho Main/Preload/Renderer.
 - `persistence`: SQLite, migrations và artifact store.
 - `integrations`: Claude/Codex Desktop/CLI launchers và capability mapping.
-- `platform`: macOS/Windows process, app/folder và terminal adapters.
+- `platform`: macOS/Windows process, app/folder và terminal adapters; read-only Git/Unity observation adapters (bổ sung 2026-10-30).
 
 Electron Main là composition root. Các adapter triển khai port của application; integrations nhận platform port qua dependency injection. Domain và contracts không phụ thuộc các package khác. Renderer/Preload dùng contracts; quyền truy cập hệ thống được giữ ở Main.
 
@@ -31,6 +31,10 @@ Quy tắc dependency chi tiết được duy trì ở [DEVELOPMENT.md](../DEVELO
 - Không gộp logic provider với OS; không đưa domain entities hoặc quyền Node APIs sang Renderer.
 - Spike code tách trong `spikes/`; chỉ đưa vào package sản phẩm sau review và kiểm thử phù hợp.
 - Chưa bổ sung package mới hoặc tách nhỏ hơn khi chưa có nhu cầu cụ thể.
+
+## Amendment — 2026-10-30
+
+Git/Unity Observer trong TDD §4.1 chưa có package triển khai. Người dùng chọn đặt implementation trong `platform` thay vì thêm package mới, vì observer chủ yếu chạy Git CLI và đọc file của project. `application` định nghĩa observation port; `platform` triển khai adapter chỉ đọc, tuân theo ADR-008 và TDD §10.2. Phạm vi Git observation trong MVP so với P1 vẫn là câu hỏi mở trong STATUS.
 
 ## Related decisions
 

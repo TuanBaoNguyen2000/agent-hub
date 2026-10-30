@@ -18,30 +18,17 @@ Stack đã chọn: Electron + React + TypeScript; SQLite cho metadata, Markdown/
 4. [Quy tắc phát triển](docs/DEVELOPMENT.md).
 5. [Phase 0: feasibility plan và evidence](docs/feasibility.md).
 
-Codex bắt đầu từ [AGENTS.md](AGENTS.md); Claude bắt đầu từ [CLAUDE.md](CLAUDE.md). Hai entrypoint dẫn đến cùng bộ quy tắc phát triển.
+Coding agents bắt đầu từ [AGENTS.md](AGENTS.md); [CLAUDE.md](CLAUDE.md) nạp lại AGENTS.md để Codex và Claude dùng cùng một bản hướng dẫn.
 
 ## Cấu trúc repository
 
-```text
-agent-hub/
-├── README.md
-├── AGENTS.md
-├── CLAUDE.md
-├── .gitignore
-├── docs/                       # Thiết kế, kế hoạch, trạng thái và quyết định
-├── apps/desktop/               # Electron Main, Preload, React Renderer
-├── packages/
-│   ├── domain/                 # Entities, value objects, business rules
-│   ├── application/            # Use cases và ports
-│   ├── contracts/              # Hợp đồng IPC
-│   ├── persistence/            # SQLite và artifact store
-│   ├── integrations/           # Claude/Codex adapters
-│   └── platform/               # macOS/Windows adapters
-├── scripts/                    # Công cụ phát triển repository
-└── spikes/                     # Thử nghiệm khả thi, tách khỏi sản phẩm
-```
+- `docs/`: thiết kế, kế hoạch, trạng thái và quyết định.
+- `apps/desktop/`: Electron Main, Preload và React Renderer.
+- `packages/`: domain, application, contracts và các adapter hạ tầng.
+- `scripts/`: công cụ phát triển repository.
+- `spikes/`: thử nghiệm khả thi, tách khỏi sản phẩm.
 
-Ranh giới và dependency được mô tả trong [DEVELOPMENT.md](docs/DEVELOPMENT.md) và [ADR-012](docs/decisions/012-initial-package-boundaries.md).
+Cây thư mục đầy đủ ở [TDD §4.3](docs/TDD.md#43-folderrepository-structure-agreed); ranh giới và dependency ở [DEVELOPMENT.md](docs/DEVELOPMENT.md) và [ADR-012](docs/decisions/012-initial-package-boundaries.md).
 
 ## Phạm vi MVP
 

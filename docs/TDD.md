@@ -288,8 +288,9 @@ flowchart TD
 ```text
 agent-hub/
 ├── README.md
-├── AGENTS.md                     # Codex entrypoint
-├── CLAUDE.md                     # Claude entrypoint
+├── AGENTS.md                     # Shared agent entrypoint (Codex reads directly)
+├── CLAUDE.md                     # Claude entrypoint; imports AGENTS.md
+├── .gitattributes                # Line endings for macOS/Windows
 ├── .gitignore
 ├── docs/
 │   ├── README.md                 # Documentation map
@@ -312,9 +313,12 @@ agent-hub/
 │   ├── contracts/                # IPC DTOs, events, validation schemas
 │   ├── persistence/              # SQLite + file store
 │   ├── integrations/             # Launcher adapters
-│   └── platform/                 # Darwin/Win32 platform adapters
+│   └── platform/                 # Darwin/Win32 adapters, read-only Git/Unity observers
 ├── scripts/
 └── spikes/                       # Isolated feasibility experiments
+    └── <spike-name>/
+        ├── evidence/             # Sanitized evidence, committed
+        └── local/                # Raw local output, ignored
 ```
 
 Cấu trúc monorepo với các package boundaries trên đã được người dùng chốt ngày 2026-10-29; xem [ADR-012](decisions/012-initial-package-boundaries.md). Package directories được tạo ngay trong repository foundation. Workspace manifests, package manager, build tool và dependency versions sẽ được quyết định ở technical bootstrap, sau Phase 0.

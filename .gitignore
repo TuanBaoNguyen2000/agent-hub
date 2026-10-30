@@ -7,6 +7,7 @@ Desktop.ini
 node_modules/
 dist/
 out/
+# Review at bootstrap: electron-builder uses build/ for committed icons/entitlements by default
 build/
 release/
 coverage/
@@ -22,7 +23,7 @@ playwright-report/
 !.env.*.example
 *.local.json
 
-# Local runtime data and spike evidence; commit sanitized reports separately
+# Local runtime data and raw spike output; sanitized evidence goes in spikes/<spike-name>/evidence/
 .agenthub-local/
 spikes/**/local/
 *.sqlite

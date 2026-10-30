@@ -1,4 +1,6 @@
-# AgentHub — Codex entrypoint
+# AgentHub — Agent entrypoint
+
+Entrypoint chung cho coding agents: Codex đọc trực tiếp file này; Claude Code nạp file này qua `@AGENTS.md` trong [CLAUDE.md](CLAUDE.md). Chỉ sửa hướng dẫn tại đây.
 
 Trước khi thay đổi repository, đọc theo thứ tự:
 

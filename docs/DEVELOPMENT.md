@@ -7,7 +7,7 @@ Tài liệu này chứa quy tắc dùng chung cho người phát triển, Codex 
 - Dùng tiếng Việt cho prose; giữ tên file, code identifiers và thuật ngữ kỹ thuật bằng tiếng Anh.
 - Giữ đường dẫn tài liệu ổn định khi chuyển sang tiếng Anh sau này.
 - TDD mô tả yêu cầu/thiết kế; ROADMAP mô tả kế hoạch; STATUS phản ánh thực tế. Không sao chép toàn bộ nội dung giữa các file.
-- AGENTS và CLAUDE là entrypoints ngắn cùng trỏ đến tài liệu này. Không tạo hai bộ quy tắc khác nhau theo provider.
+- AGENTS là entrypoint chung trỏ đến tài liệu này; CLAUDE chỉ nạp lại AGENTS qua `@AGENTS.md`. Không tạo hai bộ quy tắc khác nhau theo provider.
 - Cập nhật STATUS khi kết thúc mốc công việc đáng kể, gặp blocker hoặc bàn giao; ghi bước tiếp theo đủ cụ thể cho phiên mới.
 
 ## Package boundaries
@@ -19,7 +19,7 @@ Tài liệu này chứa quy tắc dùng chung cho người phát triển, Codex 
 | `packages/contracts` | IPC DTOs, events, transport validation schemas | Không có |
 | `packages/persistence` | SQLite, migrations, filesystem artifact store | application, domain |
 | `packages/integrations` | Claude/Codex launchers và capability mapping | application, domain |
-| `packages/platform` | macOS/Windows process, app/folder và terminal adapters | application, domain |
+| `packages/platform` | macOS/Windows process, app/folder, terminal và read-only Git/Unity observation adapters | application, domain |
 | `apps/desktop/src/main` | Electron lifecycle, IPC handlers, mapping DTOs và composition root | Các package cần để kết nối implementation |
 | `apps/desktop/src/preload` | API contextBridge giới hạn, typed theo contracts | contracts |
 | `apps/desktop/src/renderer` | React UI, state và tương tác qua Preload API | contracts |
@@ -53,14 +53,14 @@ Renderer không gọi Node APIs, SQLite, filesystem hoặc process. Preload khô
 - Truyền executable/args/cwd/env riêng, không nối user input thành shell command.
 - Profile env chỉ áp dụng cho child process; provider tự quản lý đăng nhập và credential stores.
 - Runtime database/artifacts/logs nằm ngoài source repo theo TDD §6. Dữ liệu kiểm thử local tạm thời của spike đặt trong `spikes/<spike-name>/local/`, đã được ignore.
-- Evidence được commit phải được làm sạch credentials, account identifiers và nội dung project nhạy cảm; không commit raw authentication files hoặc transcript.
+- Evidence được commit đặt trong `spikes/<spike-name>/evidence/` và phải được làm sạch credentials, account identifiers và nội dung project nhạy cảm; không commit raw authentication files hoặc transcript.
 - Ghi file có revision/conflict handling và atomic replacement; dùng transaction/migration khi triển khai persistence.
 - Không ghi đè instruction files hoặc context exports của project bên ngoài mà chưa review theo policy của TDD.
 
 ## Git workflow
 
 - Giữ nguyên thay đổi của người dùng; không reset hoặc clean working tree để chuẩn bị công việc.
-- Khi cần tạo branch, mặc định dùng prefix `codex/`; không cần tạo branch chỉ để viết tài liệu nếu chưa có yêu cầu.
+- Khi cần tạo branch, mặc định dùng prefix `agent/`; không cần tạo branch chỉ để viết tài liệu nếu chưa có yêu cầu.
 - Không tự commit, push, merge hoặc tạo release trong bước foundation. Khi được yêu cầu ở các bước sau, kiểm tra diff và chỉ đưa file đúng phạm vi vào commit.
 - Khi tooling được chọn, commit workspace manifests và lockfile tương ứng; không ignore lockfiles.
 

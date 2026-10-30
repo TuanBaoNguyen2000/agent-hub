@@ -21,7 +21,7 @@ Tài liệu hiện viết bằng tiếng Việt, giữ tên file và thuật ng�
 | Các milestone và điều kiện chuyển phase | ROADMAP.md, tham chiếu TDD §13 |
 | Tiến độ thực tế, blocker và bàn giao hiện tại | STATUS.md |
 | Quy tắc phát triển và package dependencies | DEVELOPMENT.md |
-| Capability đã kiểm thử theo OS/provider/version | feasibility.md cùng evidence được dẫn từ đó |
+| Capability đã kiểm thử theo OS/provider/version | feasibility.md; evidence trong `spikes/<spike-name>/evidence/` |
 | Hướng dẫn cục bộ của app/package | README trong thư mục tương ứng |
 
 TDD là thiết kế dự kiến, không phải báo cáo tính năng đã chạy. STATUS là bản bàn giao hiện tại, không phải nhật ký toàn bộ các phiên. ROADMAP không chứa lịch hoặc cam kết thời gian khi chưa có ước lượng.
