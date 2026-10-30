@@ -6,7 +6,8 @@
 
 ## Đã hoàn thành
 
-- Đưa TDD vào `docs/TDD.md` làm bản chính, revision 0.1.1.
+- Đưa TDD vào `docs/TDD.md` làm bản chính, hiện là revision 0.1.2.
+- Ghi [ADR-013](decisions/013-claude-desktop-account-instances.md) (2026-10-30): người dùng chọn đưa account instance của Claude Desktop vào MVP, ở dạng opt-in, `conditional`, có manual fallback; ADR-006 vẫn áp dụng cho Codex Desktop.
 - Ghi nhận hướng C — Hybrid, Desktop/CLI ngang hàng, macOS/Windows.
 - Tạo bộ tài liệu ban đầu, Codex/Claude entrypoints và `.gitignore`.
 - Tạo cấu trúc app, sáu package, scripts và spikes; các thư mục nguồn trống được giữ bằng `.gitkeep`.
@@ -50,7 +51,7 @@
 
 ## Kiểm chứng
 
-- Đã kiểm tra 111 local links/anchors trong 35 tài liệu Markdown (2026-10-30): không có đích thiếu. Mọi file đang theo dõi dùng LF.
+- Đã kiểm tra 117 local links/anchors trong 36 tài liệu Markdown (2026-10-30): không có đích thiếu. Mọi file đang theo dõi dùng LF.
 - `setup-fixtures.sh` đã chạy thử: tạo đúng ba variant, từ chối thư mục cha có instruction files và thư mục không phải fixture.
 - Các kiểm tra này chỉ xác nhận tài liệu/harness; không phải build, kiểm thử sản phẩm hoặc evidence tích hợp provider.
 
@@ -72,13 +73,13 @@
 - ADR-011: chi tiết context export policy. SPIKE-06 gợi ý ghi `AGENTS.md` và để `CLAUDE.md` import, giới hạn theo 32 KiB của Codex.
 - TDD §16: đang giả định Code tab (câu 1) và personal use (câu 3); cần người dùng xác nhận.
 - Codex multi-account: thêm spike `CODEX_HOME` hay ghi `manual` trong MVP.
-- Đổi account nhanh trên Desktop là mục tiêu chính của người dùng, nhưng hiện là manual trên cả hai app; SPIKE-05 xác nhận profile CLI không giúp được việc này. [SPIKE-07](../spikes/07-desktop-account-switch/README.md) cho thấy thư mục dữ liệu riêng cộng `CLAUDE_CONFIG_DIR` đổi được account cho cả Chat lẫn Code tab. Cơ chế không có trong tài liệu; văn bản điều khoản đã đọc không cấm rõ, cũng không cho phép rõ. Chờ người dùng quyết định có cập nhật ADR-006 để đưa vào MVP không.
+- Đổi account nhanh trên Desktop (mục tiêu chính của người dùng): đã chốt cho Claude Desktop trên macOS bằng ADR-013; còn mở cho Windows (cần SPIKE-07 trên Windows) và Codex Desktop, hiện vẫn manual.
 - Phân định Git observations tối thiểu trong MVP và Git/Unity mở rộng ở P1: TDD §7/§9/§10 yêu cầu branch/SHA để kiểm tra context, trong khi §2/§13 đặt phần Git/Unity rộng hơn ở P1.
 
 ## Bước tiếp theo
 
-1. Người dùng quyết định cập nhật ADR-006 theo SPIKE-07 và có làm spike `CODEX_HOME` không. Lệnh dọn dẹp profile B và thư mục dữ liệu nằm trong README của SPIKE-01 và SPIKE-07.
-2. Bổ sung bằng chứng trên Windows; nếu chưa có môi trường thì giữ mục Windows `Not run`, không đánh dấu Phase 0 đã pass.
+1. Người dùng quyết định có làm spike `CODEX_HOME` không. Lệnh dọn dẹp profile B và thư mục dữ liệu nằm trong README của SPIKE-01 và SPIKE-07.
+2. Bổ sung bằng chứng trên Windows, gồm SPIKE-07 cho ADR-013; nếu chưa có môi trường thì giữ mục Windows `Not run`, không đánh dấu Phase 0 đã pass.
 3. Tổng hợp capability matrix và manual fallback; chốt các quyết định ảnh hưởng bootstrap.
 
 ## Bàn giao cho phiên tiếp theo
