@@ -1,6 +1,6 @@
 # SPIKE-04 — Project instructions recognition
 
-**Status:** macOS — Claude CLI, Codex CLI và Claude Desktop Pass; Codex Desktop chờ SPIKE-03.
+**Status:** macOS — Claude CLI, Codex CLI Pass; Claude Desktop và Codex Desktop Pass (reported). Windows chưa chạy.
 
 ## Objective
 
@@ -44,3 +44,4 @@ Output thô ghi vào `local/<timestamp>/` (ignored). Sau khi review, chuyển b�
 
 - [2026-10-30 — macOS CLI run](evidence/2026-10-30-macos-cli.md)
 - [2026-10-30 — macOS Claude Desktop (manual)](evidence/2026-10-30-macos-claude-desktop.md)
+- [2026-10-30 — Codex Desktop, trong evidence SPIKE-03](../03-codex-desktop-launcher/evidence/2026-10-30-macos.md)

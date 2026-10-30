@@ -25,6 +25,8 @@ Next action: Codex Desktop kiểm tra sau SPIKE-03
 | 2 | Code tab | `b-both-no-import` | `SPIKE04-B-CLAUDE` | Khớp |
 | 3 | Chat | Không có | `NONE` | Khớp |
 
+Claude Desktop tự cập nhật lên 4.4212.0 trong cùng ngày (ghi nhận lúc chạy SPIKE-02), sau lần kiểm tra này. Kết quả ở trên gắn với 4.29.0; chưa chạy lại trên 4.4212.0.
+
 ## Kết luận
 
 - Code tab của Claude Desktop nạp project instructions giống Claude CLI: chỉ `CLAUDE.md` khi có cả hai file, và `@AGENTS.md` import hoạt động.

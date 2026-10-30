@@ -50,10 +50,13 @@ Hai link Codex trong TDD §18 đã chuyển hướng (HTTP 308) sang `learn.chat
 ### Claude Desktop
 
 - Desktop (Code tab) không đọc `ANTHROPIC_API_KEY`, `apiKeyHelper` hay Anthropic profiles; dùng OAuth của app.
-- Không tìm thấy deep link, URL scheme hoặc lệnh CLI được tài liệu hoá để mở một folder/session trong Desktop. Folder được chọn trong app.
-- Desktop không thấy session do terminal CLI tạo.
+- **Đính chính (2026-10-30, khi chuẩn bị SPIKE-02):** bản review đầu chỉ đọc nửa đầu trang Desktop và ghi sai là không có cơ chế mở folder/session. Phần "Coming from the CLI?" có tài liệu hoá:
+  - `claude --desktop` (CLI ≥ 2.1.285) mở Desktop trên thư mục hiện tại; thêm `--continue` hoặc `--resume <session-id>` để mở session CLI trong Desktop.
+  - `/desktop` trong CLI chuyển session sang Desktop rồi thoát CLI; cần đăng nhập Claude subscription, macOS hoặc Windows x64.
+  - Deep link `claude://code/new` mở trang new session; `q` điền sẵn prompt và không tự gửi; các tham số `ssh_*` chỉ dành cho SSH, không có tham số folder local.
+- Desktop và CLI dùng chung settings và `CLAUDE.md`; mỗi bên giữ danh sách session riêng, nhưng session chuyển qua `--desktop --resume` là cùng một session. Code tab chạy bản Claude Code riêng với version riêng.
 - Không có hướng dẫn về nhiều account trong Desktop.
-- **Hệ quả:** củng cố ADR-006. SPIKE-02 nhiều khả năng chỉ tự động được bước mở app; chọn workspace/account là bước manual cho đến khi có bằng chứng khác.
+- **Hệ quả:** ADR-006 vẫn đúng cho chọn account. Mở workspace và chuyển session CLI sang Desktop có cơ chế chính thức; SPIKE-02 kiểm chứng thực tế.
 
 ### Project instructions
 
