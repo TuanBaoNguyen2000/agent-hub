@@ -1,8 +1,8 @@
 # Phase 0 — Feasibility plan and evidence
 
 **Updated:** 2026-10-30  
-**Phase status:** In progress — macOS: inventory, SPIKE-02, 03, 04, 06 xong; còn SPIKE-01, 05 và toàn bộ Windows  
-**Evidence:** Chưa xác minh capability trên máy thật
+**Phase status:** In progress — macOS: inventory và SPIKE-01–06 xong; còn toàn bộ Windows  
+**Evidence:** macOS có evidence, phần Desktop là `reported`; Windows chưa có
 
 Tài liệu này triển khai kế hoạch ở [TDD §3.5](TDD.md#35-feasibility-gates-cần-làm-trước-ui-lớn) và §13. Các mô tả tích hợp trong TDD là giả thuyết cần kiểm chứng theo exact version; bảng dưới không khẳng định compatibility hiện tại.
 
@@ -24,8 +24,8 @@ Tài liệu này triển khai kế hoạch ở [TDD §3.5](TDD.md#35-feasibility
 | Codex CLI version / executable | codex-cli 0.155.1; npm global trong nvm: `~/.nvm/versions/node/v24.21.0/bin/codex` | Chưa kiểm kê |
 | Codex Desktop version | Không có `Codex.app`; `/Applications/ChatGPT.app` 26.1023.51421 (`com.openai.codex`), `codex app` mở app này (SPIKE-03) | Chưa kiểm kê |
 | Terminal / shell | Terminal.app; zsh 5.9 (`/bin/zsh`) | Chưa kiểm kê |
-| Auth mode / profile alias | Chưa xác minh; `CLAUDE_CONFIG_DIR` và `CODEX_HOME` chưa đặt (config mặc định) | Chưa xác minh |
-| Test fixture project | Chưa tạo | Chưa tạo |
+| Auth mode / profile alias | Claude: alias A (`~/.claude`, gói Pro), alias B (`~/.agenthub-spike/claude-b`, gói Team), đều đăng nhập claude.ai; Desktop dùng alias A; Codex đăng nhập ChatGPT, `CODEX_HOME` chưa đặt | Chưa xác minh |
+| Test fixture project | `$TMPDIR/agenthub-spike04` từ `setup-fixtures.sh` của SPIKE-04 | Chưa tạo |
 
 Chỉ ghi alias và loại auth cần cho thử nghiệm; không ghi email, tokens, credential file contents hoặc account secrets. Dùng fixture project không chứa source code công ty khi có thể.
 
@@ -33,18 +33,18 @@ Chỉ ghi alias và loại auth cần cho thử nghiệm; không ghi email, toke
 
 Quan sát cần kiểm chứng tiếp:
 
-- **Executable resolution:** hai CLI nằm trong thư mục nvm, chỉ có trên PATH khi shell nạp nvm. App GUI mở từ Finder/Dock thường không kế thừa PATH đó. SPIKE-01/02 và platform adapter cần kiểm tra cách resolve executable khi AgentHub không chạy từ terminal.
+- **Executable resolution:** hai CLI nằm trong thư mục nvm, chỉ có trên PATH khi shell nạp nvm. Mô phỏng môi trường GUI ở [SPIKE-01](../spikes/01-claude-profile-isolation/evidence/2026-10-30-macos.md): cả hai không tìm thấy; `zsh -ilc` tìm được; đường dẫn tuyệt đối chạy được với Claude, còn Codex cần thêm `node` vào PATH. Chưa kiểm tra từ app Electron đóng gói.
 - **Codex Desktop identity:** đã xác nhận ở SPIKE-03: `codex app` mở `/Applications/ChatGPT.app`.
 
 ## Spike matrix
 
 | ID | Mục tiêu | macOS | Windows | Điều kiện đạt / evidence cần có |
 |---|---|---|---|---|
-| SPIKE-01 | Hai Claude CLI profile độc lập | Not run | Not run | Hai config roots, auth riêng, chạy song song và không lẫn session/context; không copy credential stores |
+| SPIKE-01 | Hai Claude CLI profile độc lập | Pass — [evidence](../spikes/01-claude-profile-isolation/evidence/2026-10-30-macos.md) | Not run | Hai config roots, auth riêng, chạy song song và không lẫn session/context; không copy credential stores |
 | SPIKE-02 | Claude Desktop launcher | Pass (reported); chọn account manual — [evidence](../spikes/02-claude-desktop-launcher/evidence/2026-10-30-macos.md) | Not run | Ghi nhận open app/workspace và điều kiện desktop/resume riêng; unsupported path có fallback |
 | SPIKE-03 | Codex Desktop launcher | Pass (reported); chọn account manual, resume chưa kiểm tra — [evidence](../spikes/03-codex-desktop-launcher/evidence/2026-10-30-macos.md) | Not run | Xác minh riêng open app và open workspace theo OS/version; không suy ra thread resumed |
 | SPIKE-04 | Project instructions recognition | Pass cho Claude CLI, Codex CLI; Claude Desktop (Code tab + Chat) và Codex Desktop Pass (reported) — [CLI](../spikes/04-project-instructions/evidence/2026-10-30-macos-cli.md), [Desktop](../spikes/04-project-instructions/evidence/2026-10-30-macos-claude-desktop.md) | Not run | Fixture cho thấy coding mode đọc đúng CLAUDE.md/AGENTS.md từ project root; phân biệt Chat với Code |
-| SPIKE-05 | Account mapping/status | Not run | Not run | Alias CLI và xác nhận account thủ công được phân biệt; Desktop unknown không bị báo là switched |
+| SPIKE-05 | Account mapping/status | Pass (reported); Codex Desktop chưa kiểm tra — [evidence](../spikes/05-account-mapping/evidence/2026-10-30-macos.md) | Not run | Alias CLI và xác nhận account thủ công được phân biệt; Desktop unknown không bị báo là switched |
 | SPIKE-06 | Integration terms/distribution review | Pass — personal scope, giả định ([evidence](../spikes/06-integration-terms-review/evidence/2026-10-30-docs-review.md)) | Pass — cùng evidence, tài liệu không phụ thuộc OS | Ghi official references, ngày review và phạm vi personal/distributed; ghi các điều kiện cần xử lý |
 
 SPIKE-06 có thể dùng cùng evidence cho hai OS nếu phạm vi tài liệu áp dụng chung được ghi rõ. Kết quả SPIKE-06 hiện dựa trên giả định personal use; phạm vi distributed cần review lại terms đầy đủ. Review này cũng cho thấy Codex không có cơ chế multi-account được tài liệu hoá; tách profile Codex CLI qua `CODEX_HOME` cần một spike bổ sung trước khi đưa vào launcher. Kết quả profile/account chỉ xác minh qua workflow chính thức và xác nhận người dùng, không đọc private databases hoặc credential stores.
@@ -53,9 +53,9 @@ SPIKE-06 có thể dùng cùng evidence cho hai OS nếu phạm vi tài liệu �
 
 | Target | OS | Version | Open app/CLI | Open workspace/cwd | Select account | Resume session | Supply context |
 |---|---|---|---|---|---|---|---|
-| Claude CLI | macOS | 2.1.314 | Not run | Not run | Not run | Not run | supported — đọc `AGENTS.md` khi không có `CLAUDE.md`; `CLAUDE.md` import `@AGENTS.md` nạp cả hai (SPIKE-04) |
+| Claude CLI | macOS | 2.1.314 | conditional — cần resolve executable; mới kiểm tra `-p` | supported — cwd của child process | supported — `CLAUDE_CONFIG_DIR` riêng, người dùng tự đăng nhập; xác minh qua `claude auth status` | Not run — resume chéo profile bị từ chối đúng kỳ vọng | supported — đọc `AGENTS.md` khi không có `CLAUDE.md`; `CLAUDE.md` import `@AGENTS.md` nạp cả hai (SPIKE-04) |
 | Claude CLI | Windows | Chưa ghi nhận | Not run | Not run | Not run | Not run | Not run |
-| Claude Desktop | macOS | 4.4212.0 (Supply context đo trên 4.29.0) | supported — `open -b` | conditional — `claude --desktop`; cần CLI ≥ 2.1.285, subscription, stdout là terminal | manual — logout/login trong app | conditional — chỉ session CLI sang Desktop qua `--resume` | conditional — Code tab nạp `CLAUDE.md`/`@AGENTS.md` của folder đã chọn; Chat không nạp; `claude://code/new?q=` điền sẵn prompt, người dùng tự gửi (reported) |
+| Claude Desktop | macOS | 4.4212.0 (Supply context đo trên 4.29.0) | supported — `open -b` | conditional — `claude --desktop`; cần CLI ≥ 2.1.285, subscription, stdout là terminal | manual — logout/login trong app; mở từ profile CLI không đổi account (SPIKE-05) | conditional — session CLI của profile mặc định sang Desktop qua `--resume`; session của profile khác báo lỗi dù exit 0 (SPIKE-05) | conditional — Code tab nạp `CLAUDE.md`/`@AGENTS.md` của folder đã chọn; Chat không nạp; `claude://code/new?q=` điền sẵn prompt, người dùng tự gửi (reported) |
 | Claude Desktop | Windows | Chưa ghi nhận | Not run | Not run | Not run | Not run | Not run |
 | Codex CLI | macOS | 0.155.1 | Not run | Not run | Not run | Not run | supported — đọc `AGENTS.md` từ project root, bỏ qua `CLAUDE.md` (SPIKE-04) |
 | Codex CLI | Windows | Chưa ghi nhận | Not run | Not run | Not run | Not run | Not run |
@@ -63,6 +63,8 @@ SPIKE-06 có thể dùng cùng evidence cho hai OS nếu phạm vi tài liệu �
 | Codex Desktop | Windows | Chưa ghi nhận | Not run | Not run | Not run | Not run | Not run |
 
 Sau kiểm thử, ghi mức `supported`, `conditional`, `manual` hoặc `unsupported` cho từng capability, kèm evidence và điều kiện. Không chuyển toàn bộ một hàng sang supported khi chỉ xác minh được open app.
+
+**Nhận diện account (SPIKE-05, macOS):** chỉ Claude CLI báo được danh tính account theo profile. Codex CLI chỉ báo phương thức đăng nhập. Account trên Desktop do người dùng xác nhận, nếu chưa xác nhận thì là `unverified`. Exit 0 của `claude --desktop` không xác nhận account hay session.
 
 ## Mẫu ghi evidence cho mỗi lần chạy
 

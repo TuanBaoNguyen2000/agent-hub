@@ -1,6 +1,6 @@
 # SPIKE-01 — Claude CLI profile isolation
 
-**Status:** Harness sẵn sàng; chưa chạy phần cần đăng nhập. Executable resolution đã kiểm tra trên macOS.
+**Status:** macOS Pass. Windows chưa chạy.
 
 ## Objective
 
@@ -21,7 +21,7 @@ Theo [feasibility.md](../../docs/feasibility.md): hai config roots, auth riêng,
 CLAUDE_CONFIG_DIR="$HOME/.agenthub-spike/claude-b" claude auth login
 ```
 
-Trình duyệt thường dùng account claude.ai đang đăng nhập. Để chọn account thứ hai, đổi account trên trang đăng nhập hoặc dán link đăng nhập vào cửa sổ riêng tư.
+Trình duyệt tự dùng phiên claude.ai đang mở, nên có thể đăng nhập nhầm account hiện tại mà không hỏi. Nếu vậy, đăng xuất profile B rồi đăng nhập lại bằng account thứ hai (ví dụ dùng `--email` hoặc cửa sổ riêng tư).
 
 ## Cách chạy
 
@@ -64,4 +64,4 @@ rm -rf "$HOME/.agenthub-spike/claude-b"
 
 ## Evidence
 
-Chưa có.
+- [2026-10-30 — macOS](evidence/2026-10-30-macos.md)

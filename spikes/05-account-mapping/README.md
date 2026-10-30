@@ -1,6 +1,6 @@
 # SPIKE-05 — Account mapping and status
 
-**Status:** Harness sẵn sàng; chưa chạy. Cần profile B từ [SPIKE-01](../01-claude-profile-isolation/README.md).
+**Status:** macOS Pass (reported). Windows chưa chạy. Cần profile B từ [SPIKE-01](../01-claude-profile-isolation/README.md).
 
 ## Objective
 
@@ -22,4 +22,4 @@ Quan sát ghi vào `local/<timestamp>/` (ignored). Chỉ ghi alias A/B, không g
 
 ## Evidence
 
-Chưa có.
+- [2026-10-30 — macOS](evidence/2026-10-30-macos.md)
