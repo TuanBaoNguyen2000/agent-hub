@@ -1,0 +1,27 @@
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+}
+
+body {
+  margin: 32px;
+}
+
+h1 {
+  font-size: 22px;
+  margin: 0 0 16px;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+}
+
+dt {
+  font-weight: 600;
+}
+
+dd {
+  margin: 0;
+}

@@ -1,0 +1,14 @@
+appId: dev.agenthub.app
+productName: AgentHub
+directories:
+  # build/ stays ignored in .gitignore, so committed resources live here instead.
+  buildResources: resources
+  output: release
+files:
+  - out/**
+  - package.json
+mac:
+  target: dir
+  # Ad hoc signature for this machine; distribution is out of scope (TDD §16).
+  identity: '-'
+  hardenedRuntime: false

@@ -1,11 +1,12 @@
 # Project status
 
 **Updated:** 2026-11-01  
-**Stage:** Phase 0 đạt exit review trên macOS (2026-11-01), có điều kiện; quyết định trước bootstrap đã chốt, chưa bootstrap. Windows hoãn theo ADR-015, vẫn `Not run`  
-**Application:** Chưa có implementation hoặc build có thể chạy
+**Stage:** Phase 1 in progress — technical bootstrap xong trên macOS (2026-11-01); chưa có tính năng. Phase 0 đạt exit review trên macOS, có điều kiện. Windows hoãn theo ADR-015, vẫn `Not run`  
+**Application:** Shell tối thiểu chạy được: cửa sổ Electron đọc trạng thái SQLite qua IPC; `npm run package` tạo `.app` ký ad hoc
 
 ## Đã hoàn thành
 
+- **Technical bootstrap (2026-11-01):** npm workspaces cho app và sáu package, TypeScript strict, ESLint kiểm tra package boundaries, Vitest, electron-vite, electron-builder, better-sqlite3 với runner migration. Đường Renderer → Preload → Main → persistence → SQLite chạy được ở dev và trong `.app`. Versions và kết quả kiểm chứng ở [ADR-016](decisions/016-workspace-and-build-tooling.md); lệnh ở [DEVELOPMENT](DEVELOPMENT.md#lệnh-phát-triển).
 - [Exit review Phase 0 trên macOS](feasibility.md#exit-review) (2026-11-01): đạt, có điều kiện. Cả bốn scenario của TDD §9.4 có đường chạy khả thi, mỗi capability không tự động có fallback, không còn giả định chặn workflow. Điều kiện launcher ghi ở TDD §5.2.
 - Người dùng chốt các quyết định trước bootstrap (2026-11-01): [ADR-009](decisions/009-external-terminal.md) terminal ngoài, Terminal.app trên macOS; [ADR-016](decisions/016-workspace-and-build-tooling.md) npm workspaces, electron-vite, electron-builder; [ADR-017](decisions/017-mvp-git-observations.md) Git MVP chỉ đọc branch, HEAD SHA, dirty; TDD §16: Code tab là chính, công cụ cá nhân.
 - Đưa TDD vào `docs/TDD.md` làm bản chính, hiện là revision 0.1.6.
@@ -69,7 +70,7 @@
 
 ## Kiểm chứng
 
-- Đã kiểm tra 190 local links/anchors trong 45 tài liệu Markdown (2026-11-01): không có đích thiếu. Mọi file đang theo dõi dùng LF (kiểm tra 2026-10-30).
+- Đã kiểm tra 199 local links/anchors trong 45 tài liệu Markdown (2026-11-01): không có đích thiếu. Mọi file đang theo dõi dùng LF (kiểm tra 2026-10-30).
 - `setup-fixtures.sh` đã chạy thử: tạo đúng ba variant, từ chối thư mục cha có instruction files và thư mục không phải fixture.
 - Các kiểm tra này chỉ xác nhận tài liệu/harness; không phải build, kiểm thử sản phẩm hoặc evidence tích hợp provider.
 
@@ -80,12 +81,13 @@
 - Chưa kiểm tra resume trong cùng profile cho Claude CLI và Codex CLI; chưa kiểm tra giới hạn độ dài của tham số `q`.
 - Kết quả Desktop ở SPIKE-02/03/04/05/07/08/09 là `reported`: người dùng báo, không có ảnh chụp. SPIKE-04 trên Claude Desktop đo ở 4.29.0, chưa chạy lại trên 4.4212.0.
 - Windows: toàn bộ `Not run`, hoãn theo ADR-015.
-- Chưa khởi tạo workspace manifests hay dependencies của sản phẩm. Tooling của ADR-016 chưa được chạy thử.
-- Chưa có UI, IPC implementation, database, migration hoặc launcher sản phẩm.
+- **`.app` chưa được mở bằng double-click trong Finder;** agent mở bằng `env -i … open`, cách SPIKE-09 cho thấy cùng tên biến env với Finder trên máy này.
+- Chưa thử hot reload khi sửa code, máy không có toolchain build, và build trên Windows.
+- Chưa có UI tính năng, schema của TDD §6.2, artifact store, thư viện validation IPC, launcher sản phẩm, single-instance lock. `apps/desktop/tests/` chưa có test.
 
 ## Quyết định còn mở
 
-- Tooling chốt khi bootstrap: runtime và dependency versions, module SQLite, test runner, lint, cách enforce package boundaries, và mục `build/` trong `.gitignore` (ADR-016).
+- Thư viện validation IPC: chốt ở Phase 1, khi có payload đầu tiên.
 - ADR-010: minimum Windows version; chuyển sang milestone Windows parity (ADR-015).
 - ADR-011: chi tiết context export policy. SPIKE-06 gợi ý ghi `AGENTS.md` và để `CLAUDE.md` import, giới hạn theo 32 KiB của Codex.
 - Đổi account nhanh trên Desktop (mục tiêu chính của người dùng): đã chốt trên macOS cho Claude Desktop (ADR-013) và Codex Desktop (ADR-014); Windows thuộc milestone Windows parity.
@@ -94,7 +96,7 @@
 
 Chỉ macOS (ADR-015):
 
-1. **Technical bootstrap Phase 1:** tạo npm workspaces theo ADR-012, chọn và pin versions, rồi chứng minh theo ADR-016: build và đóng gói một `.app` tối thiểu, mở bằng Finder, có một package workspace và module SQLite. Trước khi bắt đầu, xem các thay đổi chưa commit.
+1. **Tính năng Phase 1:** schema SQLite cho Project và Task theo TDD §6.2, Project/Task CRUD (FR-001, FR-002), artifact store với atomic write, settings, single-instance lock, thư viện validation IPC. Exit criteria ở TDD §13 chỉ đánh giá trên macOS (ADR-015). Trước khi bắt đầu, xem các thay đổi chưa commit.
 2. **Kiểm tra lại rủi ro login của SPIKE-09:** khi token của profile A đã cũ (ít nhất một ngày sau lần đăng nhập 2026-11-01 12:54 UTC), chạy `spikes/09-electron-launcher-prototype/check-desktop-login.sh script` một lần; người dùng cần sẵn sàng đăng nhập lại. Việc này không chặn bootstrap, vì vẫn có fallback chọn folder thủ công, và launcher sản phẩm cần kiểm tra login trước và sau khi chạy `--desktop`. Ghi kết quả vào evidence của spike.
 3. Các profile và thư mục dữ liệu dùng cho spike vẫn được giữ; lệnh dọn dẹp nằm trong README của SPIKE-01, SPIKE-07, SPIKE-08 và SPIKE-09.
 

@@ -21,10 +21,10 @@ Giữ mã ADR ổn định; phân biệt quyết định đã chốt với lựa
 | ADR-013 | Instance Claude Desktop riêng cho mỗi account phụ | Accepted for MVP (opt-in, conditional) | [013-claude-desktop-account-instances.md](013-claude-desktop-account-instances.md) |
 | ADR-014 | Nhiều profile Codex qua `CODEX_HOME`, CLI và Desktop | Accepted for MVP (opt-in, conditional) | [014-codex-profiles.md](014-codex-profiles.md) |
 | ADR-015 | macOS trước, Windows thành milestone riêng | Accepted | [015-macos-first-delivery.md](015-macos-first-delivery.md) |
-| ADR-016 | npm workspaces, electron-vite, electron-builder | Accepted; chưa kiểm chứng bằng build thật | [016-workspace-and-build-tooling.md](016-workspace-and-build-tooling.md) |
+| ADR-016 | npm workspaces, electron-vite, electron-builder | Accepted; đã kiểm chứng trên macOS | [016-workspace-and-build-tooling.md](016-workspace-and-build-tooling.md) |
 | ADR-017 | Git observation tối thiểu trong MVP | Accepted | [017-mvp-git-observations.md](017-mvp-git-observations.md) |
 
-Versions, test runner và lint chưa chốt, không được suy ra từ ADR-016. Kết quả capability cần evidence trong [feasibility.md](../feasibility.md), kể cả khi quyết định kiến trúc đã Accepted.
+Kết quả capability cần evidence trong [feasibility.md](../feasibility.md), kể cả khi quyết định kiến trúc đã Accepted.
 
 ## Cách ghi quyết định mới
 

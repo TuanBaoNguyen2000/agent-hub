@@ -1,6 +1,6 @@
 # Integrations
 
-**Status:** Scaffold only. Chưa có launcher implementation hoặc capability được xác minh trên máy thật.
+**Status:** Có manifest và entrypoint rỗng; chưa có launcher.
 
 ## Trách nhiệm
 

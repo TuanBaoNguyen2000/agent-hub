@@ -24,11 +24,27 @@ Tài liệu này chứa quy tắc dùng chung cho người phát triển, Codex 
 | `apps/desktop/src/preload` | API contextBridge giới hạn, typed theo contracts | contracts |
 | `apps/desktop/src/renderer` | React UI, state và tương tác qua Preload API | contracts |
 
-Đây là ranh giới thiết kế được review thủ công trong foundation; chưa có tooling kiểm tra tự động. Dependency thư viện bên ngoài và public package exports sẽ được quyết định tại bootstrap.
+Ranh giới này được kiểm tra bằng `no-restricted-imports` trong `eslint.config.mjs`, và chỉ bắt được import, không phát hiện được truy cập gián tiếp. Khi thêm package hoặc đổi dependency được phép, sửa bảng này và file đó cùng lúc. Mỗi package export `src/index.ts`; `apps/desktop` khai báo package nội bộ ở `devDependencies` để chúng được bundle, còn dependency runtime có native code ở `dependencies`.
 
 `application` không import implementation hạ tầng. `integrations` nhận platform port qua dependency injection; Main nối launcher với platform adapter. `domain` không biết đến Electron, React, database, filesystem hay provider CLI. `contracts` không chứa domain entities trực tiếp; Main map domain results sang DTO cần thiết để giới hạn dữ liệu qua IPC.
 
 Renderer không gọi Node APIs, SQLite, filesystem hoặc process. Preload không expose raw `ipcRenderer` hoặc API thực thi tùy ý. Domain validation và transport validation phục vụ hai boundary khác nhau; không đưa quy tắc nghiệp vụ vào Renderer để thay cho kiểm tra trong Main/application.
+
+## Lệnh phát triển
+
+Cần Node 24 (`.nvmrc`) và npm 11. Chạy từ thư mục gốc; tooling và versions ở [ADR-016](decisions/016-workspace-and-build-tooling.md).
+
+| Lệnh | Tác dụng |
+|---|---|
+| `npm ci` | Cài dependencies và tải binary Electron |
+| `npm run dev` | Chạy app với dev server |
+| `npm run check` | Typecheck, lint và test |
+| `npm test` | Chỉ chạy test, trên runtime của Electron |
+| `npm run package` | Đóng gói `.app` vào `apps/desktop/release/`, ký ad hoc |
+
+Dev và bản đóng gói dùng chung database trong `~/Library/Application Support/AgentHub/`.
+
+Thử bản đóng gói bằng double-click trong Finder. Nếu mở bằng `open`, phải xoá env trước (`env -i`), vì `open` chuyển env của process gọi sang app ([SPIKE-09](../spikes/09-electron-launcher-prototype/evidence/2026-11-01-macos.md)).
 
 ## Phạm vi sản phẩm
 
@@ -62,7 +78,7 @@ Renderer không gọi Node APIs, SQLite, filesystem hoặc process. Preload khô
 - Giữ nguyên thay đổi của người dùng; không reset hoặc clean working tree để chuẩn bị công việc.
 - Khi cần tạo branch, mặc định dùng prefix `agent/`; không cần tạo branch chỉ để viết tài liệu nếu chưa có yêu cầu.
 - Không tự commit, push, merge hoặc tạo release trong bước foundation. Khi được yêu cầu ở các bước sau, kiểm tra diff và chỉ đưa file đúng phạm vi vào commit.
-- Khi tooling được chọn, commit workspace manifests và lockfile tương ứng; không ignore lockfiles.
+- Commit workspace manifests và `package-lock.json`; không ignore lockfiles.
 
 ## Kiểm chứng
 

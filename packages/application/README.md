@@ -1,6 +1,6 @@
 # Application
 
-**Status:** Scaffold only. Chưa có source implementation hoặc package manifest.
+**Status:** Có manifest và port `MetadataStore` tối thiểu; chưa có use case.
 
 ## Trách nhiệm
 

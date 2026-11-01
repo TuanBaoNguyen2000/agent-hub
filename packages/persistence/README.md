@@ -1,6 +1,6 @@
 # Persistence
 
-**Status:** Scaffold only. Chưa có source implementation, SQLite driver, migration hoặc package manifest.
+**Status:** Có driver better-sqlite3, runner migration và integration tests; chưa có schema của TDD §6.2 hay artifact store.
 
 ## Trách nhiệm
 

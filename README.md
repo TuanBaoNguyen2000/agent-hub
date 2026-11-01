@@ -6,9 +6,9 @@ AgentHub là desktop application dự kiến cho macOS và Windows, quản lý *
 
 ## Trạng thái hiện tại
 
-**Phase 0 đã đạt exit review trên macOS, chưa bootstrap; Windows chưa kiểm thử** ([chi tiết](docs/feasibility.md#exit-review)). Repo có cấu trúc thư mục, tài liệu và các spike thử nghiệm; chưa có mã ứng dụng, workspace manifests, dependencies hay lệnh build/test/run của sản phẩm. Những thư mục mã nguồn hiện là scaffold, chưa phải package có thể build.
+**Phase 1 đang làm: mới có shell tối thiểu, chưa có tính năng. Chỉ chạy trên macOS; Windows chưa kiểm thử.** Phase 0 đã đạt [exit review](docs/feasibility.md#exit-review) trên macOS. Ứng dụng hiện chỉ mở một cửa sổ hiển thị trạng thái SQLite.
 
-Stack đã chọn: Electron + React + TypeScript; SQLite cho metadata, Markdown/YAML cho context artifacts. Tooling đã chọn nhưng chưa chạy thử: npm workspaces, electron-vite, electron-builder ([ADR-016](docs/decisions/016-workspace-and-build-tooling.md)). Runtime versions và dependency versions chưa được chốt. Tài liệu dùng tiếng Việt, giữ tên file và thuật ngữ kỹ thuật bằng tiếng Anh.
+Stack đã chọn: Electron + React + TypeScript; SQLite cho metadata, Markdown/YAML cho context artifacts. Tooling: Node 24, npm workspaces, electron-vite, electron-builder ([ADR-016](docs/decisions/016-workspace-and-build-tooling.md)). Tài liệu dùng tiếng Việt, giữ tên file và thuật ngữ kỹ thuật bằng tiếng Anh.
 
 ## Bắt đầu đọc
 
@@ -46,4 +46,14 @@ MVP không xây lại chat UI, không sao chép native chat history và không g
 
 ## Phát triển tiếp
 
-Lộ trình ở [ROADMAP.md](docs/ROADMAP.md). Bước tiếp theo là technical bootstrap Phase 1, xem [STATUS.md](docs/STATUS.md#bước-tiếp-theo).
+Cài và chạy, cần Node 24:
+
+```bash
+npm ci
+```
+
+```bash
+npm run dev
+```
+
+Các lệnh khác ở [DEVELOPMENT.md](docs/DEVELOPMENT.md#lệnh-phát-triển). Lộ trình ở [ROADMAP.md](docs/ROADMAP.md), bước tiếp theo ở [STATUS.md](docs/STATUS.md#bước-tiếp-theo).

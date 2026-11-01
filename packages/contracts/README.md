@@ -1,6 +1,6 @@
 # Contracts
 
-**Status:** Scaffold only. Chưa có source implementation, validation library hoặc package manifest.
+**Status:** Có manifest và channel `system:status`; chưa chọn thư viện validation.
 
 ## Trách nhiệm
 

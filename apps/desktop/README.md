@@ -1,6 +1,6 @@
 # Desktop application
 
-**Status:** Scaffold only. Chưa có Electron/React implementation, package manifest hoặc lệnh chạy.
+**Status:** Shell tối thiểu: cửa sổ Electron hiển thị trạng thái SQLite qua IPC. Chưa có tính năng Project/Task; `tests/` chưa có test. Lệnh chạy ở [Development guide](../../docs/DEVELOPMENT.md#lệnh-phát-triển).
 
 Đây là entrypoint ứng dụng desktop cho macOS/Windows, dùng các package nghiệp vụ và hạ tầng trong repository.
 

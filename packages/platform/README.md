@@ -1,6 +1,6 @@
 # Platform
 
-**Status:** Scaffold only. Chưa có macOS/Windows implementation hoặc package manifest.
+**Status:** Có manifest và entrypoint rỗng; chưa có adapter.
 
 ## Trách nhiệm
 

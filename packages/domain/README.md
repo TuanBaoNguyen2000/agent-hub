@@ -1,6 +1,6 @@
 # Domain
 
-**Status:** Scaffold only. Chưa có source implementation hoặc package manifest.
+**Status:** Có manifest và entrypoint rỗng; chưa có implementation.
 
 ## Trách nhiệm
 

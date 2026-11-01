@@ -26,8 +26,8 @@ Quy tắc dependency chi tiết được duy trì ở [DEVELOPMENT.md](../DEVELO
 ## Consequences
 
 - Có ranh giới module ngay từ đầu và vị trí rõ cho logic có thể kiểm thử độc lập với UI.
-- Cần workspace tooling, exports và dependency checks tại technical bootstrap; hiện chưa có cơ chế tự động enforce boundaries.
-- Foundation chỉ tạo thư mục và tài liệu; chưa tạo manifests, dependencies hoặc mã sản phẩm.
+- Workspace tooling và dependency checks được chốt ở [ADR-016](016-workspace-and-build-tooling.md); boundaries được kiểm tra bằng ESLint.
+- Foundation chỉ tạo thư mục và tài liệu; manifests, dependencies và mã sản phẩm được thêm ở technical bootstrap.
 - Không gộp logic provider với OS; không đưa domain entities hoặc quyền Node APIs sang Renderer.
 - Spike code tách trong `spikes/`; chỉ đưa vào package sản phẩm sau review và kiểm thử phù hợp.
 - Chưa bổ sung package mới hoặc tách nhỏ hơn khi chưa có nhu cầu cụ thể.

@@ -1,7 +1,7 @@
 # AgentHub — Technical Design Document (TDD)
 
 > **Project:** AgentHub — Cross-platform AI Agent Workspace & Context Manager  
-> **Version:** 0.1.6 (ADR-009, ADR-013–017: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP; Phase 0 macOS exit review; pre-implementation)  
+> **Version:** 0.1.7 (ADR-009, ADR-013–017: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP; Phase 0 macOS exit review; technical bootstrap)  
 > **Updated:** 2026-11-01  
 > **Status:** Draft for implementation review  
 > **Platforms:** macOS and Windows  
@@ -39,7 +39,7 @@ AgentHub là desktop application chạy trên **macOS và Windows** để quản
 | Product direction | Hybrid Workspace & Context Manager; không xây lại chat app |
 | Supported OS | macOS, Windows (native-first trên Windows; WSL optional). macOS trước; Windows là milestone riêng (ADR-015) |
 | Desktop stack | Electron + React + TypeScript |
-| Tooling | npm workspaces, electron-vite, electron-builder (ADR-016); versions chốt khi bootstrap |
+| Tooling | npm workspaces, electron-vite, electron-builder; versions ở ADR-016 |
 | Phạm vi sử dụng | Công cụ cá nhân; Claude Desktop chủ yếu dùng Code tab (§16) |
 | CLI terminal | Terminal ngoài; macOS dùng Terminal.app (ADR-009) |
 | Storage | SQLite cho metadata; Markdown/YAML cho context artifacts |
@@ -330,7 +330,7 @@ agent-hub/
         └── local/                # Raw local output, ignored
 ```
 
-Cấu trúc monorepo với các package boundaries trên đã được người dùng chốt ngày 2026-10-29; xem [ADR-012](decisions/012-initial-package-boundaries.md). Package directories được tạo ngay trong repository foundation. Workspace manifests, package manager, build tool và dependency versions sẽ được quyết định ở technical bootstrap, sau Phase 0.
+Cấu trúc monorepo với các package boundaries trên đã được người dùng chốt ngày 2026-10-29; xem [ADR-012](decisions/012-initial-package-boundaries.md). Package directories được tạo ngay trong repository foundation. Workspace manifests, package manager, build tool và dependency versions được chốt ở [ADR-016](decisions/016-workspace-and-build-tooling.md); cây trên chỉ liệt kê thư mục và tài liệu, không liệt kê file cấu hình ở root.
 
 `application` phụ thuộc `domain` và định nghĩa các port cho persistence, launcher và platform. Các package hạ tầng triển khai port; Electron Main khởi tạo và kết nối implementation. `integrations` nhận platform port qua dependency injection. `contracts` chứa hợp đồng truyền dữ liệu độc lập với Electron/Node và domain implementation; Renderer/Preload chỉ dùng hợp đồng cùng API được expose. Quy tắc chi tiết ở [DEVELOPMENT.md](DEVELOPMENT.md).
 
@@ -1046,7 +1046,7 @@ Theo [ADR-015](decisions/015-macos-first-delivery.md), exit criteria của Phase
 | [ADR-013](decisions/013-claude-desktop-account-instances.md) | Claude Desktop account instances | Accepted for MVP (opt-in, conditional) | SPIKE-07: instance với thư mục dữ liệu riêng và `CLAUDE_CONFIG_DIR` giữ account khác; không tài liệu hoá, có manual fallback |
 | [ADR-014](decisions/014-codex-profiles.md) | Codex profiles (CLI and Desktop) | Accepted for MVP (opt-in, conditional) | SPIKE-08: `CODEX_HOME` riêng tách account cho CLI và cho instance ChatGPT.app riêng; không tài liệu hoá, có manual fallback |
 | [ADR-015](decisions/015-macos-first-delivery.md) | macOS-first delivery | Accepted | Chưa có môi trường Windows; gate Phase 0–3 đánh giá trên macOS, Windows thành milestone riêng |
-| [ADR-016](decisions/016-workspace-and-build-tooling.md) | npm workspaces, electron-vite, electron-builder | Accepted; chưa kiểm chứng bằng build thật | Có sẵn trên máy, hỗ trợ đa nền tảng; bootstrap phải build và đóng gói được `.app` tối thiểu |
+| [ADR-016](decisions/016-workspace-and-build-tooling.md) | npm workspaces, electron-vite, electron-builder | Accepted; đã kiểm chứng trên macOS | Có sẵn trên máy, hỗ trợ đa nền tảng; đã build và đóng gói được `.app` tối thiểu |
 | [ADR-017](decisions/017-mvp-git-observations.md) | Git observation tối thiểu trong MVP | Accepted | Branch, SHA, dirty đủ cho checkpoint và Scenario D; phần mở rộng ở P1 |
 
 Các ADR-001–ADR-011 hiện được ghi trong bảng này. [ADR index](decisions/README.md) dẫn đến nguồn của từng quyết định; chưa tạo bản sao riêng cho các ADR cũ.
@@ -1122,8 +1122,8 @@ Các link sau là **tài liệu bên ngoài** đã được sử dụng để x�
 
 1. Repository foundation đã được chuẩn bị: tài liệu này ở `docs/TDD.md`, các entrypoint, tài liệu phát triển và thư mục theo §4.3. Xem [STATUS.md](STATUS.md) để biết phần thực tế đã hoàn thành.
 2. Phase 0 theo [feasibility.md](feasibility.md) đã đạt exit review trên macOS (2026-11-01). Ghi OS, exact CLI/Desktop versions, auth mode và bằng chứng từng spike khi kiểm tra lại. Những mục chưa chạy, gồm toàn bộ Windows, phải giữ trạng thái `Not run`.
-3. Các quyết định ảnh hưởng bootstrap đã chốt: ADR-009, ADR-016, ADR-017 và §16 câu 1, câu 3. Versions, test runner và lint chốt khi bootstrap.
-4. Chỉ sau khi Phase 0 pass, khởi tạo workspace manifests, Electron/React/TypeScript và SQLite migrations.
+3. Các quyết định ảnh hưởng bootstrap đã chốt: ADR-009, ADR-016, ADR-017 và §16 câu 1, câu 3.
+4. Technical bootstrap đã xong: workspace manifests, Electron/React/TypeScript và runner cho SQLite migrations. Tính năng Phase 1 làm tiếp theo §13.
 5. `AGENTS.md` và `CLAUDE.md` cùng dẫn đến `docs/DEVELOPMENT.md`; agent đọc TDD, không tự thêm direct model API/chat UI vào MVP và không thay đổi ADR đã chốt nếu chưa có approval.
 6. Commit chỉ được tạo khi có yêu cầu; repository foundation không tự thực hiện commit.
 
@@ -1139,4 +1139,4 @@ account switching tự động. Báo lại những giả định cần xác minh
 
 ---
 
-**End of TDD v0.1.6.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3; revision 0.1.4 thêm ADR-015 (macOS trước, Windows thành milestone riêng); revision 0.1.5 ghi kết quả exit review Phase 0 trên macOS, thêm SPIKE-09 và điều kiện launcher ở §5.2, cho §3.1 khớp với ADR-013 và ADR-014; revision 0.1.6 ghi ADR-009, ADR-016, ADR-017, tách §10.1 theo MVP và P1, trả lời §16 câu 1 và câu 3. ADR-013 và ADR-014 chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.
+**End of TDD v0.1.7.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3; revision 0.1.4 thêm ADR-015 (macOS trước, Windows thành milestone riêng); revision 0.1.5 ghi kết quả exit review Phase 0 trên macOS, thêm SPIKE-09 và điều kiện launcher ở §5.2, cho §3.1 khớp với ADR-013 và ADR-014; revision 0.1.6 ghi ADR-009, ADR-016, ADR-017, tách §10.1 theo MVP và P1, trả lời §16 câu 1 và câu 3; revision 0.1.7 ghi kết quả technical bootstrap. ADR-013 và ADR-014 chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.
