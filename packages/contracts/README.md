@@ -1,6 +1,6 @@
 # Contracts
 
-**Status:** Có manifest và channel `system:status`; chưa chọn thư viện validation.
+**Status:** Có channels, DTOs và schema zod cho mọi payload của Phase 1.
 
 ## Trách nhiệm
 
@@ -12,7 +12,7 @@ Hợp đồng IPC dùng chung giữa Electron Main, Preload và Renderer: reques
 - Không chứa database entities, credentials, process handles hay service implementations.
 - Electron Main map domain/application results sang DTO; validate payload tại privileged boundary.
 - Domain validation vẫn thuộc domain; schema IPC không thay thế business rules.
-- Không quyết định thư viện validation hoặc channel implementation trước technical bootstrap.
+- Validation dùng zod ([ADR-016](../../docs/decisions/016-workspace-and-build-tooling.md)); Main validate mọi payload trước khi gọi use case.
 
 ## Kiểm chứng dự kiến
 

@@ -1,6 +1,6 @@
 # Persistence
 
-**Status:** Có driver better-sqlite3, runner migration và integration tests; chưa có schema của TDD §6.2 hay artifact store.
+**Status:** Có SQLite (better-sqlite3), migration 1, backup trước khi nâng schema, context store ghi atomic và tests. Chưa có bảng profile, checkpoint, handoff, launch.
 
 ## Trách nhiệm
 
@@ -12,7 +12,7 @@ Triển khai application ports cho SQLite metadata, migrations và Markdown/YAML
 - Không import UI, Electron APIs hoặc provider adapters.
 - Nhận đường dẫn runtime từ composition root; không dùng source repo làm primary database/artifact store.
 - Không lưu provider credentials hoặc native chat databases.
-- Schema trong TDD là draft; chưa có migration được áp dụng.
+- Schema thực tế nằm trong `src/migrations.ts`; khác biệt so với draft ghi ở TDD §6.2.
 
 ## Kiểm chứng dự kiến
 

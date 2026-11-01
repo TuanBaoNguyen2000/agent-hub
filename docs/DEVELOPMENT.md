@@ -40,9 +40,10 @@ Cần Node 24 (`.nvmrc`) và npm 11. Chạy từ thư mục gốc; tooling và v
 | `npm run dev` | Chạy app với dev server |
 | `npm run check` | Typecheck, lint và test |
 | `npm test` | Chỉ chạy test, trên runtime của Electron |
+| `npm run test:e2e` | Build rồi chạy E2E trên cửa sổ Electron, với dữ liệu tạm |
 | `npm run package` | Đóng gói `.app` vào `apps/desktop/release/`, ký ad hoc |
 
-Dev và bản đóng gói dùng chung database trong `~/Library/Application Support/AgentHub/`.
+Dữ liệu nằm ngoài repo: bản đóng gói dùng `~/Library/Application Support/AgentHub/`, `npm run dev` dùng `AgentHub Dev` trong cùng thư mục cha, để migration chưa phát hành không đụng dữ liệu thật. E2E luôn dùng thư mục tạm. Chạy E2E trên bản đóng gói bằng cách đặt `AGENTHUB_E2E_EXECUTABLE` trỏ tới binary trong `.app`.
 
 Thử bản đóng gói bằng double-click trong Finder. Nếu mở bằng `open`, phải xoá env trước (`env -i`), vì `open` chuyển env của process gọi sang app ([SPIKE-09](../spikes/09-electron-launcher-prototype/evidence/2026-11-01-macos.md)).
 

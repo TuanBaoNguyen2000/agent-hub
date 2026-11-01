@@ -27,7 +27,9 @@ Monorepo của [ADR-012](012-initial-package-boundaries.md) cần workspace tool
 | Test | Vitest 5.0.5, chạy trên runtime của Electron | Test nạp native module giống app |
 | Lint, boundary | ESLint 10.14.0, typescript-eslint, `no-restricted-imports` theo từng package | Không thêm dependency; đã thử: chặn được cả 5 import vi phạm |
 
-Cách dùng package nội bộ: mỗi package export thẳng `src/index.ts`; electron-vite bundle chúng vào app, chỉ `dependencies` của `apps/desktop` là external. Thư viện validation IPC chốt ở Phase 1, khi có payload đầu tiên.
+Bổ sung ở Phase 1: zod 4.6.7 cho validation IPC tại Main, Playwright 1.64.1 cho E2E trên cửa sổ Electron thật. E2E chỉ dùng API `_electron` của Playwright, không cần tải browser riêng.
+
+Cách dùng package nội bộ: mỗi package export thẳng `src/index.ts`; electron-vite bundle chúng vào app, chỉ `dependencies` của `apps/desktop` là external.
 
 ## Kiểm chứng (2026-11-01, macOS 26.5.1 arm64)
 
@@ -39,8 +41,9 @@ Cách dùng package nội bộ: mỗi package export thẳng `src/index.ts`; ele
 | Mở `.app` với `env -i … open` | UI đọc được SQLite 3.53.4 qua IPC, không có lỗi console, env không có biến của provider |
 | Bảo mật renderer | Không có `require`, `process`; chỉ expose `getSystemStatus`; chặn `window.open`, điều hướng, inline script, fetch ra ngoài |
 | Thoát và mở lại | Thoát sạch, không còn file WAL, cùng file DB |
+| Mở bằng double-click trong Finder | Đạt (reported, có ảnh chụp người dùng gửi, không lưu vào repo): hiện App 0.0.0, SQLite 3.53.4, Schema 0 |
 
-Mở bằng double-click trong Finder: xem [STATUS](../STATUS.md). `npm audit`: 0 lỗi ở production; 25 lỗi moderate ở dev dependency, đều từ một advisory DoS của `minimatch` qua eslint và electron-builder. Cách sửa npm gợi ý là hạ major version nên không áp dụng.
+`npm audit`: 0 lỗi ở production; 25 lỗi moderate ở dev dependency, đều từ một advisory DoS của `minimatch` qua eslint và electron-builder. Cách sửa npm gợi ý là hạ major version nên không áp dụng.
 
 ## Consequences
 

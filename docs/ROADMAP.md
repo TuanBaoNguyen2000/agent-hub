@@ -22,7 +22,7 @@ Các milestone dưới đây theo quan hệ phụ thuộc, không phải lịch 
 ## Công việc gần nhất
 
 - Phase 0 đã đạt [exit review](feasibility.md#exit-review) trên macOS; Windows thuộc milestone Windows parity.
-- Technical bootstrap đã xong ([ADR-016](decisions/016-workspace-and-build-tooling.md)). Làm tiếp deliverables của Phase 1: Project/Task CRUD, schema SQLite, artifact store, settings.
+- Phase 1 đã đạt exit criteria trên macOS. Làm tiếp Phase 2: profile manager, launcher adapters, platform adapters và launch history, theo điều kiện ở [TDD §5.2](TDD.md#52-process-launching-safety).
 - Chuyển deliverables thành task có objective và acceptance criteria khi chuẩn bị triển khai từng phase.
 
 ## Quy tắc cập nhật

@@ -1,6 +1,6 @@
 # Application
 
-**Status:** Có manifest và port `MetadataStore` tối thiểu; chưa có use case.
+**Status:** Có ports và use case `createWorkspace` cho Project, Task, context, settings. Chưa có Smart Switch, handoff, launcher.
 
 ## Trách nhiệm
 

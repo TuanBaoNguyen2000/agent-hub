@@ -18,7 +18,9 @@
   "devDependencies": {
     "@agenthub/application": "*",
     "@agenthub/contracts": "*",
+    "@agenthub/domain": "*",
     "@agenthub/persistence": "*",
+    "@agenthub/platform": "*",
     "@types/node": "24.10.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",

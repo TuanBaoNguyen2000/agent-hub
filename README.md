@@ -6,7 +6,7 @@ AgentHub là desktop application dự kiến cho macOS và Windows, quản lý *
 
 ## Trạng thái hiện tại
 
-**Phase 1 đang làm: mới có shell tối thiểu, chưa có tính năng. Chỉ chạy trên macOS; Windows chưa kiểm thử.** Phase 0 đã đạt [exit review](docs/feasibility.md#exit-review) trên macOS. Ứng dụng hiện chỉ mở một cửa sổ hiển thị trạng thái SQLite.
+**Phase 1 đã đạt exit criteria trên macOS; Windows chưa kiểm thử.** Ứng dụng quản lý được Project, Task, context Markdown và settings. Chưa có profile, launcher, checkpoint hay handoff, nên chưa mở được Claude/Codex. Chi tiết ở [STATUS](docs/STATUS.md).
 
 Stack đã chọn: Electron + React + TypeScript; SQLite cho metadata, Markdown/YAML cho context artifacts. Tooling: Node 24, npm workspaces, electron-vite, electron-builder ([ADR-016](docs/decisions/016-workspace-and-build-tooling.md)). Tài liệu dùng tiếng Việt, giữ tên file và thuật ngữ kỹ thuật bằng tiếng Anh.
 

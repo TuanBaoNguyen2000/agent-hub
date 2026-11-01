@@ -1,6 +1,6 @@
 # Integrations
 
-**Status:** Có manifest và entrypoint rỗng; chưa có launcher.
+**Status:** Có manifest và entrypoint rỗng; launcher thuộc Phase 2.
 
 ## Trách nhiệm
 

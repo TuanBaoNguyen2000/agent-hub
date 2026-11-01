@@ -1,7 +1,7 @@
 # AgentHub — Technical Design Document (TDD)
 
 > **Project:** AgentHub — Cross-platform AI Agent Workspace & Context Manager  
-> **Version:** 0.1.7 (ADR-009, ADR-013–017: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP; Phase 0 macOS exit review; technical bootstrap)  
+> **Version:** 0.1.8 (ADR-009, ADR-013–017: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP; Phase 0 macOS exit review; Phase 1 trên macOS)  
 > **Updated:** 2026-11-01  
 > **Status:** Draft for implementation review  
 > **Platforms:** macOS and Windows  
@@ -542,6 +542,8 @@ CREATE TABLE launch_attempts (
 
 **Implementation rules:** timestamps UTC ISO-8601; IDs UUID; indexes trên `tasks(project_id)`, `checkpoints(task_id, created_at)` và `launch_attempts(task_id, created_at)`; foreign keys enabled; versioned migrations. Không suy ra profile đăng nhập Desktop từ field `profile_id`.
 
+**Đã triển khai (Phase 1):** `projects`, `project_locations`, `tasks` ở migration 1. Khác với draft: `projects` có thêm `removed_at`, vì gỡ project chỉ ẩn nó, không xoá task và artifact (§6.4); thêm bảng `settings(key, value)` cho per-device settings (§6.1). Các bảng còn lại được thêm cùng phase dùng chúng.
+
 ### 6.3. Local artifact layout
 
 ```text
@@ -559,6 +561,8 @@ CREATE TABLE launch_attempts (
 │               └── <handoff-id>.md
 └── logs/
 ```
+
+Context cấp project lưu ở `artifacts/<project-id>/project.md`.
 
 **Important:** `artifacts/` là dữ liệu local chính. File `.agenthub/` trong Git project (nếu có) là **exported copy**, không phải bản duy nhất.
 
@@ -917,6 +921,9 @@ Một Task có thể có `worktreeId` và `workspacePath` riêng. Khi tạo/mở
 | `CONTEXT_STALE` | Git SHA/branch differs | Review changes before handoff |
 | `LAUNCH_UNSUPPORTED` | Feature not supported | Manual fallback |
 | `LAUNCH_FAILED` | Process/OS error | Show sanitized error + retry |
+| `PROJECT_PATH_INVALID` | Path không phải folder hoặc không tuyệt đối | Chọn folder khác |
+| `PROJECT_PATH_DUPLICATE` | Folder đã thuộc project khác | Mở project đó hoặc chọn folder khác |
+| `CONTEXT_CONFLICT` | Context đã đổi ở nơi khác | Tải lại hoặc ghi đè, do người dùng chọn |
 | `CHECKPOINT_CONFLICT` | Concurrent document edits | Open diff/resolve |
 | `EXTERNAL_STATE_UNKNOWN` | Native session unobservable | Do not infer status |
 
@@ -950,6 +957,8 @@ Theo [ADR-015](decisions/015-macos-first-delivery.md), exit criteria của Phase
 **Deliverables:** Electron UI, Project/Task CRUD, SQLite migrations, artifact store, basic settings.
 
 **Exit criteria:** Trên Mac/Windows có thể thêm project, tạo task, sửa context, restart app mà không mất dữ liệu; path có Unicode/spaces hoạt động.
+
+**Kết quả (2026-11-01):** đạt trên macOS theo E2E, chạy trên bản đóng gói (`apps/desktop/tests/e2e/`). Windows vẫn `Not run` theo ADR-015.
 
 ### Phase 2 — Equal Desktop/CLI launchers
 
@@ -1139,4 +1148,4 @@ account switching tự động. Báo lại những giả định cần xác minh
 
 ---
 
-**End of TDD v0.1.7.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3; revision 0.1.4 thêm ADR-015 (macOS trước, Windows thành milestone riêng); revision 0.1.5 ghi kết quả exit review Phase 0 trên macOS, thêm SPIKE-09 và điều kiện launcher ở §5.2, cho §3.1 khớp với ADR-013 và ADR-014; revision 0.1.6 ghi ADR-009, ADR-016, ADR-017, tách §10.1 theo MVP và P1, trả lời §16 câu 1 và câu 3; revision 0.1.7 ghi kết quả technical bootstrap. ADR-013 và ADR-014 chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.
+**End of TDD v0.1.8.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3; revision 0.1.4 thêm ADR-015 (macOS trước, Windows thành milestone riêng); revision 0.1.5 ghi kết quả exit review Phase 0 trên macOS, thêm SPIKE-09 và điều kiện launcher ở §5.2, cho §3.1 khớp với ADR-013 và ADR-014; revision 0.1.6 ghi ADR-009, ADR-016, ADR-017, tách §10.1 theo MVP và P1, trả lời §16 câu 1 và câu 3; revision 0.1.7 ghi kết quả technical bootstrap; revision 0.1.8 ghi kết quả Phase 1, khác biệt schema ở §6.2 và mã lỗi mới ở §12.2. ADR-013 và ADR-014 chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.

@@ -1,6 +1,6 @@
 # Platform
 
-**Status:** Có manifest và entrypoint rỗng; chưa có adapter.
+**Status:** Có `PathInspector`. Chưa có adapter process, terminal, Git; thuộc Phase 2 và Phase 3.
 
 ## Trách nhiệm
 

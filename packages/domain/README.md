@@ -1,6 +1,6 @@
 # Domain
 
-**Status:** Có manifest và entrypoint rỗng; chưa có implementation.
+**Status:** Có Project, Task, trạng thái task, mã lỗi và quy tắc nhãn, path. Chưa có AccountProfile, Checkpoint, Handoff, LaunchAttempt.
 
 ## Trách nhiệm
 

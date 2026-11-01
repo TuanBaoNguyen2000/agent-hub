@@ -1,6 +1,6 @@
 # Desktop application
 
-**Status:** Shell tối thiểu: cửa sổ Electron hiển thị trạng thái SQLite qua IPC. Chưa có tính năng Project/Task; `tests/` chưa có test. Lệnh chạy ở [Development guide](../../docs/DEVELOPMENT.md#lệnh-phát-triển).
+**Status:** Có Project, Task, context editor và settings; chưa có launcher. `tests/` có integration test nối các adapter thật, `tests/e2e/` có E2E trên cửa sổ Electron. Lệnh chạy ở [Development guide](../../docs/DEVELOPMENT.md#lệnh-phát-triển).
 
 Đây là entrypoint ứng dụng desktop cho macOS/Windows, dùng các package nghiệp vụ và hạ tầng trong repository.
 

@@ -1,12 +1,17 @@
 # Project status
 
 **Updated:** 2026-11-01  
-**Stage:** Phase 1 in progress — technical bootstrap xong trên macOS (2026-11-01); chưa có tính năng. Phase 0 đạt exit review trên macOS, có điều kiện. Windows hoãn theo ADR-015, vẫn `Not run`  
-**Application:** Shell tối thiểu chạy được: cửa sổ Electron đọc trạng thái SQLite qua IPC; `npm run package` tạo `.app` ký ad hoc
+**Stage:** Phase 1 đạt exit criteria trên macOS (2026-11-01), E2E đạt, chờ người dùng thử bộ chọn folder thật; chưa bắt đầu Phase 2. Windows hoãn theo ADR-015, vẫn `Not run`  
+**Application:** Quản lý được Project, Task, context Markdown và settings; chưa có profile, launcher, checkpoint hay handoff. `npm run package` tạo `.app` ký ad hoc
 
 ## Đã hoàn thành
 
-- **Technical bootstrap (2026-11-01):** npm workspaces cho app và sáu package, TypeScript strict, ESLint kiểm tra package boundaries, Vitest, electron-vite, electron-builder, better-sqlite3 với runner migration. Đường Renderer → Preload → Main → persistence → SQLite chạy được ở dev và trong `.app`. Versions và kết quả kiểm chứng ở [ADR-016](decisions/016-workspace-and-build-tooling.md); lệnh ở [DEVELOPMENT](DEVELOPMENT.md#lệnh-phát-triển).
+- **Phase 1 (2026-11-01, macOS):**
+  - **Tính năng:** thêm, đổi tên, chọn lại folder, gỡ Project; tạo và sửa Task (FR-001, FR-002); context Markdown cho project và task, gồm `task.md`, `decisions.md` (FR-008); settings: giao diện, thư mục dữ liệu, thông tin phiên bản.
+  - **Dữ liệu:** migration 1 trong SQLite, có backup trước khi nâng schema và từ chối database mới hơn app; artifact theo TDD §6.3, ghi atomic, phát hiện xung đột bằng checksum (FR-013).
+  - **Bảo vệ:** validate mọi payload IPC bằng zod và kiểm tra sender; single-instance lock; hỏi trước khi bỏ nội dung chưa lưu.
+  - **Kiểm chứng:** 62 test và 10 bài E2E chạy trên bản build và trên `.app`, gồm exit criteria (thêm project, tạo task, sửa context, restart, path có dấu, khoảng trắng, dấu nháy, `$(...)`). Đã xem ảnh chụp UI ở cả hai giao diện.
+- **Technical bootstrap (2026-11-01):** npm workspaces cho app và sáu package, TypeScript strict, ESLint kiểm tra package boundaries, Vitest, electron-vite, electron-builder, better-sqlite3 với runner migration. Đường Renderer → Preload → Main → persistence → SQLite chạy được ở dev và trong `.app`; người dùng mở `.app` bằng double-click trong Finder và thấy đúng dữ liệu (reported). Versions và kết quả kiểm chứng ở [ADR-016](decisions/016-workspace-and-build-tooling.md); lệnh ở [DEVELOPMENT](DEVELOPMENT.md#lệnh-phát-triển).
 - [Exit review Phase 0 trên macOS](feasibility.md#exit-review) (2026-11-01): đạt, có điều kiện. Cả bốn scenario của TDD §9.4 có đường chạy khả thi, mỗi capability không tự động có fallback, không còn giả định chặn workflow. Điều kiện launcher ghi ở TDD §5.2.
 - Người dùng chốt các quyết định trước bootstrap (2026-11-01): [ADR-009](decisions/009-external-terminal.md) terminal ngoài, Terminal.app trên macOS; [ADR-016](decisions/016-workspace-and-build-tooling.md) npm workspaces, electron-vite, electron-builder; [ADR-017](decisions/017-mvp-git-observations.md) Git MVP chỉ đọc branch, HEAD SHA, dirty; TDD §16: Code tab là chính, công cụ cá nhân.
 - Đưa TDD vào `docs/TDD.md` làm bản chính, hiện là revision 0.1.6.
@@ -81,13 +86,13 @@
 - Chưa kiểm tra resume trong cùng profile cho Claude CLI và Codex CLI; chưa kiểm tra giới hạn độ dài của tham số `q`.
 - Kết quả Desktop ở SPIKE-02/03/04/05/07/08/09 là `reported`: người dùng báo, không có ảnh chụp. SPIKE-04 trên Claude Desktop đo ở 4.29.0, chưa chạy lại trên 4.4212.0.
 - Windows: toàn bộ `Not run`, hoãn theo ADR-015.
-- **`.app` chưa được mở bằng double-click trong Finder;** agent mở bằng `env -i … open`, cách SPIKE-09 cho thấy cùng tên biến env với Finder trên máy này.
+- **Bộ chọn folder thật của macOS chưa được thử:** E2E giả lập kết quả của hộp thoại. Migration trên database thật của người dùng (schema 0 lên 1) cũng chưa chạy.
 - Chưa thử hot reload khi sửa code, máy không có toolchain build, và build trên Windows.
-- Chưa có UI tính năng, schema của TDD §6.2, artifact store, thư viện validation IPC, launcher sản phẩm, single-instance lock. `apps/desktop/tests/` chưa có test.
+- Giới hạn của Phase 1: project đã gỡ chưa khôi phục được trong app; Context Editor chưa có preview và history (TDD §9.1); chưa có log có rotation (TDD §11.3).
+- Chưa có profile, launcher, checkpoint, handoff, Git observation và Smart Switch: thuộc Phase 2 và Phase 3.
 
 ## Quyết định còn mở
 
-- Thư viện validation IPC: chốt ở Phase 1, khi có payload đầu tiên.
 - ADR-010: minimum Windows version; chuyển sang milestone Windows parity (ADR-015).
 - ADR-011: chi tiết context export policy. SPIKE-06 gợi ý ghi `AGENTS.md` và để `CLAUDE.md` import, giới hạn theo 32 KiB của Codex.
 - Đổi account nhanh trên Desktop (mục tiêu chính của người dùng): đã chốt trên macOS cho Claude Desktop (ADR-013) và Codex Desktop (ADR-014); Windows thuộc milestone Windows parity.
@@ -96,9 +101,10 @@
 
 Chỉ macOS (ADR-015):
 
-1. **Tính năng Phase 1:** schema SQLite cho Project và Task theo TDD §6.2, Project/Task CRUD (FR-001, FR-002), artifact store với atomic write, settings, single-instance lock, thư viện validation IPC. Exit criteria ở TDD §13 chỉ đánh giá trên macOS (ADR-015). Trước khi bắt đầu, xem các thay đổi chưa commit.
-2. **Kiểm tra lại rủi ro login của SPIKE-09:** khi token của profile A đã cũ (ít nhất một ngày sau lần đăng nhập 2026-11-01 12:54 UTC), chạy `spikes/09-electron-launcher-prototype/check-desktop-login.sh script` một lần; người dùng cần sẵn sàng đăng nhập lại. Việc này không chặn bootstrap, vì vẫn có fallback chọn folder thủ công, và launcher sản phẩm cần kiểm tra login trước và sau khi chạy `--desktop`. Ghi kết quả vào evidence của spike.
-3. Các profile và thư mục dữ liệu dùng cho spike vẫn được giữ; lệnh dọn dẹp nằm trong README của SPIKE-01, SPIKE-07, SPIKE-08 và SPIKE-09.
+1. **Xác nhận Phase 1 thủ công:** tắt bản cũ đang mở, mở `.app` mới, thêm một project bằng bộ chọn folder thật, tạo task, sửa context, thoát rồi mở lại.
+2. **Phase 2 — launchers:** profile manager, launcher adapters và platform adapters theo TDD §5.2, ADR-009, ADR-013, ADR-014, launch history. Trước khi bắt đầu, xem các thay đổi chưa commit.
+3. **Kiểm tra lại rủi ro login của SPIKE-09:** khi token của profile A đã cũ (ít nhất một ngày sau lần đăng nhập 2026-11-01 12:54 UTC), chạy `spikes/09-electron-launcher-prototype/check-desktop-login.sh script` một lần; người dùng cần sẵn sàng đăng nhập lại. Việc này không chặn bootstrap, vì vẫn có fallback chọn folder thủ công, và launcher sản phẩm cần kiểm tra login trước và sau khi chạy `--desktop`. Ghi kết quả vào evidence của spike.
+4. Các profile và thư mục dữ liệu dùng cho spike vẫn được giữ; lệnh dọn dẹp nằm trong README của SPIKE-01, SPIKE-07, SPIKE-08 và SPIKE-09.
 
 ## Bàn giao cho phiên tiếp theo
 
