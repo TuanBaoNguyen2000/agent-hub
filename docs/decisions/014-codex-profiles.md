@@ -25,7 +25,7 @@ Kết quả Phase 0 trên macOS:
 6. **Ranh giới dữ liệu:** `auth.json` trong `CODEX_HOME` và thư mục dữ liệu của instance phụ được xem như credential store. AgentHub không mở, sao chép, backup, đồng bộ hay ghi log nội dung của chúng. Không sửa, giải nén hay re-sign `ChatGPT.app`.
 7. **Không tự sao chép config giữa các profile.** `CODEX_HOME` mới không có `config.toml`, MCP server, plugin hay `AGENTS.md` của profile mặc định; người dùng tự cấu hình. `config.toml` có thể chứa thông tin của MCP server nên không được sao chép tự động.
 8. **Người dùng chọn profile cho từng lần mở.** Không tự xoay profile khi hết quota (TDD §1.4). Allowlist project–profile (TDD §11) đặc biệt áp dụng để project công ty không mở bằng account cá nhân.
-9. **Mức capability là `conditional`,** kiểm tra theo version CLI và app; khi không đạt thì quay về manual flow của ADR-006. Phạm vi: dùng cá nhân (giả định TDD §16 câu 3), chỉ macOS. Windows là `Not run` cho đến khi chạy SPIKE-08 trên Windows.
+9. **Mức capability là `conditional`,** kiểm tra theo version CLI và app; khi không đạt thì quay về manual flow của ADR-006. Phạm vi: dùng cá nhân (người dùng xác nhận 2026-11-01, TDD §16 câu 3), chỉ macOS. Windows là `Not run` cho đến khi chạy SPIKE-08 trên Windows.
 
 ## Consequences
 
@@ -35,7 +35,7 @@ Kết quả Phase 0 trên macOS:
 - Codex CLI tự cập nhật (0.155.1 lên 0.166.0 trong ngày SPIKE-08), nên launcher phải đọc version mỗi lần chạy.
 - Workspace Business có thể bị admin giới hạn: chặn đăng nhập bằng mã, hoặc khoá vào một workspace (`forced_chatgpt_workspace_id`). AgentHub phải hiển thị lỗi đó, không coi là launch thành công.
 - `platform` dùng chung adapter mở instance và theo dõi PID với ADR-013. `integrations` cần capability mapping cho Codex CLI và ChatGPT.app.
-- Chưa kiểm tra resume trong cùng profile, chưa kiểm tra lệnh mở từ app Electron đóng gói, và chưa kiểm tra qua bản cập nhật ChatGPT.app.
+- Chưa kiểm tra resume trong cùng profile. [SPIKE-09](../../spikes/09-electron-launcher-prototype/evidence/2026-11-01-macos.md) đã chạy lệnh mở từ app Electron mở bằng Finder, người dùng báo đúng account B, kể cả sau khi ChatGPT.app cập nhật lên 26.1027.51404. Vì `open` chuyển env của process gọi sang instance, lệnh mở phải chạy với env allowlist.
 - Trước khi phân phối cho người khác, phải review Business Terms và Usage Policies, và có thể phải bỏ tính năng này.
 
 ## Related decisions

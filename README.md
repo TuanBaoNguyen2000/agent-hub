@@ -6,9 +6,9 @@ AgentHub là desktop application dự kiến cho macOS và Windows, quản lý *
 
 ## Trạng thái hiện tại
 
-**Repository foundation — chưa bắt đầu Phase 0.** Repo đã có cấu trúc thư mục và tài liệu ban đầu; chưa có mã ứng dụng, workspace manifests, dependencies hay lệnh build/test/run. Những thư mục mã nguồn hiện là scaffold, chưa phải package có thể build.
+**Phase 0 đã đạt exit review trên macOS, chưa bootstrap; Windows chưa kiểm thử** ([chi tiết](docs/feasibility.md#exit-review)). Repo có cấu trúc thư mục, tài liệu và các spike thử nghiệm; chưa có mã ứng dụng, workspace manifests, dependencies hay lệnh build/test/run của sản phẩm. Những thư mục mã nguồn hiện là scaffold, chưa phải package có thể build.
 
-Stack đã chọn: Electron + React + TypeScript; SQLite cho metadata, Markdown/YAML cho context artifacts. Package manager, build tool, runtime versions và dependency versions chưa được chốt. Tài liệu dùng tiếng Việt, giữ tên file và thuật ngữ kỹ thuật bằng tiếng Anh.
+Stack đã chọn: Electron + React + TypeScript; SQLite cho metadata, Markdown/YAML cho context artifacts. Tooling đã chọn nhưng chưa chạy thử: npm workspaces, electron-vite, electron-builder ([ADR-016](docs/decisions/016-workspace-and-build-tooling.md)). Runtime versions và dependency versions chưa được chốt. Tài liệu dùng tiếng Việt, giữ tên file và thuật ngữ kỹ thuật bằng tiếng Anh.
 
 ## Bắt đầu đọc
 
@@ -38,7 +38,7 @@ Cây thư mục đầy đủ ở [TDD §4.3](docs/TDD.md#43-folderrepository-str
 - Smart Switch dựa trên rules; phân biệt bước tự động, có điều kiện và thủ công.
 - Ghi trạng thái đúng mức có thể kiểm chứng; mở app không đồng nghĩa đã chuyển account hay resume session.
 
-MVP không xây lại chat UI, không sao chép native chat history và không gọi trực tiếp model APIs. Tích hợp provider trong TDD là thiết kế cần xác minh bằng Phase 0, chưa phải compatibility được kiểm thử.
+MVP không xây lại chat UI, không sao chép native chat history và không gọi trực tiếp model APIs. Tích hợp provider trong TDD là thiết kế; mức đã kiểm chứng theo OS và version nằm trong [feasibility.md](docs/feasibility.md).
 
 ## Dữ liệu local
 
@@ -46,4 +46,4 @@ MVP không xây lại chat UI, không sao chép native chat history và không g
 
 ## Phát triển tiếp
 
-Lộ trình ở [ROADMAP.md](docs/ROADMAP.md). Bước tiếp theo là chạy các feasibility spike và ghi bằng chứng trên macOS/Windows. Chỉ khởi tạo tooling ứng dụng sau khi Phase 0 đạt exit criteria.
+Lộ trình ở [ROADMAP.md](docs/ROADMAP.md). Bước tiếp theo là technical bootstrap Phase 1, xem [STATUS.md](docs/STATUS.md#bước-tiếp-theo).

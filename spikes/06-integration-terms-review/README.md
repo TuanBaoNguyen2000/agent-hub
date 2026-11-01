@@ -1,6 +1,6 @@
 # SPIKE-06 — Integration terms/distribution review
 
-**Status:** Pass cho phạm vi personal use (giả định); phạm vi distributed chưa review đầy đủ.
+**Status:** Pass cho phạm vi personal use (người dùng xác nhận phạm vi này ngày 2026-11-01); phạm vi distributed chưa review đầy đủ.
 
 ## Objective
 
@@ -13,7 +13,7 @@ Theo [feasibility.md](../../docs/feasibility.md): có official references, ngày
 ## Phạm vi và giả định
 
 - Review tài liệu, không chạy binary và không đăng nhập. Kết quả áp dụng chung cho macOS và Windows vì tài liệu không phân biệt OS, trừ vị trí lưu credential.
-- Giả định AgentHub là công cụ cá nhân (TDD §16 câu 3 chưa được trả lời). Nếu phân phối cho người khác, cần review lại Consumer/Commercial Terms và OpenAI Terms đầy đủ.
+- AgentHub là công cụ cá nhân: lúc review đây là giả định, người dùng xác nhận ngày 2026-11-01 (TDD §16 câu 3). Nếu phân phối cho người khác, cần review lại Consumer/Commercial Terms và OpenAI Terms đầy đủ.
 
 ## Evidence
 

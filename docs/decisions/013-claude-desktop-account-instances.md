@@ -23,7 +23,7 @@ Kết quả Phase 0 trên macOS:
 5. **Đăng nhập lần đầu cần tắt instance mặc định.** AgentHub phát hiện instance mặc định và yêu cầu người dùng tự tắt; AgentHub không tắt nó. AgentHub chỉ được tắt instance do chính nó mở, theo PID.
 6. **Ranh giới dữ liệu:** thư mục dữ liệu chứa phiên đăng nhập, nên được xem như credential store. AgentHub chỉ tạo thư mục và truyền đường dẫn. Không đọc, sao chép, backup, đồng bộ hay đưa nội dung vào log. Không sửa, clone, re-sign hay giải nén `Claude.app`.
 7. **Người dùng chọn account cho từng lần mở.** Không tự xoay account khi hết quota (TDD §1.4).
-8. **Phạm vi:** dùng cá nhân (giả định TDD §16 câu 3), chỉ macOS. Windows là `Not run` cho đến khi chạy SPIKE-07 trên Windows. Codex Desktop vẫn theo ADR-006.
+8. **Phạm vi:** dùng cá nhân (người dùng xác nhận 2026-11-01, TDD §16 câu 3), chỉ macOS. Windows là `Not run` cho đến khi chạy SPIKE-07 trên Windows. Codex Desktop vẫn theo ADR-006.
 
 ## Consequences
 
@@ -32,7 +32,7 @@ Kết quả Phase 0 trên macOS:
 - `platform` cần adapter mở instance và theo dõi PID. `integrations` cần capability mapping theo version Desktop. `persistence` lưu đường dẫn và alias, không lưu nội dung thư mục.
 - Mỗi account phụ tốn khoảng 361 MB, trong đó có một bản Claude Code riêng.
 - Cơ chế có thể hỏng khi Desktop cập nhật. Cần kiểm tra lại theo version, và luôn giữ manual fallback.
-- Chưa kiểm tra lệnh mở từ app Electron đóng gói; SPIKE-07 chỉ chạy `open` với stdin và stdout là `/dev/null`.
+- [SPIKE-09](../../spikes/09-electron-launcher-prototype/evidence/2026-11-01-macos.md) đã chạy lệnh mở từ app Electron mở bằng Finder, người dùng báo đúng account B. Vì `open` chuyển env của process gọi sang instance, lệnh mở phải chạy với env allowlist.
 - Trước khi phân phối cho người khác, phải review lại terms (gồm Usage Policy) và có thể phải bỏ tính năng này.
 - TDD §1.4 cấm private endpoints và đọc DB/Keychain của app khác. Quyết định này không làm hai việc đó: chỉ khởi chạy app chính thức và để app tự đăng nhập.
 

@@ -1,8 +1,8 @@
 # AgentHub — Technical Design Document (TDD)
 
 > **Project:** AgentHub — Cross-platform AI Agent Workspace & Context Manager  
-> **Version:** 0.1.3 (ADR-013 Claude Desktop account instances, ADR-014 Codex profiles; pre-implementation)  
-> **Updated:** 2026-10-30  
+> **Version:** 0.1.6 (ADR-009, ADR-013–017: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP; Phase 0 macOS exit review; pre-implementation)  
+> **Updated:** 2026-11-01  
 > **Status:** Draft for implementation review  
 > **Platforms:** macOS and Windows  
 > **Language:** Vietnamese (technical identifiers in English)  
@@ -37,8 +37,11 @@ AgentHub là desktop application chạy trên **macOS và Windows** để quản
 | Mục | Quyết định |
 |---|---|
 | Product direction | Hybrid Workspace & Context Manager; không xây lại chat app |
-| Supported OS | macOS, Windows (native-first trên Windows; WSL optional) |
+| Supported OS | macOS, Windows (native-first trên Windows; WSL optional). macOS trước; Windows là milestone riêng (ADR-015) |
 | Desktop stack | Electron + React + TypeScript |
+| Tooling | npm workspaces, electron-vite, electron-builder (ADR-016); versions chốt khi bootstrap |
+| Phạm vi sử dụng | Công cụ cá nhân; Claude Desktop chủ yếu dùng Code tab (§16) |
+| CLI terminal | Terminal ngoài; macOS dùng Terminal.app (ADR-009) |
 | Storage | SQLite cho metadata; Markdown/YAML cho context artifacts |
 | First integrations | Official Claude Code CLI, Codex CLI, native Desktop launcher |
 | Context | Project + Task + Checkpoint + Handoff; độc lập account/provider |
@@ -141,7 +144,7 @@ AgentHub là desktop application chạy trên **macOS và Windows** để quản
 
 ### 2.2. Follow-up requirements (P1)
 
-- FR-101: Git status, diff summaries, commit SHA, check dirty worktree.
+- FR-101: Git status đầy đủ, changed file names, diff summaries. Branch, HEAD SHA và dirty/clean thuộc MVP ([ADR-017](decisions/017-mvp-git-observations.md)).
 - FR-102: Worktree registry; chỉ hỗ trợ tạo/mở worktree sau khi safety checks.
 - FR-103: Tự xác định Unity version và phân biệt Editor instance/worktree.
 - FR-104: Shortcut/hotkey, recent tasks, search trong context artifacts.
@@ -182,9 +185,11 @@ AgentHub là desktop application chạy trên **macOS và Windows** để quản
 | Target | Launch | Set account | Inject context | Get full history | Remarks |
 |---|---|---|---|---|---|
 | Claude CLI | Supported | Conditional via separate supported config dirs | Prompt/file, verified flags | Không cần cho MVP | User tự đăng nhập từng profile |
-| Claude Desktop (Code) | Supported | Manual / not guaranteed | `CLAUDE.md` + user prompt; native resume conditional | Không hứa có API đồng bộ | Phân biệt Code tab với Claude Chat thường |
-| Codex CLI | Supported | Theo auth/config của CLI | Prompt/file instructions | Không cần cho MVP | `AGENTS.md` cho repo instruction |
-| Codex Desktop | Supported | Manual / not guaranteed | Workspace + context file/prompt | Không hứa có API đồng bộ | Workspace open behavior khác giữa OS |
+| Claude Desktop (Code) | Supported | Conditional via account instance (ADR-013); Manual khi không đạt | `CLAUDE.md` + user prompt; native resume conditional | Không hứa có API đồng bộ | Phân biệt Code tab với Claude Chat thường |
+| Codex CLI | Supported | Conditional via `CODEX_HOME` (ADR-014) | Prompt/file instructions | Không cần cho MVP | `AGENTS.md` cho repo instruction |
+| Codex Desktop | Supported | Conditional via instance (ADR-014); Manual khi không đạt | Workspace + context file/prompt | Không hứa có API đồng bộ | Workspace open behavior khác giữa OS |
+
+Bảng này là thiết kế. Mức đã kiểm chứng theo OS và version nằm trong [feasibility.md](feasibility.md#capability-matrix-thực-tế).
 
 **Không đồng nhất các khái niệm:** `open app`, `open workspace`, `resume native session`, `switch account`, `inject prompt`, `sync conversation` là những capabilities độc lập. Launcher chỉ quảng bá capability nào đã được xác nhận.
 
@@ -238,6 +243,7 @@ Khi triển khai Electron, **không** ghép shell command từ input; truyền `
 | SPIKE-06 | Legal/policy review | Documented integration paths, phân biệt personal-only và phân phối |
 | SPIKE-07 | Claude Desktop account instance (bổ sung trong Phase 0) | Instance riêng giữ account khác song song với instance mặc định; Code tab dùng đúng account và config root |
 | SPIKE-08 | Codex profile isolation qua `CODEX_HOME` (bổ sung trong Phase 0) | Hai account tách nhau ở CLI và Desktop; đăng nhập profile mới không đổi profile cũ |
+| SPIKE-09 | Launcher prototype trên Electron (bổ sung trong Phase 0) | Các launch đã chốt chạy được từ app mở bằng Finder, với env allowlist |
 
 **Fallback:** Nếu một launcher không xác minh được session/account, AgentHub vẫn hỗ trợ `Open app` + `Open folder` + `Copy Handoff Prompt`; không chặn toàn bộ workflow.
 
@@ -403,7 +409,7 @@ Preload expose **chỉ** những methods đã định nghĩa; không expose `ipc
 |---|---|---|
 | App data | `~/Library/Application Support/AgentHub/` | `%APPDATA%\AgentHub\` (theo Electron `app.getPath('userData')`) |
 | Open native app | Official CLI hoặc OS open mechanism | Official CLI hoặc OS open mechanism |
-| Terminal | Terminal.app / iTerm if configured | Windows Terminal / PowerShell if configured |
+| Terminal | Terminal.app ([ADR-009](decisions/009-external-terminal.md)); terminal khác chưa có evidence | Windows Terminal / PowerShell if configured |
 | Process args | `spawn(executable, args, { cwd, env })` | Tương tự; xử lý `.cmd`, `PATHEXT` qua safe resolution |
 | Paths | POSIX paths | Win32 paths / case-insensitive / drive letters |
 | Credentials | Provider quản lý; AgentHub không đọc | Provider quản lý; AgentHub không đọc |
@@ -420,8 +426,16 @@ Preload expose **chỉ** những methods đã định nghĩa; không expose `ipc
 - Trên Windows, test cách mở CLI `.exe`/`.cmd` qua launch target được hỗ trợ; không giả định POSIX PTY có trên Windows.
 - Cho phép `cwd` chỉ trong project đã đăng ký hoặc worktree được người dùng chọn.
 - Không tự đóng native Desktop app khi người dùng đóng AgentHub.
-- Không tự kill terminal/CLI process đã detach nếu chưa có quyết định lifecycle được ghi rõ.
+- Không tự kill terminal/CLI process đã detach (ADR-009).
 - Capture launch exit code/stderr giới hạn, redact credentials và paths nhạy cảm trong diagnostic logs.
+
+**Điều kiện trên macOS từ [SPIKE-09](../spikes/09-electron-launcher-prototype/evidence/2026-11-01-macos.md):**
+
+- Dựng env của child process từ allowlist, kể cả khi gọi `open`, vì `open` chuyển env của process gọi sang app được mở. Môi trường GUI không có `LANG`, nên launcher tự đặt.
+- App mở từ Finder không thấy CLI cài qua nvm trên `PATH`, và `zsh -lc` cũng không thấy. Dùng `zsh -ilc`, có timeout, với dự phòng quét thư mục; thêm thư mục của executable vào `PATH` của child process.
+- `claude --desktop` từ chối pipe; chạy qua pty (`/usr/bin/script` đủ dùng). Kiểm tra `claude auth status` trước và sau khi chạy, và báo rõ nếu login bị mất; chỉ báo "đã gửi lệnh mở", không dựa vào exit code.
+- Mở CLI tương tác bằng file `.command` dùng một lần trong thư mục tạm riêng, giá trị được quote đầy đủ và dùng `env -i`. Cách này cho PID và exit status, không có handle của cửa sổ Terminal (ADR-009).
+- CLI có thể để lại process nền (daemon của Codex); exit status không có nghĩa là profile đã hết process.
 
 ### 5.3. Windows-native vs WSL
 
@@ -813,9 +827,13 @@ sequenceDiagram
 
 ## 10. Git and Unity integration
 
-### 10.1. Read-only MVP observations
+### 10.1. Read-only observations
 
-- Git repo root, current branch, current commit SHA, dirty/clean, changed file names.
+**MVP ([ADR-017](decisions/017-mvp-git-observations.md)):** Git repo root, current branch, current commit SHA, dirty/clean. Project không phải Git repo có observation `unknown`.
+
+**P1 (Phase 4):**
+
+- Changed file names.
 - Unity version từ `ProjectSettings/ProjectVersion.txt` nếu file tồn tại.
 - Nhận biết một project Unity bằng các dấu hiệu như `Assets/`, `Packages/`, `ProjectSettings/`; không yêu cầu mọi registered project đều là Unity.
 - Cho phép người dùng chỉ định Unity Editor path/active worktree thủ công nếu có nhiều project copies.
@@ -923,6 +941,10 @@ Một Task có thể có `worktreeId` và `workspacePath` riêng. Khi tạo/mở
 
 **Exit criteria:** Có bảng capability thực tế; những điểm không hỗ trợ có fallback manual rõ ràng; không có giả định block toàn bộ workflow.
 
+Theo [ADR-015](decisions/015-macos-first-delivery.md), exit criteria của Phase 0–3 được đánh giá trên macOS; các yêu cầu Windows trong các phase này chuyển sang milestone Windows parity và giữ `Not run` cho đến lúc đó.
+
+**Kết quả (2026-11-01):** đạt exit criteria trên macOS, có điều kiện. Kết luận, fallback và rủi ro còn mở nằm trong [exit review](feasibility.md#exit-review).
+
 ### Phase 1 — Cross-platform shell and data
 
 **Deliverables:** Electron UI, Project/Task CRUD, SQLite migrations, artifact store, basic settings.
@@ -937,13 +959,13 @@ Một Task có thể có `worktreeId` và `workspacePath` riêng. Khi tạo/mở
 
 ### Phase 3 — Checkpoint & Handoff engine (**MVP complete**)
 
-**Deliverables:** Checkpoint editor, handoff generator, Smart Switch wizard, copy/open context, manual confirmation.
+**Deliverables:** Checkpoint editor, handoff generator, Smart Switch wizard, copy/open context, manual confirmation, Git observation tối thiểu và cảnh báo branch/SHA (ADR-017).
 
 **Exit criteria:** Chạy thành công scenarios A–D ở §9.4, bao gồm chat mới cùng account, Claude A → Claude B và Claude → Codex Desktop/CLI. Không dùng model APIs.
 
 ### Phase 4 — Git/Unity context (P1)
 
-**Deliverables:** Git observations, Unity version detector, branch/SHA stale warnings.
+**Deliverables:** Git observations mở rộng (changed files, diff summary), Unity version detector, stale warnings mở rộng.
 
 **Exit criteria:** Handoff ghi đúng branch/SHA và changed file names; cảnh báo khi branch changed; không thay đổi file Unity.
 
@@ -1017,12 +1039,15 @@ Một Task có thể có `worktreeId` và `workspacePath` riêng. Khi tạo/mở
 | ADR-006 | Native Desktop account switch is manual fallback | Accepted for MVP; sửa đổi bởi ADR-013 (Claude Desktop) và ADR-014 (Codex Desktop) | Chưa có public capability chung đáng tin cậy; vẫn áp dụng cho app chính và làm fallback |
 | ADR-007 | No direct inference API/SDK in MVP | Accepted | Tránh scope/terms/auth complexity không cần thiết |
 | ADR-008 | Git read-only observation first | Accepted | Giảm nguy cơ sửa nhầm Unity project |
-| ADR-009 | CLI terminal: external vs embedded | Open | MVP external terminal; optional embedded after validation |
-| ADR-010 | Windows minimum version | Open | Test Windows 11 first; decide Windows 10 later |
+| [ADR-009](decisions/009-external-terminal.md) | CLI terminal: external, Terminal.app trên macOS | Accepted for MVP | SPIKE-09: mở được qua `.command`, không cần quyền Automation; embedded xem xét ở P1 |
+| ADR-010 | Windows minimum version | Open | Test Windows 11 first; decide Windows 10 later; chuyển sang milestone Windows parity (ADR-015) |
 | ADR-011 | Context export policy | Open | Opt-in per task/project; không tự commit credentials |
 | [ADR-012](decisions/012-initial-package-boundaries.md) | Monorepo package boundaries from the start | Accepted | Tách domain, application, contracts và hạ tầng ngay trong cấu trúc ban đầu |
 | [ADR-013](decisions/013-claude-desktop-account-instances.md) | Claude Desktop account instances | Accepted for MVP (opt-in, conditional) | SPIKE-07: instance với thư mục dữ liệu riêng và `CLAUDE_CONFIG_DIR` giữ account khác; không tài liệu hoá, có manual fallback |
 | [ADR-014](decisions/014-codex-profiles.md) | Codex profiles (CLI and Desktop) | Accepted for MVP (opt-in, conditional) | SPIKE-08: `CODEX_HOME` riêng tách account cho CLI và cho instance ChatGPT.app riêng; không tài liệu hoá, có manual fallback |
+| [ADR-015](decisions/015-macos-first-delivery.md) | macOS-first delivery | Accepted | Chưa có môi trường Windows; gate Phase 0–3 đánh giá trên macOS, Windows thành milestone riêng |
+| [ADR-016](decisions/016-workspace-and-build-tooling.md) | npm workspaces, electron-vite, electron-builder | Accepted; chưa kiểm chứng bằng build thật | Có sẵn trên máy, hỗ trợ đa nền tảng; bootstrap phải build và đóng gói được `.app` tối thiểu |
+| [ADR-017](decisions/017-mvp-git-observations.md) | Git observation tối thiểu trong MVP | Accepted | Branch, SHA, dirty đủ cho checkpoint và Scenario D; phần mở rộng ở P1 |
 
 Các ADR-001–ADR-011 hiện được ghi trong bảng này. [ADR index](decisions/README.md) dẫn đến nguồn của từng quyết định; chưa tạo bản sao riêng cho các ADR cũ.
 
@@ -1030,9 +1055,9 @@ Các ADR-001–ADR-011 hiện được ghi trong bảng này. [ADR index](decisi
 
 ## 16. Open questions and explicit assumptions
 
-1. **Claude Desktop scope:** Bạn chủ yếu dùng Claude Code **Code tab** hay Claude Chat thông thường? Hai chế độ khác nhau về khả năng đọc local project context. MVP phải hỗ trợ manual attachment/prompt cho chế độ không tự đọc file.
+1. **Claude Desktop scope (đã chốt 2026-11-01):** Code tab là chính. Chat dùng dán prompt thủ công, vì SPIKE-04 cho thấy Chat không nạp project instructions.
 2. **Account identities:** Hai Claude accounts là personal subscriptions, organization identities hay hỗn hợp? Điều này ảnh hưởng điều kiện Desktop resume, project allowlist và legal compliance.
-3. **Distribution:** AgentHub là công cụ cá nhân hay dự định công bố/bán cho người khác? Tình huống phân phối cần compliance review nghiêm ngặt hơn.
+3. **Distribution (đã chốt 2026-11-01):** AgentHub là công cụ cá nhân. Nếu sau này phân phối cho người khác, phải review lại terms đầy đủ và có thể phải bỏ ADR-013, ADR-014.
 4. **Windows support:** Windows 11 x64 có đủ cho MVP không, hay cần Windows 10/ARM64?
 5. **Task source:** Tạo task trong AgentHub, nhập từ Notion/Jira, hay chỉ link tới tài liệu ngoài? MVP mặc định task tạo thủ công.
 6. **Context update:** User chủ động bấm `Checkpoint Now` hay muốn hook hỗ trợ agent cập nhật file tự động? Mặc định user-triggered để kiểm soát nguồn dữ liệu.
@@ -1051,6 +1076,7 @@ Các ADR-001–ADR-011 hiện được ghi trong bảng này. [ADR index](decisi
 |---|---|---|
 | Native Desktop account switching không có API | High | Account instance cho Claude Desktop (ADR-013) và Codex Desktop (ADR-014), kiểm tra theo version; confirm account manually; CLI profile switching |
 | Desktop cập nhật làm hỏng account instance | Medium | Capability gating theo version; manual fallback ADR-006 |
+| Login CLI mất sau khi mở Desktop (đã gặp một lần ở SPIKE-09, chưa rõ nguyên nhân) | Medium | Kiểm tra `claude auth status` trước và sau; báo người dùng đăng nhập lại; không đọc credential store |
 | Claude integration/policy thay đổi | High | Official binaries, capability gating, periodic review |
 | User hết quota trước checkpoint | High | Periodic user checkpoints; partial handoff từ Git/metadata |
 | Context stale sau nhiều chỉnh sửa ngoài AgentHub | High | SHA/branch + manual validation; staleness warnings |
@@ -1095,8 +1121,8 @@ Các link sau là **tài liệu bên ngoài** đã được sử dụng để x�
 ## 19. Immediate next steps for repository bootstrap
 
 1. Repository foundation đã được chuẩn bị: tài liệu này ở `docs/TDD.md`, các entrypoint, tài liệu phát triển và thư mục theo §4.3. Xem [STATUS.md](STATUS.md) để biết phần thực tế đã hoàn thành.
-2. Bắt đầu Phase 0 theo [feasibility.md](feasibility.md), ghi OS, exact CLI/Desktop versions, auth mode và bằng chứng từng spike. Những mục chưa chạy phải giữ trạng thái `Not run`.
-3. Chốt các quyết định tooling và các câu hỏi ảnh hưởng bootstrap dựa trên kết quả Phase 0; ghi ADR nếu cần.
+2. Phase 0 theo [feasibility.md](feasibility.md) đã đạt exit review trên macOS (2026-11-01). Ghi OS, exact CLI/Desktop versions, auth mode và bằng chứng từng spike khi kiểm tra lại. Những mục chưa chạy, gồm toàn bộ Windows, phải giữ trạng thái `Not run`.
+3. Các quyết định ảnh hưởng bootstrap đã chốt: ADR-009, ADR-016, ADR-017 và §16 câu 1, câu 3. Versions, test runner và lint chốt khi bootstrap.
 4. Chỉ sau khi Phase 0 pass, khởi tạo workspace manifests, Electron/React/TypeScript và SQLite migrations.
 5. `AGENTS.md` và `CLAUDE.md` cùng dẫn đến `docs/DEVELOPMENT.md`; agent đọc TDD, không tự thêm direct model API/chat UI vào MVP và không thay đổi ADR đã chốt nếu chưa có approval.
 6. Commit chỉ được tạo khi có yêu cầu; repository foundation không tự thực hiện commit.
@@ -1113,4 +1139,4 @@ account switching tự động. Báo lại những giả định cần xác minh
 
 ---
 
-**End of TDD v0.1.3.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3. Cả hai chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.
+**End of TDD v0.1.6.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3; revision 0.1.4 thêm ADR-015 (macOS trước, Windows thành milestone riêng); revision 0.1.5 ghi kết quả exit review Phase 0 trên macOS, thêm SPIKE-09 và điều kiện launcher ở §5.2, cho §3.1 khớp với ADR-013 và ADR-014; revision 0.1.6 ghi ADR-009, ADR-016, ADR-017, tách §10.1 theo MVP và P1, trả lời §16 câu 1 và câu 3. ADR-013 và ADR-014 chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.

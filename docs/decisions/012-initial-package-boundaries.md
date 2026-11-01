@@ -34,7 +34,7 @@ Quy tắc dependency chi tiết được duy trì ở [DEVELOPMENT.md](../DEVELO
 
 ## Amendment — 2026-10-30
 
-Git/Unity Observer trong TDD §4.1 chưa có package triển khai. Người dùng chọn đặt implementation trong `platform` thay vì thêm package mới, vì observer chủ yếu chạy Git CLI và đọc file của project. `application` định nghĩa observation port; `platform` triển khai adapter chỉ đọc, tuân theo ADR-008 và TDD §10.2. Phạm vi Git observation trong MVP so với P1 vẫn là câu hỏi mở trong STATUS.
+Git/Unity Observer trong TDD §4.1 chưa có package triển khai. Người dùng chọn đặt implementation trong `platform` thay vì thêm package mới, vì observer chủ yếu chạy Git CLI và đọc file của project. `application` định nghĩa observation port; `platform` triển khai adapter chỉ đọc, tuân theo ADR-008 và TDD §10.2. Phạm vi Git observation trong MVP so với P1 được chốt ở [ADR-017](017-mvp-git-observations.md).
 
 ## Related decisions
 

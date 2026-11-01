@@ -1,12 +1,15 @@
 # Project status
 
-**Updated:** 2026-10-30  
-**Stage:** Phase 0 in progress — macOS: SPIKE-01–08 xong; còn toàn bộ Windows  
+**Updated:** 2026-11-01  
+**Stage:** Phase 0 đạt exit review trên macOS (2026-11-01), có điều kiện; quyết định trước bootstrap đã chốt, chưa bootstrap. Windows hoãn theo ADR-015, vẫn `Not run`  
 **Application:** Chưa có implementation hoặc build có thể chạy
 
 ## Đã hoàn thành
 
-- Đưa TDD vào `docs/TDD.md` làm bản chính, hiện là revision 0.1.3.
+- [Exit review Phase 0 trên macOS](feasibility.md#exit-review) (2026-11-01): đạt, có điều kiện. Cả bốn scenario của TDD §9.4 có đường chạy khả thi, mỗi capability không tự động có fallback, không còn giả định chặn workflow. Điều kiện launcher ghi ở TDD §5.2.
+- Người dùng chốt các quyết định trước bootstrap (2026-11-01): [ADR-009](decisions/009-external-terminal.md) terminal ngoài, Terminal.app trên macOS; [ADR-016](decisions/016-workspace-and-build-tooling.md) npm workspaces, electron-vite, electron-builder; [ADR-017](decisions/017-mvp-git-observations.md) Git MVP chỉ đọc branch, HEAD SHA, dirty; TDD §16: Code tab là chính, công cụ cá nhân.
+- Đưa TDD vào `docs/TDD.md` làm bản chính, hiện là revision 0.1.6.
+- Ghi [ADR-015](decisions/015-macos-first-delivery.md) (2026-10-30): người dùng chọn làm macOS trước; gate Phase 0–3 đánh giá trên macOS, Windows thành milestone riêng (Windows parity).
 - Ghi [ADR-013](decisions/013-claude-desktop-account-instances.md) (2026-10-30): người dùng chọn đưa account instance của Claude Desktop vào MVP, ở dạng opt-in, `conditional`, có manual fallback.
 - Ghi [ADR-014](decisions/014-codex-profiles.md) (2026-10-30): người dùng chọn đưa nhiều profile Codex qua `CODEX_HOME` vào MVP, cho cả CLI và instance ChatGPT.app riêng, cùng mô hình opt-in, `conditional`; TDD §3.3 được sửa theo.
 - Ghi nhận hướng C — Hybrid, Desktop/CLI ngang hàng, macOS/Windows.
@@ -19,7 +22,7 @@
 ## Phase 0 — tiến độ (2026-10-30)
 
 - **macOS inventory:** macOS 26.5.1 arm64, Claude CLI 2.1.295, codex-cli 0.155.1 (cả hai cài qua npm trong nvm), Claude Desktop 4.29.0; chi tiết trong [feasibility.md](feasibility.md). Không đọc config hoặc credential directories.
-- **SPIKE-06 — Pass (personal scope, giả định):** [evidence](../spikes/06-integration-terms-review/evidence/2026-10-30-docs-review.md). Điểm chính:
+- **SPIKE-06 — Pass (personal scope, người dùng xác nhận 2026-11-01):** [evidence](../spikes/06-integration-terms-review/evidence/2026-10-30-docs-review.md). Điểm chính:
   - `CLAUDE_CONFIG_DIR` là cơ chế chính thức cho nhiều Claude account song song; Keychain entry trên macOS gắn theo config dir.
   - Claude Desktop có cơ chế chính thức để mở workspace và chuyển session CLI (`claude --desktop`, `--resume`, `claude://code/new?q=`); không có cơ chế chọn account, nên ADR-006 vẫn đúng cho account. (Đính chính 2026-10-30: bản review đầu ghi sai là không có.)
   - Claude Code chỉ đọc `AGENTS.md` khi không có `CLAUDE.md`; layout `CLAUDE.md` import `@AGENTS.md` là cách để cả hai agent dùng chung. Codex giới hạn instructions mặc định 32 KiB.
@@ -54,38 +57,46 @@
   - Đăng nhập bằng mã bị chặn với account Business cho đến khi admin bật. Browser tái sử dụng phiên chatgpt.com nên lần đầu B vào nhầm A; cửa sổ riêng tư xử lý được.
   - `codex login status` không báo account nào, nên account Codex chỉ do người dùng xác nhận qua `/status`. CLI tự cập nhật từ 0.155.1 lên 0.166.0 trong ngày.
   - Codex Desktop: instance thứ hai mở với `--user-data-dir` và `CODEX_HOME` của B đã đăng nhập sẵn B, không cần đăng nhập trong app; app chính vẫn là A; login giữ sau khi mở lại. `codex app` vẫn mở folder ở app chính.
+- **SPIKE-09 (macOS, 2026-11-01) — Pass (process observed, màn hình reported):** [evidence](../spikes/09-electron-launcher-prototype/evidence/2026-11-01-macos.md). App Electron 45.2.1 đóng gói thành `.app`, ký ad hoc, người dùng mở từ Finder.
+  - Người dùng xác nhận: `--desktop` và `codex app` mở đúng folder, deep link điền sẵn prompt, instance đúng account B, `/status` đúng account B trong Terminal.app. Login của instance Codex B qua được bản cập nhật ChatGPT.app.
+  - `open` chuyển env của process gọi sang app được mở, và `ppid=1` không chứng minh env sạch. Launcher phải gọi `open` với env allowlist. Từ app mang 33 biến của provider, instance Desktop chỉ nhận đúng biến profile.
+  - Với env sạch, không CLI nào có trên `PATH`; `zsh -lc` cũng không thấy. `zsh -ilc` (khoảng 450 ms) và quét thư mục nvm tìm được cả hai. Codex cần thư mục của executable trên `PATH`.
+  - `open -n --env` chạy được từ Electron cho cả Claude và ChatGPT với path có dấu và khoảng trắng; tìm và tắt được instance theo PID; instance mặc định không đổi.
+  - `claude --desktop` bị từ chối khi dùng pipe, được chấp nhận qua `/usr/bin/script` với exit 0 sau 1,3 giây và không bị treo; không cần native module.
+  - **Rủi ro còn mở, chưa rõ nguyên nhân:** profile A của Claude CLI mất đăng nhập; người dùng không tự đăng xuất. Keychain item được ghi cùng giây với lần `--desktop` qua pty đầu tiên (12:23:23 UTC), và sau đó `auth status` báo `loggedIn: false`; profile B và Codex không bị. Sau khi người dùng đăng nhập lại, bốn lần `--desktop` (Terminal.app, `script`, Electron) đều giữ login và Keychain không đổi. Kết quả này chỉ áp dụng cho token mới và rất có thể cho CLI 2.1.316 (sự cố xảy ra trên 2.1.314); chưa loại trừ `--desktop` khi token đã cũ. Launcher cần kiểm tra login trước và sau.
+  - Daemon của Codex trong `CODEX_HOME` của B vẫn chạy sau khi CLI thoát; exit status của CLI không có nghĩa là profile đã hết process nền.
+  - CLI tương tác mở được trong Terminal.app qua file `.command` dùng một lần, đúng cwd và profile, an toàn với path chứa dấu nháy và `$(...)`, còn chạy sau khi app thoát, có exit status qua file. Không có handle của cửa sổ Terminal.
 
 ## Kiểm chứng
 
-- Đã kiểm tra 134 local links/anchors trong 39 tài liệu Markdown (2026-10-30): không có đích thiếu. Mọi file đang theo dõi dùng LF.
+- Đã kiểm tra 190 local links/anchors trong 45 tài liệu Markdown (2026-11-01): không có đích thiếu. Mọi file đang theo dõi dùng LF (kiểm tra 2026-10-30).
 - `setup-fixtures.sh` đã chạy thử: tạo đúng ba variant, từ chối thư mục cha có instruction files và thư mục không phải fixture.
 - Các kiểm tra này chỉ xác nhận tài liệu/harness; không phải build, kiểm thử sản phẩm hoặc evidence tích hợp provider.
 
 ## Chưa thực hiện hoặc kiểm chứng
 
-- Toàn bộ Windows chưa chạy. Dòng Codex CLI trong capability matrix phần lớn còn `Not run`.
-- Kết quả Desktop ở SPIKE-02/03/04/05 là `reported`: người dùng báo, không có ảnh chụp. SPIKE-04 trên Claude Desktop đo ở 4.29.0, chưa chạy lại trên 4.4212.0.
-- Chưa thử Desktop đăng nhập alias B rồi mở session của profile B; chưa kiểm tra nhận diện account trên Codex Desktop.
-- Chưa kiểm tra launcher qua pty từ Node/Electron và giới hạn độ dài của tham số `q`.
-- Chưa có môi trường Windows.
-- Chưa khởi tạo workspace manifests, package manager, build tool hay dependencies.
+- **Nguyên nhân profile A của Claude CLI mất đăng nhập ở SPIKE-09;** cần chạy lại `check-desktop-login.sh` khi token đã cũ.
+- SPIKE-09 dùng app ký ad hoc, chưa thử luồng notarize và quarantine; mở CLI chỉ thử với Terminal.app.
+- Chưa kiểm tra resume trong cùng profile cho Claude CLI và Codex CLI; chưa kiểm tra giới hạn độ dài của tham số `q`.
+- Kết quả Desktop ở SPIKE-02/03/04/05/07/08/09 là `reported`: người dùng báo, không có ảnh chụp. SPIKE-04 trên Claude Desktop đo ở 4.29.0, chưa chạy lại trên 4.4212.0.
+- Windows: toàn bộ `Not run`, hoãn theo ADR-015.
+- Chưa khởi tạo workspace manifests hay dependencies của sản phẩm. Tooling của ADR-016 chưa được chạy thử.
 - Chưa có UI, IPC implementation, database, migration hoặc launcher sản phẩm.
 
 ## Quyết định còn mở
 
-- Tooling: package manager, build/packaging tool, runtime và dependency versions. Nếu chọn electron-builder, xem lại mục `build/` trong `.gitignore`.
-- ADR-009: terminal lifecycle và external/embedded terminal.
-- ADR-010: minimum Windows version; Windows 11 x64 là test target ban đầu của TDD.
+- Tooling chốt khi bootstrap: runtime và dependency versions, module SQLite, test runner, lint, cách enforce package boundaries, và mục `build/` trong `.gitignore` (ADR-016).
+- ADR-010: minimum Windows version; chuyển sang milestone Windows parity (ADR-015).
 - ADR-011: chi tiết context export policy. SPIKE-06 gợi ý ghi `AGENTS.md` và để `CLAUDE.md` import, giới hạn theo 32 KiB của Codex.
-- TDD §16: đang giả định Code tab (câu 1) và personal use (câu 3); cần người dùng xác nhận.
-- Đổi account nhanh trên Desktop (mục tiêu chính của người dùng): đã chốt trên macOS cho Claude Desktop (ADR-013) và Codex Desktop (ADR-014); còn mở cho Windows (cần SPIKE-07 và SPIKE-08 trên Windows).
-- Phân định Git observations tối thiểu trong MVP và Git/Unity mở rộng ở P1: TDD §7/§9/§10 yêu cầu branch/SHA để kiểm tra context, trong khi §2/§13 đặt phần Git/Unity rộng hơn ở P1.
+- Đổi account nhanh trên Desktop (mục tiêu chính của người dùng): đã chốt trên macOS cho Claude Desktop (ADR-013) và Codex Desktop (ADR-014); Windows thuộc milestone Windows parity.
 
 ## Bước tiếp theo
 
-1. Bổ sung bằng chứng trên Windows, gồm SPIKE-07 và SPIKE-08 cho ADR-013 và ADR-014; nếu chưa có môi trường thì giữ mục Windows `Not run`, không đánh dấu Phase 0 đã pass.
-2. Tổng hợp capability matrix và manual fallback; chốt các quyết định ảnh hưởng bootstrap.
-3. Các profile và thư mục dữ liệu dùng cho spike vẫn được giữ; lệnh dọn dẹp nằm trong README của SPIKE-01, SPIKE-07 và SPIKE-08.
+Chỉ macOS (ADR-015):
+
+1. **Technical bootstrap Phase 1:** tạo npm workspaces theo ADR-012, chọn và pin versions, rồi chứng minh theo ADR-016: build và đóng gói một `.app` tối thiểu, mở bằng Finder, có một package workspace và module SQLite. Trước khi bắt đầu, xem các thay đổi chưa commit.
+2. **Kiểm tra lại rủi ro login của SPIKE-09:** khi token của profile A đã cũ (ít nhất một ngày sau lần đăng nhập 2026-11-01 12:54 UTC), chạy `spikes/09-electron-launcher-prototype/check-desktop-login.sh script` một lần; người dùng cần sẵn sàng đăng nhập lại. Việc này không chặn bootstrap, vì vẫn có fallback chọn folder thủ công, và launcher sản phẩm cần kiểm tra login trước và sau khi chạy `--desktop`. Ghi kết quả vào evidence của spike.
+3. Các profile và thư mục dữ liệu dùng cho spike vẫn được giữ; lệnh dọn dẹp nằm trong README của SPIKE-01, SPIKE-07, SPIKE-08 và SPIKE-09.
 
 ## Bàn giao cho phiên tiếp theo
 
