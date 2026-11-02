@@ -1,6 +1,6 @@
 # Persistence
 
-**Status:** Có SQLite (better-sqlite3), migration 1, backup trước khi nâng schema, context store ghi atomic và tests. Chưa có bảng profile, checkpoint, handoff, launch.
+**Status:** Có SQLite (better-sqlite3), migration 1 và 2, backup trước khi nâng schema, context store ghi atomic và tests. Chưa có bảng checkpoint, handoff.
 
 ## Trách nhiệm
 

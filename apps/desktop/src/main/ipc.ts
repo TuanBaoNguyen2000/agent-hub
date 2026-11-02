@@ -1,10 +1,11 @@
-import type { Workspace } from '@agenthub/application';
+import type { LaunchService, Workspace } from '@agenthub/application';
 import { IpcChannel, type IpcErrorDto, type IpcInput, type IpcOutput, type IpcResult, ipcInput } from '@agenthub/contracts';
 import { DomainError } from '@agenthub/domain';
 import { type IpcMainInvokeEvent, app, dialog, ipcMain, nativeTheme, shell } from 'electron';
 
 interface IpcDependencies {
   workspace: Workspace;
+  launching: LaunchService;
   engineStatus: () => IpcOutput[typeof IpcChannel.systemStatus]['storage'];
   dataDirectory: string;
   isTrustedSender: (event: IpcMainInvokeEvent) => boolean;
@@ -17,7 +18,7 @@ function toErrorDto(error: unknown): IpcErrorDto {
   return { code: 'UNEXPECTED', message: 'Đã xảy ra lỗi không mong đợi.' };
 }
 
-export function registerIpcHandlers({ workspace, engineStatus, dataDirectory, isTrustedSender }: IpcDependencies): void {
+export function registerIpcHandlers({ workspace, launching, engineStatus, dataDirectory, isTrustedSender }: IpcDependencies): void {
   function handle<C extends keyof typeof ipcInput & keyof IpcOutput>(
     channel: C,
     run: (input: IpcInput<C>) => IpcOutput[C] | Promise<IpcOutput[C]>,
@@ -70,6 +71,54 @@ export function registerIpcHandlers({ workspace, engineStatus, dataDirectory, is
   });
   handle(IpcChannel.settingsOpenDataFolder, async () => {
     await shell.openPath(dataDirectory);
+    return null;
+  });
+
+  handle(IpcChannel.profilesList, () => launching.listProfiles());
+  handle(IpcChannel.profilesAdd, (input) => launching.addAccount(input));
+  handle(IpcChannel.profilesUpdate, (input) => launching.updateProfile(input));
+  handle(IpcChannel.profilesRemove, ({ id }) => {
+    launching.removeProfile(id);
+    return null;
+  });
+  handle(IpcChannel.profilesStatus, async ({ id }) => {
+    // Explicit fields: an account fingerprint must never reach the renderer.
+    const status = await launching.profileStatus(id);
+    return {
+      cliPath: status.cliPath,
+      cliVersion: status.cliVersion,
+      login: status.login,
+      loginDetail: status.loginDetail,
+      sameAccountAs: status.sameAccountAs,
+      desktopInstalled: status.desktopInstalled,
+      desktopVersion: status.desktopVersion,
+      desktopVersionHasEvidence: status.desktopVersionHasEvidence,
+    };
+  });
+  handle(IpcChannel.profilesOpenLogin, async ({ id }) => {
+    await launching.openProfileLogin(id);
+    return null;
+  });
+  handle(IpcChannel.permissionsSet, (input) => {
+    launching.setPermission(input);
+    return null;
+  });
+  handle(IpcChannel.launchPlan, async (request) => {
+    // Explicit fields: the plan's internal action holds commands and stays in Main.
+    const { plan, permission, projectName, profileAlias } = await launching.preview(request);
+    return {
+      steps: plan.steps,
+      requiredConfirmations: plan.requiredConfirmations,
+      blocker: plan.blocker,
+      permission,
+      projectName,
+      profileAlias,
+    };
+  });
+  handle(IpcChannel.launchExecute, ({ request, confirmations }) => launching.execute(request, confirmations));
+  handle(IpcChannel.launchHistory, ({ taskId }) => launching.listLaunches(taskId));
+  handle(IpcChannel.launchConfirmAccount, ({ attemptId }) => {
+    launching.confirmAccount(attemptId);
     return null;
   });
 }

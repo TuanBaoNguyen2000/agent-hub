@@ -36,6 +36,14 @@ Kết quả Phase 0 trên macOS:
 - Trước khi phân phối cho người khác, phải review lại terms (gồm Usage Policy) và có thể phải bỏ tính năng này.
 - TDD §1.4 cấm private endpoints và đọc DB/Keychain của app khác. Quyết định này không làm hai việc đó: chỉ khởi chạy app chính thức và để app tự đăng nhập.
 
+## Đề xuất sửa đổi — 2026-11-01, chờ người dùng chấp thuận
+
+Quyết định 3 ghi rằng khi version app chưa có evidence, AgentHub quay về manual flow. Desktop tự cập nhật rất nhanh, nên áp dụng đúng nguyên văn sẽ tắt tính năng sau mỗi lần cập nhật, cho đến khi có bản AgentHub mới. Phase 2 đang triển khai như sau: trên version chưa có evidence, AgentHub không tự mở instance mà hiện cảnh báo; người dùng phải tick xác nhận cho từng lần mở, nếu không thì dùng manual flow. Danh sách version có evidence nằm trong `packages/integrations/src/index.ts`.
+
+## Note — 2026-11-02
+
+Theo góp ý của người dùng, thêm account chỉ cần chọn loại rồi đăng nhập. Account thứ hai trở đi tự có thư mục cấu hình và dữ liệu Desktop trong `~/.agenthub/accounts/<id>/`; thư mục chỉ được tạo khi dùng tới. Cửa sổ Desktop riêng vẫn là opt-in theo nghĩa chỉ mở khi người dùng bấm mở Desktop cho account đó.
+
 ## Related decisions
 
 ADR-002 (Desktop/CLI parity), ADR-006 (manual fallback, vẫn áp dụng cho Codex Desktop, cho instance mặc định và khi cơ chế này không đạt) và ADR-012 (package boundaries).

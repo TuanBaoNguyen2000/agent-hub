@@ -1,6 +1,6 @@
 # Application
 
-**Status:** Có ports và use case `createWorkspace` cho Project, Task, context, settings. Chưa có Smart Switch, handoff, launcher.
+**Status:** Có ports, `createWorkspace` và `createLaunchService` cho Project, Task, context, settings, profile, quyền và launch. Chưa có Smart Switch, handoff.
 
 ## Trách nhiệm
 

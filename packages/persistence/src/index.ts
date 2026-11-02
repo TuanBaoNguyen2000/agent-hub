@@ -1,11 +1,14 @@
 import type {
+  LaunchRepository,
   MetadataStore,
+  PermissionRepository,
+  ProfileRepository,
   ProjectRepository,
   SettingsRepository,
   StoredProject,
   TaskRepository,
 } from '@agenthub/application';
-import type { Project, Task, TaskStatus } from '@agenthub/domain';
+import type { AccountProfile, ClientMode, LaunchAttempt, LaunchOutcome, LaunchStatus, Project, Provider, Task, TaskStatus } from '@agenthub/domain';
 import { type SqliteDatabase, openDatabase, schemaVersion } from './database';
 import { MIGRATIONS } from './migrations';
 
@@ -140,6 +143,122 @@ function settingsRepository(db: SqliteDatabase): SettingsRepository {
   };
 }
 
+interface ProfileRow {
+  id: string;
+  provider: Provider;
+  alias: string;
+  cli_config_root: string | null;
+  desktop_data_dir: string | null;
+  created_at: string;
+}
+
+const toProfile = (row: ProfileRow): AccountProfile => ({
+  id: row.id,
+  provider: row.provider,
+  alias: row.alias,
+  cliConfigRoot: row.cli_config_root,
+  desktopDataDir: row.desktop_data_dir,
+  createdAt: row.created_at,
+});
+
+// A removed profile keeps its row, because launch history refers to it.
+function profileRepository(db: SqliteDatabase): ProfileRepository {
+  const list = db.prepare('SELECT * FROM account_profiles WHERE enabled = 1 ORDER BY provider, alias COLLATE NOCASE');
+  const get = db.prepare('SELECT * FROM account_profiles WHERE id = ? AND enabled = 1');
+  const insert = db.prepare(`
+    INSERT INTO account_profiles (id, provider, alias, cli_config_root, desktop_data_dir, created_at)
+    VALUES (@id, @provider, @alias, @cliConfigRoot, @desktopDataDir, @createdAt)`);
+  const update = db.prepare(`
+    UPDATE account_profiles
+    SET alias = @alias, cli_config_root = @cliConfigRoot, desktop_data_dir = @desktopDataDir
+    WHERE id = @id`);
+  const disable = db.prepare('UPDATE account_profiles SET enabled = 0 WHERE id = ?');
+
+  return {
+    list: () => (list.all() as ProfileRow[]).map(toProfile),
+    get: (id) => {
+      const row = get.get(id) as ProfileRow | undefined;
+      return row && toProfile(row);
+    },
+    insert: (profile) => {
+      insert.run(profile);
+    },
+    update: (profile) => {
+      update.run(profile);
+    },
+    remove: (id) => {
+      disable.run(id);
+    },
+  };
+}
+
+function permissionRepository(db: SqliteDatabase): PermissionRepository {
+  const get = db.prepare('SELECT allowed FROM project_profile_permissions WHERE project_id = ? AND profile_id = ?');
+  const set = db.prepare(`
+    INSERT INTO project_profile_permissions (project_id, profile_id, allowed) VALUES (?, ?, ?)
+    ON CONFLICT(project_id, profile_id) DO UPDATE SET allowed = excluded.allowed`);
+  return {
+    get: (projectId, profileId) => {
+      const row = get.get(projectId, profileId) as { allowed: number } | undefined;
+      return row === undefined ? undefined : row.allowed === 1;
+    },
+    set: (projectId, profileId, allowed) => {
+      set.run(projectId, profileId, allowed ? 1 : 0);
+    },
+  };
+}
+
+interface LaunchRow {
+  id: string;
+  task_id: string;
+  profile_id: string;
+  mode: ClientMode;
+  status: LaunchStatus;
+  error_code: string | null;
+  outcome: string | null;
+  account_confirmed_at: string | null;
+  created_at: string;
+}
+
+const toLaunch = (row: LaunchRow): LaunchAttempt => ({
+  id: row.id,
+  taskId: row.task_id,
+  profileId: row.profile_id,
+  mode: row.mode,
+  status: row.status,
+  errorCode: row.error_code,
+  outcome: row.outcome === null ? null : (JSON.parse(row.outcome) as LaunchOutcome),
+  accountConfirmedAt: row.account_confirmed_at,
+  createdAt: row.created_at,
+});
+
+function launchRepository(db: SqliteDatabase): LaunchRepository {
+  const list = db.prepare('SELECT * FROM launch_attempts WHERE task_id = ? ORDER BY created_at DESC, id LIMIT 50');
+  const get = db.prepare('SELECT * FROM launch_attempts WHERE id = ?');
+  const insert = db.prepare(`
+    INSERT INTO launch_attempts (id, task_id, profile_id, mode, status, created_at)
+    VALUES (@id, @taskId, @profileId, @mode, @status, @createdAt)`);
+  const finish = db.prepare('UPDATE launch_attempts SET status = ?, error_code = ?, outcome = ? WHERE id = ?');
+  const confirm = db.prepare('UPDATE launch_attempts SET account_confirmed_at = ? WHERE id = ?');
+
+  return {
+    list: (taskId) => (list.all(taskId) as LaunchRow[]).map(toLaunch),
+    get: (id) => {
+      const row = get.get(id) as LaunchRow | undefined;
+      return row && toLaunch(row);
+    },
+    insert: (attempt) => {
+      insert.run(attempt);
+    },
+    finish: (id, status, errorCode, outcome) => {
+      finish.run(status, errorCode, outcome === null ? null : JSON.stringify(outcome), id);
+    },
+    confirmAccount: (id, at) => {
+      confirm.run(at, id);
+    },
+  };
+}
+
 export function openMetadataStore(databasePath: string, options: { backupDirectory?: string } = {}): MetadataStore {
   const db = openDatabase(databasePath, MIGRATIONS, options.backupDirectory);
   const engineVersion = (db.prepare('SELECT sqlite_version() AS version').get() as { version: string }).version;
@@ -147,6 +266,9 @@ export function openMetadataStore(databasePath: string, options: { backupDirecto
     projects: projectRepository(db),
     tasks: taskRepository(db),
     settings: settingsRepository(db),
+    profiles: profileRepository(db),
+    permissions: permissionRepository(db),
+    launches: launchRepository(db),
     status: () => ({ engineVersion, schemaVersion: schemaVersion(db) }),
     close: () => {
       db.close();

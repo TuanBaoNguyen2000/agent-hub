@@ -19,6 +19,7 @@
     "@agenthub/application": "*",
     "@agenthub/contracts": "*",
     "@agenthub/domain": "*",
+    "@agenthub/integrations": "*",
     "@agenthub/persistence": "*",
     "@agenthub/platform": "*",
     "@types/node": "24.10.1",

@@ -38,6 +38,14 @@ Kết quả Phase 0 trên macOS:
 - Chưa kiểm tra resume trong cùng profile. [SPIKE-09](../../spikes/09-electron-launcher-prototype/evidence/2026-11-01-macos.md) đã chạy lệnh mở từ app Electron mở bằng Finder, người dùng báo đúng account B, kể cả sau khi ChatGPT.app cập nhật lên 26.1027.51404. Vì `open` chuyển env của process gọi sang instance, lệnh mở phải chạy với env allowlist.
 - Trước khi phân phối cho người khác, phải review Business Terms và Usage Policies, và có thể phải bỏ tính năng này.
 
+## Đề xuất sửa đổi — 2026-11-01, chờ người dùng chấp thuận
+
+Quyết định 9 ghi rằng khi version app chưa có evidence, AgentHub quay về manual flow. Desktop tự cập nhật rất nhanh, nên áp dụng đúng nguyên văn sẽ tắt tính năng sau mỗi lần cập nhật, cho đến khi có bản AgentHub mới. Phase 2 đang triển khai như sau: trên version chưa có evidence, AgentHub không tự mở instance mà hiện cảnh báo; người dùng phải tick xác nhận cho từng lần mở, nếu không thì dùng manual flow. Danh sách version có evidence nằm trong `packages/integrations/src/index.ts`.
+
+## Note — 2026-11-02
+
+Theo góp ý của người dùng, thêm account chỉ cần chọn loại rồi đăng nhập. Account thứ hai trở đi tự có thư mục cấu hình và dữ liệu Desktop trong `~/.agenthub/accounts/<id>/`; thư mục chỉ được tạo khi dùng tới. Cửa sổ Desktop riêng vẫn là opt-in theo nghĩa chỉ mở khi người dùng bấm mở Desktop cho account đó.
+
 ## Related decisions
 
 ADR-002 (Desktop/CLI parity), ADR-006 (manual fallback, vẫn áp dụng cho app chính và khi cơ chế này không đạt), ADR-012 (package boundaries) và [ADR-013](013-claude-desktop-account-instances.md) (cùng mô hình instance cho Claude Desktop).

@@ -1,16 +1,26 @@
 # Project status
 
-**Updated:** 2026-11-01  
-**Stage:** Phase 1 đạt exit criteria trên macOS (2026-11-01), E2E đạt, chờ người dùng thử bộ chọn folder thật; chưa bắt đầu Phase 2. Windows hoãn theo ADR-015, vẫn `Not run`  
-**Application:** Quản lý được Project, Task, context Markdown và settings; chưa có profile, launcher, checkpoint hay handoff. `npm run package` tạo `.app` ký ad hoc
+**Updated:** 2026-11-02  
+**Stage:** Phase 2 đủ deliverables trên macOS, UX đã làm lại theo góp ý của người dùng (2026-11-02); E2E và native smoke đạt, chờ thử với account thật. Việc tiếp theo là duy trì context giữa các account (Phase 3). Windows hoãn theo ADR-015, vẫn `Not run`  
+**Application:** Quản lý Project, Task, context, account; mở Claude/Codex bằng Desktop hoặc Terminal từ một task. Chưa có checkpoint, handoff, Smart Switch. `npm run package` tạo `.app` ký ad hoc
 
 ## Đã hoàn thành
 
+- **Làm lại UX theo góp ý của người dùng (2026-11-02):**
+  - **Thêm account:** bấm Thêm, chọn Claude hoặc Codex, rồi đăng nhập bằng flow chính thức; app tự theo dõi đến khi đăng nhập xong. Account đầu tiên của mỗi loại dùng cấu hình sẵn có của máy; các account sau được tự tạo thư mục trong `~/.agenthub/accounts/<id>/`. Đường dẫn chỉ hiện trong "Thông tin kỹ thuật".
+  - **Giao diện:** cột trái là cây project và task giống Claude/Codex; tạo task chỉ cần gõ tiêu đề. Một account có hai nút mở, Desktop và Terminal; app chỉ hỏi lại khi cần quyết định (lần đầu ghép account với project, version chưa kiểm chứng, lần đầu đăng nhập cửa sổ Desktop). Khác với FR-011 và TDD §3.4: khi không có gì cần quyết định thì không hiện kế hoạch trước khi mở, các bước thủ công hiện ở kết quả sau khi mở.
+  - **Hướng sản phẩm:** người dùng xác nhận không xây lại khung chat; nếu sau này cần thì chọn CLI nhúng trong app (ghi ở ADR-009). ADR-003 và ADR-007 không đổi.
+- **Phase 2 (2026-11-01, macOS):**
+  - **Profile:** alias, provider, thư mục cấu hình CLI, thư mục dữ liệu Desktop tuỳ chọn (FR-003); không lưu secret. Từ chối cấu hình trùng, instance thiếu một trong hai thư mục, và thư mục dữ liệu mặc định của app. Có nút kiểm tra trạng thái và đăng nhập trong Terminal; hai profile Claude cùng account thì có cảnh báo, so bằng hash.
+  - **Launcher 4 target:** Claude và Codex, Desktop và CLI ngang hàng, không chọn sẵn (FR-004–007). Trước khi mở có kế hoạch ghi rõ từng bước tự động, có điều kiện hay thủ công. CLI mở trong Terminal.app (ADR-009); instance theo ADR-013, ADR-014; `claude --desktop` qua pty, có kiểm tra login trước và sau, lỗi thì quay về mở app và chọn folder tay.
+  - **Quyền project–profile (FR-016):** cặp mới phải được cho phép rõ ràng; cặp bị từ chối thì không mở được, kiểm tra ở Main.
+  - **Lịch sử:** ghi mỗi lần mở, kể cả thất bại. Kết quả không bao giờ là `switched`; account là `Account chưa xác minh` cho đến khi người dùng xác nhận (FR-014).
+  - **Kiểm chứng (sau khi làm lại UX, 2026-11-02):** 129 test; 18 bài E2E chạy trên `.app`; 2 bài native trên `.app` mở Terminal.app và instance Claude Desktop thật, với CLI giả, từ env nhiễm: chỉ có biến allowlist, cwd đúng với path hostile, Desktop chính không đổi. Test chạy thật đã bắt lỗi `status` là biến chỉ đọc trong zsh.
 - **Phase 1 (2026-11-01, macOS):**
   - **Tính năng:** thêm, đổi tên, chọn lại folder, gỡ Project; tạo và sửa Task (FR-001, FR-002); context Markdown cho project và task, gồm `task.md`, `decisions.md` (FR-008); settings: giao diện, thư mục dữ liệu, thông tin phiên bản.
   - **Dữ liệu:** migration 1 trong SQLite, có backup trước khi nâng schema và từ chối database mới hơn app; artifact theo TDD §6.3, ghi atomic, phát hiện xung đột bằng checksum (FR-013).
   - **Bảo vệ:** validate mọi payload IPC bằng zod và kiểm tra sender; single-instance lock; hỏi trước khi bỏ nội dung chưa lưu.
-  - **Kiểm chứng:** 62 test và 10 bài E2E chạy trên bản build và trên `.app`, gồm exit criteria (thêm project, tạo task, sửa context, restart, path có dấu, khoảng trắng, dấu nháy, `$(...)`). Đã xem ảnh chụp UI ở cả hai giao diện.
+  - **Kiểm chứng:** 62 test và 10 bài E2E chạy trên bản build và trên `.app`, gồm exit criteria (thêm project, tạo task, sửa context, restart, path có dấu, khoảng trắng, dấu nháy, `$(...)`). Đã xem ảnh chụp UI ở cả hai giao diện. Người dùng mở `.app` từ Finder, dùng bộ chọn folder thật, tạo task, sửa context, thoát rồi mở lại và báo chạy tốt (reported).
 - **Technical bootstrap (2026-11-01):** npm workspaces cho app và sáu package, TypeScript strict, ESLint kiểm tra package boundaries, Vitest, electron-vite, electron-builder, better-sqlite3 với runner migration. Đường Renderer → Preload → Main → persistence → SQLite chạy được ở dev và trong `.app`; người dùng mở `.app` bằng double-click trong Finder và thấy đúng dữ liệu (reported). Versions và kết quả kiểm chứng ở [ADR-016](decisions/016-workspace-and-build-tooling.md); lệnh ở [DEVELOPMENT](DEVELOPMENT.md#lệnh-phát-triển).
 - [Exit review Phase 0 trên macOS](feasibility.md#exit-review) (2026-11-01): đạt, có điều kiện. Cả bốn scenario của TDD §9.4 có đường chạy khả thi, mỗi capability không tự động có fallback, không còn giả định chặn workflow. Điều kiện launcher ghi ở TDD §5.2.
 - Người dùng chốt các quyết định trước bootstrap (2026-11-01): [ADR-009](decisions/009-external-terminal.md) terminal ngoài, Terminal.app trên macOS; [ADR-016](decisions/016-workspace-and-build-tooling.md) npm workspaces, electron-vite, electron-builder; [ADR-017](decisions/017-mvp-git-observations.md) Git MVP chỉ đọc branch, HEAD SHA, dirty; TDD §16: Code tab là chính, công cụ cá nhân.
@@ -75,7 +85,7 @@
 
 ## Kiểm chứng
 
-- Đã kiểm tra 199 local links/anchors trong 45 tài liệu Markdown (2026-11-01): không có đích thiếu. Mọi file đang theo dõi dùng LF (kiểm tra 2026-10-30).
+- Đã kiểm tra 200 local links/anchors trong 45 tài liệu Markdown (2026-11-02): không có đích thiếu. Mọi file đang theo dõi dùng LF (kiểm tra 2026-10-30).
 - `setup-fixtures.sh` đã chạy thử: tạo đúng ba variant, từ chối thư mục cha có instruction files và thư mục không phải fixture.
 - Các kiểm tra này chỉ xác nhận tài liệu/harness; không phải build, kiểm thử sản phẩm hoặc evidence tích hợp provider.
 
@@ -86,23 +96,25 @@
 - Chưa kiểm tra resume trong cùng profile cho Claude CLI và Codex CLI; chưa kiểm tra giới hạn độ dài của tham số `q`.
 - Kết quả Desktop ở SPIKE-02/03/04/05/07/08/09 là `reported`: người dùng báo, không có ảnh chụp. SPIKE-04 trên Claude Desktop đo ở 4.29.0, chưa chạy lại trên 4.4212.0.
 - Windows: toàn bộ `Not run`, hoãn theo ADR-015.
-- **Bộ chọn folder thật của macOS chưa được thử:** E2E giả lập kết quả của hộp thoại. Migration trên database thật của người dùng (schema 0 lên 1) cũng chưa chạy.
 - Chưa thử hot reload khi sửa code, máy không có toolchain build, và build trên Windows.
+- **Chưa chạy launcher với account và CLI thật:** native smoke dùng CLI giả và thư mục rỗng. Chưa xác nhận: `claude --desktop` từ app sản phẩm, instance đúng account B, nút đăng nhập, `/status`.
 - Giới hạn của Phase 1: project đã gỡ chưa khôi phục được trong app; Context Editor chưa có preview và history (TDD §9.1); chưa có log có rotation (TDD §11.3).
-- Chưa có profile, launcher, checkpoint, handoff, Git observation và Smart Switch: thuộc Phase 2 và Phase 3.
+- Giới hạn của Phase 2: AgentHub không tắt được cửa sổ Desktop đã mở; đường dẫn account chưa tách theo thiết bị; chỉ hỗ trợ Terminal.app; đọc exit status của CLI để P1 (FR-105). Account Claude phụ cần đăng nhập hai lần nếu dùng cả Terminal và Desktop, vì hai bên giữ login riêng (SPIKE-04, SPIKE-07).
+- Chưa có checkpoint, handoff, Git observation và Smart Switch: thuộc Phase 3.
 
 ## Quyết định còn mở
 
 - ADR-010: minimum Windows version; chuyển sang milestone Windows parity (ADR-015).
 - ADR-011: chi tiết context export policy. SPIKE-06 gợi ý ghi `AGENTS.md` và để `CLAUDE.md` import, giới hạn theo 32 KiB của Codex.
 - Đổi account nhanh trên Desktop (mục tiêu chính của người dùng): đã chốt trên macOS cho Claude Desktop (ADR-013) và Codex Desktop (ADR-014); Windows thuộc milestone Windows parity.
+- Đề xuất sửa ADR-013 và ADR-014 cho version Desktop chưa có evidence: cho người dùng tick xác nhận từng lần mở thay vì chỉ có manual flow. Đã triển khai, chờ người dùng chấp thuận.
 
 ## Bước tiếp theo
 
 Chỉ macOS (ADR-015):
 
-1. **Xác nhận Phase 1 thủ công:** tắt bản cũ đang mở, mở `.app` mới, thêm một project bằng bộ chọn folder thật, tạo task, sửa context, thoát rồi mở lại.
-2. **Phase 2 — launchers:** profile manager, launcher adapters và platform adapters theo TDD §5.2, ADR-009, ADR-013, ADR-014, launch history. Trước khi bắt đầu, xem các thay đổi chưa commit.
+1. **Xác nhận Phase 2 với account thật:** mở Claude và Codex bằng Desktop và Terminal theo từng account, kiểm tra account hiển thị và lịch sử.
+2. **Phase 3 — duy trì context, là ưu tiên của người dùng:** checkpoint, handoff, Git observation tối thiểu. Thiết kế đề xuất, chờ người dùng chốt: context ba cấp lưu trong AgentHub, không theo account; nút "Đổi account" dựng handoff rồi mở đúng account kèm context; CLI nhận prompt ban đầu và `--add-dir` tới thư mục artifact của task, Desktop dùng prompt đã copy. `--add-dir` và prompt ban đầu mới kiểm tra qua `--help`, cần spike nhỏ với CLI thật. Trước khi bắt đầu, xem các thay đổi chưa commit.
 3. **Kiểm tra lại rủi ro login của SPIKE-09:** khi token của profile A đã cũ (ít nhất một ngày sau lần đăng nhập 2026-11-01 12:54 UTC), chạy `spikes/09-electron-launcher-prototype/check-desktop-login.sh script` một lần; người dùng cần sẵn sàng đăng nhập lại. Việc này không chặn bootstrap, vì vẫn có fallback chọn folder thủ công, và launcher sản phẩm cần kiểm tra login trước và sau khi chạy `--desktop`. Ghi kết quả vào evidence của spike.
 4. Các profile và thư mục dữ liệu dùng cho spike vẫn được giữ; lệnh dọn dẹp nằm trong README của SPIKE-01, SPIKE-07, SPIKE-08 và SPIKE-09.
 

@@ -1,8 +1,8 @@
 # AgentHub — Technical Design Document (TDD)
 
 > **Project:** AgentHub — Cross-platform AI Agent Workspace & Context Manager  
-> **Version:** 0.1.8 (ADR-009, ADR-013–017: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP; Phase 0 macOS exit review; Phase 1 trên macOS)  
-> **Updated:** 2026-11-01  
+> **Version:** 0.1.10 (ADR-009, ADR-013–017: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP; Phase 0 macOS exit review; Phase 1 và 2 trên macOS)  
+> **Updated:** 2026-11-02  
 > **Status:** Draft for implementation review  
 > **Platforms:** macOS and Windows  
 > **Language:** Vietnamese (technical identifiers in English)  
@@ -542,7 +542,7 @@ CREATE TABLE launch_attempts (
 
 **Implementation rules:** timestamps UTC ISO-8601; IDs UUID; indexes trên `tasks(project_id)`, `checkpoints(task_id, created_at)` và `launch_attempts(task_id, created_at)`; foreign keys enabled; versioned migrations. Không suy ra profile đăng nhập Desktop từ field `profile_id`.
 
-**Đã triển khai (Phase 1):** `projects`, `project_locations`, `tasks` ở migration 1. Khác với draft: `projects` có thêm `removed_at`, vì gỡ project chỉ ẩn nó, không xoá task và artifact (§6.4); thêm bảng `settings(key, value)` cho per-device settings (§6.1). Các bảng còn lại được thêm cùng phase dùng chúng.
+**Đã triển khai (Phase 1):** `projects`, `project_locations`, `tasks` ở migration 1. Khác với draft: `projects` có thêm `removed_at`, vì gỡ project chỉ ẩn nó, không xoá task và artifact (§6.4); thêm bảng `settings(key, value)` cho per-device settings (§6.1). Migration 2 thêm `account_profiles`, `project_profile_permissions`, `launch_attempts`. Khác với draft: `account_profiles` có thêm `desktop_data_dir` (ADR-013, ADR-014); `launch_attempts` có thêm `outcome` (JSON) và `account_confirmed_at` (chỉ ghi khi người dùng xác nhận), chưa có `external_session_ref` vì chưa có native ref nào đã xác minh, và status `planned` được ghi trước khi launch. `checkpoints`, `handoffs` thêm ở Phase 3.
 
 ### 6.3. Local artifact layout
 
@@ -784,6 +784,8 @@ sequenceDiagram
 5. **History:** Launch attempts, checkpoint index, handoff artifacts (not native chat transcript).
 6. **Settings:** Binary discovery, terminal preference, profile config roots, OS behavior, backups.
 
+**Đã triển khai trên macOS (2026-11-02, theo góp ý của người dùng):** cột trái là cây project và task; task mở ra có các tab Context, Quyết định, Chi tiết, Lịch sử. Thêm account chỉ cần chọn loại rồi đăng nhập; UI gọi profile là "account" và giấu đường dẫn. Một account có hai nút mở, Desktop và Terminal, không chọn sẵn. Kế hoạch chỉ hiện trước khi mở nếu có điều cần quyết định.
+
 ### 9.2. Primary flow
 
 `Project → Task → [Checkpoint / New conversation] → Target Provider → Account → Desktop / CLI → Review Plan → Launch → Context supplied`.
@@ -918,6 +920,8 @@ Một Task có thể có `worktreeId` và `workspacePath` riêng. Khi tạo/mở
 | `PROFILE_CONFIG_MISSING` | CLI profile chưa setup | Mở setup wizard |
 | `PROJECT_PATH_MISSING` | Project moved/deleted | Relink location |
 | `PROFILE_NOT_ALLOWED` | Project access denied | Chọn allowed account hoặc xác nhận policy |
+| `PROFILE_INVALID` | Cấu hình profile không hợp lệ hoặc trùng | Sửa đường dẫn hoặc tên |
+| `CONFIRMATION_REQUIRED` | Kế hoạch cần xác nhận chưa có | Hiện lại mục cần xác nhận |
 | `CONTEXT_STALE` | Git SHA/branch differs | Review changes before handoff |
 | `LAUNCH_UNSUPPORTED` | Feature not supported | Manual fallback |
 | `LAUNCH_FAILED` | Process/OS error | Show sanitized error + retry |
@@ -965,6 +969,8 @@ Theo [ADR-015](decisions/015-macos-first-delivery.md), exit criteria của Phase
 **Deliverables:** Profile manager, Claude/Codex launch adapters, OS-specific launcher, launch audit/history.
 
 **Exit criteria:** Chọn cùng task rồi mở bằng Desktop hoặc CLI từ cùng một UI. Hai Claude CLI profiles hoạt động độc lập. Desktop account chưa xác minh được phải hiển thị là `unverified`, không `switched`.
+
+**Kết quả (2026-11-01):** đủ deliverables trên macOS; E2E và native smoke đạt với CLI giả. Chưa đánh giá xong exit criteria, vì còn cần người dùng thử với account thật (xem [STATUS](STATUS.md)).
 
 ### Phase 3 — Checkpoint & Handoff engine (**MVP complete**)
 
@@ -1148,4 +1154,4 @@ account switching tự động. Báo lại những giả định cần xác minh
 
 ---
 
-**End of TDD v0.1.8.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3; revision 0.1.4 thêm ADR-015 (macOS trước, Windows thành milestone riêng); revision 0.1.5 ghi kết quả exit review Phase 0 trên macOS, thêm SPIKE-09 và điều kiện launcher ở §5.2, cho §3.1 khớp với ADR-013 và ADR-014; revision 0.1.6 ghi ADR-009, ADR-016, ADR-017, tách §10.1 theo MVP và P1, trả lời §16 câu 1 và câu 3; revision 0.1.7 ghi kết quả technical bootstrap; revision 0.1.8 ghi kết quả Phase 1, khác biệt schema ở §6.2 và mã lỗi mới ở §12.2. ADR-013 và ADR-014 chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.
+**End of TDD v0.1.10.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3; revision 0.1.4 thêm ADR-015 (macOS trước, Windows thành milestone riêng); revision 0.1.5 ghi kết quả exit review Phase 0 trên macOS, thêm SPIKE-09 và điều kiện launcher ở §5.2, cho §3.1 khớp với ADR-013 và ADR-014; revision 0.1.6 ghi ADR-009, ADR-016, ADR-017, tách §10.1 theo MVP và P1, trả lời §16 câu 1 và câu 3; revision 0.1.7 ghi kết quả technical bootstrap; revision 0.1.8 ghi kết quả Phase 1, khác biệt schema ở §6.2 và mã lỗi mới ở §12.2; revision 0.1.9 ghi kết quả Phase 2 và khác biệt schema tương ứng; revision 0.1.10 ghi thay đổi UX ở §9.1. ADR-013 và ADR-014 chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.

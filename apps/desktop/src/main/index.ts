@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { type MetadataStore, createWorkspace } from '@agenthub/application';
+import { type MetadataStore, createLaunchService, createWorkspace } from '@agenthub/application';
+import { createLauncher } from '@agenthub/integrations';
 import { createContextStore, openMetadataStore } from '@agenthub/persistence';
-import { createPathInspector } from '@agenthub/platform';
+import { createMacPlatform, createPathInspector } from '@agenthub/platform';
 import { BrowserWindow, app, dialog, nativeTheme, session } from 'electron';
 import { registerIpcHandlers } from './ipc';
 
@@ -72,17 +74,35 @@ function start(): void {
   });
   store = openedStore;
 
+  const paths = createPathInspector();
+  const newId = randomUUID;
+  const now = (): string => new Date().toISOString();
   const workspace = createWorkspace({
     store: openedStore,
     context: createContextStore(join(dataDirectory, 'artifacts')),
-    paths: createPathInspector(),
-    newId: randomUUID,
-    now: () => new Date().toISOString(),
+    paths,
+    newId,
+    now,
+  });
+  const platform = createMacPlatform();
+  // Dev runs and tests keep accounts inside their own data folder, away from real logins.
+  const usesOwnData = !app.isPackaged || app.commandLine.hasSwitch('user-data-dir');
+  const accountsRoot = usesOwnData ? join(dataDirectory, 'accounts') : join(homedir(), '.agenthub', 'accounts');
+  const launching = createLaunchService({
+    store: openedStore,
+    launcher: createLauncher(platform),
+    platform,
+    paths,
+    deviceId: () => workspace.getSettings().deviceId,
+    newId,
+    now,
+    accountDirectories: (id) => ({ cli: join(accountsRoot, id, 'cli'), desktop: join(accountsRoot, id, 'desktop') }),
   });
   nativeTheme.themeSource = workspace.getSettings().theme;
 
   registerIpcHandlers({
     workspace,
+    launching,
     engineStatus: () => openedStore.status(),
     dataDirectory,
     isTrustedSender: (event) => isAppUrl(event.senderFrame?.url ?? ''),

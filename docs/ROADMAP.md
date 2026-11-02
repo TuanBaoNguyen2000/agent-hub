@@ -22,7 +22,7 @@ Các milestone dưới đây theo quan hệ phụ thuộc, không phải lịch 
 ## Công việc gần nhất
 
 - Phase 0 đã đạt [exit review](feasibility.md#exit-review) trên macOS; Windows thuộc milestone Windows parity.
-- Phase 1 đã đạt exit criteria trên macOS. Làm tiếp Phase 2: profile manager, launcher adapters, platform adapters và launch history, theo điều kiện ở [TDD §5.2](TDD.md#52-process-launching-safety).
+- Phase 2 đã có đủ deliverables trên macOS, chờ người dùng thử với account thật. Ưu tiên tiếp theo là duy trì context giữa các account: checkpoint, handoff và Git observation tối thiểu ([ADR-017](decisions/017-mvp-git-observations.md)), rồi Smart Switch.
 - Chuyển deliverables thành task có objective và acceptance criteria khi chuẩn bị triển khai từng phase.
 
 ## Quy tắc cập nhật

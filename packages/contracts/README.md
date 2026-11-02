@@ -1,6 +1,6 @@
 # Contracts
 
-**Status:** Có channels, DTOs và schema zod cho mọi payload của Phase 1.
+**Status:** Có channels, DTOs và schema zod cho mọi payload của Phase 1 và 2.
 
 ## Trách nhiệm
 

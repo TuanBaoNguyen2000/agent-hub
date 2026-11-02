@@ -1,6 +1,6 @@
 # Platform
 
-**Status:** Có `PathInspector`. Chưa có adapter process, terminal, Git; thuộc Phase 2 và Phase 3.
+**Status:** Có adapter macOS cho env allowlist, tìm CLI, process, pty, Terminal.app, mở app và instance, kèm tests. Chưa có adapter Windows, Git observer.
 
 ## Trách nhiệm
 

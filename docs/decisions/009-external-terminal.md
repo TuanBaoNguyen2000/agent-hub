@@ -19,11 +19,16 @@
 ## Consequences
 
 - Không cần native PTY module cho CLI tương tác, nên packaging đơn giản hơn.
+- Đã triển khai trong `packages/platform` (Phase 2). Script tự xoá thư mục trạng thái khi CLI thoát, nên exit status chưa được đọc; FR-105 ở P1 sẽ quyết định việc này.
 - AgentHub không có handle của cửa sổ Terminal, nên không focus hay đóng lại được cửa sổ đó. Cửa sổ có thể còn lại sau khi CLI thoát.
 - Rc file của người dùng vẫn chạy trong shell ngoài do Terminal mở, nhưng không ảnh hưởng env của tool.
 - CLI có thể để lại process nền, như daemon của Codex; AgentHub không theo dõi các process này.
 - Terminal trên Windows thuộc milestone Windows parity ([ADR-015](015-macos-first-delivery.md)).
 - `claude --desktop` không thuộc quyết định này: lệnh đó chỉ cần pty ngắn hạn qua `/usr/bin/script`, không mở terminal cho người dùng ([TDD §5.2](../TDD.md#52-process-launching-safety)).
+
+## Note — 2026-11-02
+
+Người dùng xác nhận AgentHub không xây lại khung chat. Nếu sau này cần chat ngay trong app, người dùng chọn chạy CLI chính thức trong terminal nhúng (xterm.js và pty), thay vì tự dựng chat trên chế độ JSON của CLI. Khi đó quyết định 1 của ADR này sẽ được sửa. Chưa làm, và chưa có spike.
 
 ## Related decisions
 

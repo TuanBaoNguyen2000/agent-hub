@@ -1,6 +1,6 @@
 # Integrations
 
-**Status:** Có manifest và entrypoint rỗng; launcher thuộc Phase 2.
+**Status:** Có launcher cho Claude/Codex Desktop/CLI, capability theo version và fake-platform tests; chạy với account thật chưa được xác nhận.
 
 ## Trách nhiệm
 
@@ -13,7 +13,7 @@ Bốn launcher adapters: Claude Desktop, Claude CLI, Codex Desktop và Codex CLI
 - Không gọi process/OS trực tiếp; platform adapter thực hiện thao tác hệ thống.
 - Không truy cập provider credentials/private databases hoặc xây lại agent/chat loop.
 - Desktop account alias là target được chọn, không chứng minh account đang đăng nhập.
-- Exact commands/flags chỉ được triển khai sau capability verification; hiện chưa chốt launcher commands.
+- Commands và flags theo evidence ở SPIKE-02, 03, 07, 08, 09; version có evidence nằm trong `src/index.ts`.
 
 ## Kiểm chứng dự kiến
 

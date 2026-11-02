@@ -18,6 +18,17 @@ const api: AgentHubApi = {
   getSettings: () => ipcRenderer.invoke(IpcChannel.settingsGet),
   updateSettings: (input) => ipcRenderer.invoke(IpcChannel.settingsUpdate, input),
   openDataFolder: () => ipcRenderer.invoke(IpcChannel.settingsOpenDataFolder),
+  listProfiles: () => ipcRenderer.invoke(IpcChannel.profilesList),
+  addAccount: (input) => ipcRenderer.invoke(IpcChannel.profilesAdd, input),
+  updateProfile: (input) => ipcRenderer.invoke(IpcChannel.profilesUpdate, input),
+  removeProfile: (input) => ipcRenderer.invoke(IpcChannel.profilesRemove, input),
+  getProfileStatus: (input) => ipcRenderer.invoke(IpcChannel.profilesStatus, input),
+  openProfileLogin: (input) => ipcRenderer.invoke(IpcChannel.profilesOpenLogin, input),
+  setPermission: (input) => ipcRenderer.invoke(IpcChannel.permissionsSet, input),
+  planLaunch: (input) => ipcRenderer.invoke(IpcChannel.launchPlan, input),
+  executeLaunch: (input) => ipcRenderer.invoke(IpcChannel.launchExecute, input),
+  listLaunches: (input) => ipcRenderer.invoke(IpcChannel.launchHistory, input),
+  confirmLaunchAccount: (input) => ipcRenderer.invoke(IpcChannel.launchConfirmAccount, input),
 };
 
 contextBridge.exposeInMainWorld('agentHub', api);

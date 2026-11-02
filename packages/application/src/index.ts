@@ -1,4 +1,20 @@
-import { DomainError, type Project, type Task, type TaskStatus, folderNameOf, isSamePath, requireLabel } from '@agenthub/domain';
+import {
+  type AccountProfile,
+  DomainError,
+  type LaunchAttempt,
+  type LaunchOutcome,
+  type LaunchStatus,
+  type Project,
+  type Task,
+  type TaskStatus,
+  folderNameOf,
+  isSamePath,
+  requireLabel,
+} from '@agenthub/domain';
+
+import { CLI_PATH_KEYS } from './launching';
+
+export * from './launching';
 
 export interface StorageStatus {
   engineVersion: string;
@@ -28,10 +44,34 @@ export interface SettingsRepository {
   set(key: string, value: string): void;
 }
 
+export interface ProfileRepository {
+  list(): AccountProfile[];
+  get(id: string): AccountProfile | undefined;
+  insert(profile: AccountProfile): void;
+  update(profile: AccountProfile): void;
+  remove(id: string): void;
+}
+
+export interface PermissionRepository {
+  get(projectId: string, profileId: string): boolean | undefined;
+  set(projectId: string, profileId: string, allowed: boolean): void;
+}
+
+export interface LaunchRepository {
+  list(taskId: string): LaunchAttempt[];
+  get(id: string): LaunchAttempt | undefined;
+  insert(attempt: Pick<LaunchAttempt, 'id' | 'taskId' | 'profileId' | 'mode' | 'status' | 'createdAt'>): void;
+  finish(id: string, status: LaunchStatus, errorCode: string | null, outcome: LaunchOutcome | null): void;
+  confirmAccount(id: string, at: string): void;
+}
+
 export interface MetadataStore {
   readonly projects: ProjectRepository;
   readonly tasks: TaskRepository;
   readonly settings: SettingsRepository;
+  readonly profiles: ProfileRepository;
+  readonly permissions: PermissionRepository;
+  readonly launches: LaunchRepository;
   status(): StorageStatus;
   close(): void;
 }
@@ -70,6 +110,8 @@ export type Theme = (typeof THEMES)[number];
 export interface Settings {
   deviceId: string;
   theme: Theme;
+  claudeCliPath: string | null;
+  codexCliPath: string | null;
 }
 
 export interface WorkspaceDependencies {
@@ -133,6 +175,16 @@ export function createWorkspace({ store, context, paths, newId, now }: Workspace
     }
     const task = requireTask(reference.taskId);
     return { projectId: task.projectId, taskId: task.id, document: reference.document };
+  }
+
+  function getSettings(): Settings {
+    const theme = store.settings.get(THEME_KEY);
+    return {
+      deviceId: deviceId(),
+      theme: THEMES.find((known) => known === theme) ?? 'system',
+      claudeCliPath: store.settings.get(CLI_PATH_KEYS.claude) || null,
+      codexCliPath: store.settings.get(CLI_PATH_KEYS.codex) || null,
+    };
   }
 
   return {
@@ -223,14 +275,18 @@ export function createWorkspace({ store, context, paths, newId, now }: Workspace
       return context.write(addressOf(reference), content, expectedRevision);
     },
 
-    getSettings(): Settings {
-      const theme = store.settings.get(THEME_KEY);
-      return { deviceId: deviceId(), theme: THEMES.find((known) => known === theme) ?? 'system' };
-    },
+    getSettings,
 
-    updateSettings(input: { theme: Theme }): Settings {
-      store.settings.set(THEME_KEY, input.theme);
-      return { deviceId: deviceId(), theme: input.theme };
+    updateSettings(input: {
+      theme?: Theme | undefined;
+      claudeCliPath?: string | null | undefined;
+      codexCliPath?: string | null | undefined;
+    }): Settings {
+      if (input.theme !== undefined) store.settings.set(THEME_KEY, input.theme);
+      // An empty value goes back to automatic discovery.
+      if (input.claudeCliPath !== undefined) store.settings.set(CLI_PATH_KEYS.claude, input.claudeCliPath ?? '');
+      if (input.codexCliPath !== undefined) store.settings.set(CLI_PATH_KEYS.codex, input.codexCliPath ?? '');
+      return getSettings();
     },
   };
 }

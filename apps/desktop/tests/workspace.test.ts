@@ -203,7 +203,7 @@ describe('settings', () => {
 
     restart();
 
-    expect(workspace.getSettings()).toEqual({ deviceId, theme: 'dark' });
+    expect(workspace.getSettings()).toEqual({ deviceId, theme: 'dark', claudeCliPath: null, codexCliPath: null });
   });
 
   it('defaults to the system theme', () => {

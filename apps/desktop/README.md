@@ -1,6 +1,6 @@
 # Desktop application
 
-**Status:** Có Project, Task, context editor và settings; chưa có launcher. `tests/` có integration test nối các adapter thật, `tests/e2e/` có E2E trên cửa sổ Electron. Lệnh chạy ở [Development guide](../../docs/DEVELOPMENT.md#lệnh-phát-triển).
+**Status:** Có cây Project và Task, context editor, settings, account và launch; chưa có checkpoint, handoff. `tests/` có integration test nối các adapter thật, `tests/e2e/` có E2E trên cửa sổ Electron. Lệnh chạy ở [Development guide](../../docs/DEVELOPMENT.md#lệnh-phát-triển).
 
 Đây là entrypoint ứng dụng desktop cho macOS/Windows, dùng các package nghiệp vụ và hạ tầng trong repository.
 

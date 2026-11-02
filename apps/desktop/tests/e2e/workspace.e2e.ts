@@ -52,10 +52,14 @@ async function addProject(page: Page, path = projectDir): Promise<void> {
 }
 
 async function createTask(page: Page, title: string): Promise<void> {
-  await page.getByLabel('Tiêu đề task mới').fill(title);
-  await page.getByRole('button', { name: 'Tạo task' }).click();
-  await expect(page.getByLabel('Tiêu đề', { exact: true })).toHaveValue(title);
+  const input = page.getByLabel('Task mới').first();
+  await input.fill(title);
+  await input.press('Enter');
+  await expect(page.getByLabel('Tiêu đề task')).toHaveValue(title);
 }
+
+const tree = (page: Page) => page.getByRole('navigation', { name: 'Projects' });
+const openTab = (page: Page, name: string) => page.getByRole('tab', { name }).click();
 
 function contextEditor(page: Page, label: string) {
   const editor = page.locator('section.editor').filter({ has: page.getByLabel(label) });
@@ -85,11 +89,12 @@ test('Phase 1 exit criteria: project, task and context survive a restart', async
 
   await addProject(page);
   await createTask(page, 'QA-024 — sửa lỗi');
+  await page.getByLabel('Trạng thái').selectOption('active');
+  await openTab(page, 'Chi tiết');
   await page.getByLabel('Mục tiêu').fill('Sửa lỗi spawn');
   await page.getByLabel('Tiêu chí hoàn thành').fill('Không crash');
-  await page.getByLabel('Trạng thái').selectOption('active');
-  await page.getByRole('button', { name: 'Lưu task' }).click();
-  await expect(page.getByRole('button', { name: 'Lưu task' })).toBeDisabled();
+  await page.getByLabel('Mục tiêu').focus();
+  await openTab(page, 'Context');
 
   const context = contextEditor(page, 'Task context');
   await context.text.fill('# Bối cảnh\nGhi chú tiếng Việt — 日本語');
@@ -99,14 +104,73 @@ test('Phase 1 exit criteria: project, task and context survive a restart', async
   page = await restart();
 
   await expect(page.locator('#project-path')).toHaveText(projectDir);
-  await page.getByRole('button', { name: /QA-024/ }).click();
-  await expect(page.getByLabel('Mục tiêu')).toHaveValue('Sửa lỗi spawn');
-  await expect(page.getByLabel('Tiêu chí hoàn thành')).toHaveValue('Không crash');
+  await tree(page).getByRole('button', { name: /QA-024/ }).click();
   await expect(page.getByLabel('Trạng thái')).toHaveValue('active');
   await expect(contextEditor(page, 'Task context').text).toHaveValue('# Bối cảnh\nGhi chú tiếng Việt — 日本語');
+  await openTab(page, 'Chi tiết');
+  await expect(page.getByLabel('Mục tiêu')).toHaveValue('Sửa lỗi spawn');
+  await expect(page.getByLabel('Tiêu chí hoàn thành')).toHaveValue('Không crash');
 
   expect(readdirSync(projectDir)).toEqual([]);
   expect(artifactFiles().some((file) => file.endsWith('task.md'))).toBe(true);
+});
+
+test('tasks live under their project in the sidebar', async () => {
+  const page = await launch();
+  await addProject(page);
+  await createTask(page, 'QA-A');
+
+  const other = join(root, 'Game B');
+  mkdirSync(other);
+  await addProject(page, other);
+  const newTask = tree(page).getByRole('listitem').filter({ hasText: 'Game B' }).getByLabel('Task mới');
+  await newTask.fill('QA-B');
+  await newTask.press('Enter');
+
+  await expect(tree(page).getByRole('button', { name: 'QA-A' })).toBeVisible();
+  await expect(tree(page).getByRole('button', { name: 'QA-B' })).toBeVisible();
+
+  await tree(page).getByRole('button', { name: 'QA-A' }).click();
+  await expect(page.locator('#project-path')).toContainText(projectDir);
+
+  const gameB = tree(page).getByRole('button', { name: 'Game B' });
+  await gameB.click();
+  await expect(page.getByLabel('Tên project')).toHaveValue('Game B');
+  await expect(gameB).toHaveAttribute('aria-expanded', 'true');
+  await gameB.click();
+  await expect(gameB).toHaveAttribute('aria-expanded', 'false');
+  await expect(tree(page).getByRole('button', { name: 'QA-B' })).toBeHidden();
+});
+
+test('renaming a task updates the sidebar', async () => {
+  const page = await launch();
+  await addProject(page);
+  await createTask(page, 'Tên cũ');
+
+  const title = page.getByLabel('Tiêu đề task');
+  await title.fill('Tên mới');
+  await title.press('Enter');
+
+  await expect(tree(page).getByRole('button', { name: 'Tên mới' })).toBeVisible();
+});
+
+test('switching tabs keeps unsaved text', async () => {
+  const page = await launch();
+  await addProject(page);
+  await createTask(page, 'QA-T');
+  const context = contextEditor(page, 'Task context');
+  await context.text.fill('chưa lưu');
+  await expect(page.getByLabel('Mục tiêu')).toBeHidden();
+  await expect(page.getByText('Task này chưa được mở lần nào')).toBeHidden();
+
+  await openTab(page, 'Lịch sử');
+  await expect(page.getByText('Task này chưa được mở lần nào')).toBeVisible();
+  await expect(context.text).toBeHidden();
+  await openTab(page, 'Context');
+
+  await expect(context.text).toHaveValue('chưa lưu');
+  await context.save.click();
+  await expect(context.status).toHaveText('Đã lưu');
 });
 
 test('a project folder that moved can be relinked without losing tasks', async () => {
@@ -125,7 +189,7 @@ test('a project folder that moved can be relinked without losing tasks', async (
 
   await expect(page.locator('#project-path')).toHaveText(moved);
   await expect(page.getByText('Không tìm thấy folder của project')).toBeHidden();
-  await expect(page.getByRole('button', { name: /QA-1/ })).toBeVisible();
+  await expect(tree(page).getByRole('button', { name: /QA-1/ })).toBeVisible();
 });
 
 test('the same folder cannot be added twice', async () => {
@@ -136,7 +200,7 @@ test('the same folder cannot be added twice', async () => {
   await page.getByRole('button', { name: 'Thêm project' }).click();
 
   await expect(page.getByRole('alert')).toContainText('đã được thêm');
-  await expect(page.getByRole('navigation').getByRole('listitem')).toHaveCount(1);
+  await expect(tree(page).getByRole('button', { name: /Dự án/ })).toHaveCount(1);
 });
 
 test('renaming and removing a project leaves its folder alone', async () => {
@@ -146,7 +210,7 @@ test('renaming and removing a project leaves its folder alone', async () => {
   const name = page.getByLabel('Tên project');
   await name.fill('Game A');
   await name.press('Enter');
-  await expect(page.getByRole('navigation').getByRole('button', { name: 'Game A' })).toBeVisible();
+  await expect(tree(page).getByRole('button', { name: 'Game A' })).toBeVisible();
 
   page.once('dialog', (dialog) => void dialog.accept());
   await page.getByRole('button', { name: 'Gỡ khỏi AgentHub' }).click();
@@ -194,12 +258,12 @@ test('leaving a form with unsaved edits asks before discarding them', async () =
   await expect(context.status).toHaveText('Chưa lưu');
 
   page.once('dialog', (dialog) => void dialog.dismiss());
-  await page.getByRole('button', { name: /Danh sách task/ }).click();
+  await page.getByRole('button', { name: 'Cài đặt' }).click();
   await expect(context.text).toHaveValue('chưa lưu');
 
   page.once('dialog', (dialog) => void dialog.accept());
-  await page.getByRole('button', { name: /Danh sách task/ }).click();
-  await expect(page.getByRole('heading', { name: 'Tasks' })).toBeVisible();
+  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await expect(page.getByRole('heading', { name: 'Cài đặt' })).toBeVisible();
 });
 
 test('closing the window with unsaved edits lets the user stay', async () => {
@@ -231,6 +295,124 @@ test('closing the window with unsaved edits lets the user stay', async () => {
   await expect.poll(windowCount).toBe(0);
 });
 
+const accounts = (page: Page) => page.getByRole('region', { name: 'Accounts' });
+
+async function addAccount(page: Page, kind: 'Claude' | 'Codex'): Promise<void> {
+  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  const before = await accounts(page).getByRole('listitem').count();
+  await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
+  await accounts(page).getByRole('button', { name: kind, exact: true }).click();
+  await expect(accounts(page).getByRole('listitem')).toHaveCount(before + 1);
+}
+
+async function setCli(page: Page, label: 'Claude CLI' | 'Codex CLI', path: string): Promise<void> {
+  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await page.getByText('Nâng cao').click();
+  const field = page.getByLabel(label);
+  await field.fill(path);
+  await field.blur();
+  await expect(field).toHaveValue(path);
+}
+
+function fakeClaude(signedIn = true): string {
+  const cli = join(root, 'fake-claude');
+  writeFileSync(
+    cli,
+    `#!/bin/sh\nif [ "$1" = "auth" ] && [ "$2" = "status" ]; then echo '{"loggedIn":${signedIn},"email":"someone@example.com","orgId":"org-1","subscriptionType":"pro"}'; exit 0; fi\nif [ "$1" = "--version" ]; then echo '9.9.9 (Claude Code)'; exit 0; fi\nexit 0\n`,
+    { mode: 0o755 },
+  );
+  return cli;
+}
+
+async function openTaskIn(page: Page, title: string): Promise<void> {
+  await tree(page).getByRole('button', { name: /Dự án/ }).click();
+  const task = tree(page).getByRole('button', { name: title });
+  if (!(await task.isVisible())) await tree(page).getByRole('button', { name: /Dự án/ }).click();
+  await task.click();
+}
+
+test('adding an account asks only for its kind, and hides folders', async () => {
+  let page = await launch();
+  await setCli(page, 'Claude CLI', fakeClaude());
+
+  await addAccount(page, 'Claude');
+  await addAccount(page, 'Claude');
+  await expect(accounts(page).getByLabel('Tên account Claude', { exact: true })).toBeVisible();
+  await expect(accounts(page).getByLabel('Tên account Claude 2')).toBeVisible();
+  await expect(accounts(page).getByText('Đã đăng nhập (pro)').first()).toBeVisible();
+  await expect(accounts(page).getByText(join(userData, 'accounts')).first()).toBeHidden();
+
+  const second = accounts(page).getByLabel('Tên account Claude 2');
+  await second.fill('Công việc');
+  await second.press('Enter');
+  await expect(accounts(page).getByLabel('Tên account Công việc')).toBeVisible();
+
+  page = await restart();
+  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await expect(accounts(page).getByLabel('Tên account Công việc')).toBeVisible();
+});
+
+test('two accounts on the same login are flagged without showing who it is', async () => {
+  const page = await launch();
+  await setCli(page, 'Claude CLI', fakeClaude());
+  await addAccount(page, 'Claude');
+  await addAccount(page, 'Claude');
+
+  await expect(accounts(page).getByText('trùng với').first()).toBeVisible();
+  expect(await page.content()).not.toContain('example.com');
+  const reply = await page.evaluate(async () => {
+    const scope = globalThis as unknown as { agentHub: { listProfiles(): Promise<{ data: { id: string }[] }>; getProfileStatus(input: { id: string }): Promise<unknown> } };
+    const list = await scope.agentHub.listProfiles();
+    return JSON.stringify(await scope.agentHub.getProfileStatus({ id: list.data[0]?.id ?? '' }));
+  });
+  expect(reply).not.toContain('example.com');
+  expect(reply).not.toContain('org-1');
+  expect(reply).not.toContain('ingerprint');
+});
+
+test('a task with no account points to where to add one', async () => {
+  const page = await launch();
+  await addProject(page);
+  await createTask(page, 'QA-N');
+
+  await page.getByRole('button', { name: 'Thêm account' }).click();
+
+  await expect(accounts(page)).toBeVisible();
+});
+
+test('a first launch asks about the project once, and a denied pair stays blocked', async () => {
+  const page = await launch();
+  await addProject(page);
+  await createTask(page, 'QA-6');
+  await setCli(page, 'Claude CLI', join(root, 'không có claude'));
+  await addAccount(page, 'Claude');
+  await openTaskIn(page, 'QA-6');
+
+  await page.getByRole('button', { name: 'Mở trong Terminal' }).click();
+  const decision = page.getByRole('group', { name: 'Cần bạn quyết định' });
+  await expect(decision.getByText('Account này sẽ đọc được source code')).toBeVisible();
+
+  await decision.getByRole('button', { name: 'Không cho phép' }).click();
+  await expect(decision.getByText('không được phép dùng project')).toBeVisible();
+  await expect(decision.getByRole('button', { name: 'Tiếp tục mở' })).toHaveCount(0);
+
+  await decision.getByRole('button', { name: 'Đổi thành cho phép' }).click();
+  await expect(decision.getByText('không được phép dùng project')).toBeHidden();
+});
+
+test('a missing CLI blocks the Terminal launch with a clear reason', async () => {
+  const page = await launch();
+  await addProject(page);
+  await createTask(page, 'QA-7');
+  await setCli(page, 'Claude CLI', join(root, 'không có claude'));
+  await addAccount(page, 'Claude');
+  await openTaskIn(page, 'QA-7');
+
+  await page.getByRole('button', { name: 'Mở trong Terminal' }).click();
+  const decision = page.getByRole('group', { name: 'Cần bạn quyết định' });
+  await expect(decision.getByRole('alert')).toContainText('Không tìm thấy Claude CLI');
+});
+
 function isDark(page: Page): Promise<boolean> {
   return page.evaluate(() => {
     const scope = globalThis as unknown as { matchMedia(query: string): { matches: boolean } };
@@ -241,7 +423,8 @@ function isDark(page: Page): Promise<boolean> {
 test('the theme setting applies and survives a restart', async () => {
   let page = await launch();
   await page.getByRole('button', { name: 'Cài đặt' }).click();
-  await expect(page.locator('#schema-version')).toHaveText('1');
+  await page.getByText('Nâng cao').click();
+  await expect(page.locator('#schema-version')).toHaveText('2');
 
   await page.getByLabel('Giao diện').selectOption('dark');
   await expect(page.getByLabel('Giao diện')).toHaveValue('dark');

@@ -12,5 +12,8 @@
   "dependencies": {
     "@agenthub/application": "*",
     "@agenthub/domain": "*"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1"
   }
 }
