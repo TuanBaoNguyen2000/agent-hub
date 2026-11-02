@@ -79,4 +79,15 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX launch_attempts_task_created ON launch_attempts(task_id, created_at);
     `,
   },
+  {
+    // Names AgentHub made up give way to the account's email (ADR-018); nicknames stay.
+    version: 3,
+    up: `
+      ALTER TABLE account_profiles ADD COLUMN account_email TEXT;
+
+      UPDATE account_profiles SET alias = ''
+      WHERE (provider = 'claude' AND (alias = 'Claude' OR alias GLOB 'Claude [0-9]' OR alias GLOB 'Claude [0-9][0-9]'))
+         OR (provider = 'codex' AND (alias = 'Codex' OR alias GLOB 'Codex [0-9]' OR alias GLOB 'Codex [0-9][0-9]'));
+    `,
+  },
 ];

@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
-import { CLIENT_MODES, IpcChannel, PROVIDERS, TASK_STATUSES, THEMES } from './constants';
+import { ACCOUNT_SOURCES, CLIENT_MODES, IpcChannel, LOGIN_BROWSERS, PROVIDERS, TASK_STATUSES, THEMES } from './constants';
 
-export { CLIENT_MODES, IpcChannel, PROVIDERS, TASK_STATUSES, THEMES };
+export { ACCOUNT_SOURCES, CLIENT_MODES, IpcChannel, LOGIN_BROWSERS, PROVIDERS, TASK_STATUSES, THEMES };
 
 const MAX_PATH_LENGTH = 4096;
 const MAX_LABEL_INPUT = 1000;
@@ -66,11 +66,16 @@ export const ipcInput = {
   }),
   [IpcChannel.settingsOpenDataFolder]: noInput,
   [IpcChannel.profilesList]: noInput,
-  [IpcChannel.profilesAdd]: z.strictObject({ provider: z.enum(PROVIDERS) }),
+  [IpcChannel.profilesAdd]: z.strictObject({ provider: z.enum(PROVIDERS), source: z.enum(ACCOUNT_SOURCES) }),
   [IpcChannel.profilesUpdate]: z.strictObject({ id: idSchema, provider: z.enum(PROVIDERS), ...profileFieldsSchema }),
   [IpcChannel.profilesRemove]: z.strictObject({ id: idSchema }),
   [IpcChannel.profilesStatus]: z.strictObject({ id: idSchema }),
+  [IpcChannel.profilesMachineAccount]: z.strictObject({ provider: z.enum(PROVIDERS) }),
   [IpcChannel.profilesOpenLogin]: z.strictObject({ id: idSchema }),
+  [IpcChannel.profilesLoginState]: z.strictObject({ id: idSchema }),
+  [IpcChannel.profilesLoginReopen]: z.strictObject({ id: idSchema, browser: z.enum(LOGIN_BROWSERS) }),
+  [IpcChannel.profilesLoginCopyLink]: z.strictObject({ id: idSchema }),
+  [IpcChannel.profilesLoginCancel]: z.strictObject({ id: idSchema }),
   [IpcChannel.permissionsSet]: z.strictObject({ projectId: idSchema, profileId: idSchema, allowed: z.boolean() }),
   [IpcChannel.launchPlan]: launchRequestSchema,
   [IpcChannel.launchExecute]: z.strictObject({
@@ -134,10 +139,29 @@ export interface SettingsDto {
 export interface ProfileDto {
   id: string;
   provider: ProviderDto;
+  // What to call the account everywhere: its email, with the nickname if it has one.
+  name: string;
   alias: string;
+  accountEmail: string | null;
   cliConfigRoot: string | null;
   desktopDataDir: string | null;
   createdAt: string;
+}
+
+export interface MachineAccountDto {
+  // False once an account in AgentHub already uses the machine's own login.
+  available: boolean;
+  cliFound: boolean;
+  login: 'logged_in' | 'logged_out' | 'unknown';
+  accountEmail: string | null;
+  loginDetail: string | null;
+}
+
+// 'terminal': the CLI's own flow runs in Terminal, so only the login status tells when it ends.
+export interface LoginStateDto {
+  phase: 'idle' | 'waiting' | 'succeeded' | 'failed' | 'terminal';
+  // The browser holding the private window; null when none could be opened that way.
+  privateBrowser: string | null;
 }
 
 export interface ProfileStatusDto {
@@ -145,6 +169,7 @@ export interface ProfileStatusDto {
   cliVersion: string | null;
   login: 'logged_in' | 'logged_out' | 'unknown';
   loginDetail: string | null;
+  accountEmail: string | null;
   sameAccountAs: string[];
   desktopInstalled: boolean;
   desktopVersion: string | null;
@@ -201,7 +226,12 @@ export interface IpcOutput {
   [IpcChannel.profilesUpdate]: ProfileDto;
   [IpcChannel.profilesRemove]: null;
   [IpcChannel.profilesStatus]: ProfileStatusDto;
-  [IpcChannel.profilesOpenLogin]: null;
+  [IpcChannel.profilesMachineAccount]: MachineAccountDto;
+  [IpcChannel.profilesOpenLogin]: LoginStateDto;
+  [IpcChannel.profilesLoginState]: LoginStateDto;
+  [IpcChannel.profilesLoginReopen]: LoginStateDto;
+  [IpcChannel.profilesLoginCopyLink]: null;
+  [IpcChannel.profilesLoginCancel]: null;
   [IpcChannel.permissionsSet]: null;
   [IpcChannel.launchPlan]: LaunchPreviewDto;
   [IpcChannel.launchExecute]: LaunchAttemptDto;
@@ -238,7 +268,12 @@ export interface AgentHubApi {
   updateProfile(input: IpcInput<typeof IpcChannel.profilesUpdate>): Reply<typeof IpcChannel.profilesUpdate>;
   removeProfile(input: IpcInput<typeof IpcChannel.profilesRemove>): Reply<typeof IpcChannel.profilesRemove>;
   getProfileStatus(input: IpcInput<typeof IpcChannel.profilesStatus>): Reply<typeof IpcChannel.profilesStatus>;
+  getMachineAccount(input: IpcInput<typeof IpcChannel.profilesMachineAccount>): Reply<typeof IpcChannel.profilesMachineAccount>;
   openProfileLogin(input: IpcInput<typeof IpcChannel.profilesOpenLogin>): Reply<typeof IpcChannel.profilesOpenLogin>;
+  getLoginState(input: IpcInput<typeof IpcChannel.profilesLoginState>): Reply<typeof IpcChannel.profilesLoginState>;
+  reopenLogin(input: IpcInput<typeof IpcChannel.profilesLoginReopen>): Reply<typeof IpcChannel.profilesLoginReopen>;
+  copyLoginLink(input: IpcInput<typeof IpcChannel.profilesLoginCopyLink>): Reply<typeof IpcChannel.profilesLoginCopyLink>;
+  cancelLogin(input: IpcInput<typeof IpcChannel.profilesLoginCancel>): Reply<typeof IpcChannel.profilesLoginCancel>;
   setPermission(input: IpcInput<typeof IpcChannel.permissionsSet>): Reply<typeof IpcChannel.permissionsSet>;
   planLaunch(input: IpcInput<typeof IpcChannel.launchPlan>): Reply<typeof IpcChannel.launchPlan>;
   executeLaunch(input: IpcInput<typeof IpcChannel.launchExecute>): Reply<typeof IpcChannel.launchExecute>;

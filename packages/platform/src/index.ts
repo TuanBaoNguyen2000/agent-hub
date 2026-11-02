@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
-import type { InstalledApp, PathInspector, PathStatus, PlatformPort, RunOptions, RunResult } from '@agenthub/application';
+import type { AppInstance, BrowserCapture, InstalledApp, PathInspector, PathStatus, PlatformPort, RunOptions, RunResult, ToolProcess } from '@agenthub/application';
 
 export function createPathInspector(): PathInspector {
   return {
@@ -79,6 +79,73 @@ export function instanceOpenArgs(request: { appName: string; envName: string; en
   return ['-n', '-a', request.appName, '--env', `${request.envName}=${request.envValue}`, '--args', `--user-data-dir=${request.dataDir}`];
 }
 
+// Reads `ps -o lstart=,pid=,args=`. A data dir ends at the next flag, so it may contain spaces.
+export function parseInstances(psOutput: string, executable: string): AppInstance[] {
+  const instances: (AppInstance & { startedAt: number })[] = [];
+  for (const line of psOutput.split('\n')) {
+    const match = /^\s*(\w{3} \w{3}\s+\d+ [\d:]{8} \d{4})\s+(\d+)\s+(.*)$/.exec(line);
+    if (!match) continue;
+    const [, started = '', pid = '', args = ''] = match;
+    if (args !== executable && !args.startsWith(`${executable} `)) continue;
+    const dataDir = /--user-data-dir=(.*?)(?= --|$)/.exec(args.slice(executable.length))?.[1] ?? null;
+    instances.push({ pid: Number(pid), dataDir, startedAt: Date.parse(started) });
+  }
+  return instances.sort((a, b) => a.startedAt - b.startedAt || a.pid - b.pid).map(({ pid, dataDir }) => ({ pid, dataDir }));
+}
+
+// AppKit activates a given process with no Automation permission, which System Events would need.
+export function focusScript(pid: number): string {
+  return `ObjC.import('AppKit'); var app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${pid}); app.isNil() ? false : app.activateWithOptions($.NSApplicationActivateAllWindows)`;
+}
+
+// In order of preference. Safari is missing because nothing outside it can open a private window.
+const PRIVATE_BROWSERS = [
+  { app: 'Google Chrome', flag: '--incognito' },
+  { app: 'Microsoft Edge', flag: '--inprivate' },
+  { app: 'Brave Browser', flag: '--incognito' },
+  { app: 'Firefox', flag: '--private-window' },
+] as const;
+
+export function privateWindowArgs(browser: { app: string; flag: string }, url: string): string[] {
+  return ['-na', browser.app, '--args', browser.flag, url];
+}
+
+// Writes the address where AgentHub can read it. The first argument is all a CLI passes.
+export function browserCaptureScript(urlFile: string): string {
+  return ['#!/bin/sh', `printf '%s' "$1" > ${shellQuote(urlFile)}`, ''].join('\n');
+}
+
+function spawnProcess(command: string, args: string[], { cwd, env }: { cwd?: string | undefined; env: Record<string, string> }): ToolProcess {
+  const child = spawn(command, args, { cwd, env, shell: false, stdio: ['pipe', 'pipe', 'ignore'] });
+  const listeners: ((line: string) => void)[] = [];
+  let pending = '';
+  child.stdout.on('data', (chunk: Buffer) => {
+    pending += chunk.toString('utf8');
+    const lines = pending.split('\n');
+    pending = lines.pop() ?? '';
+    if (pending.length > OUTPUT_CAP) pending = '';
+    for (const line of lines) for (const listener of listeners) listener(line);
+  });
+  // A write can race the process exiting; the exit is reported through `exited`.
+  child.stdin.on('error', () => undefined);
+  const exited = new Promise<number | null>((resolve) => {
+    child.on('error', () => resolve(null));
+    child.on('close', (exit) => resolve(exit));
+  });
+  return {
+    onLine: (listener) => listeners.push(listener),
+    write: (line) => {
+      if (child.stdin.writable) child.stdin.write(`${line}\n`);
+    },
+    kill: () => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      child.kill('SIGTERM');
+      setTimeout(() => child.kill('SIGKILL'), 2000).unref();
+    },
+    exited,
+  };
+}
+
 function runProcess(
   command: string,
   args: string[],
@@ -128,11 +195,19 @@ function isExecutableFile(path: string): boolean {
 export interface MacPlatformOptions {
   env?: NodeJS.ProcessEnv;
   applicationDirs?: string[];
+  // Tests replace these, so they never open a window in the real browser.
+  browserDirs?: string[];
+  browserOpenCommand?: string;
 }
 
 const CLI_CACHE_MS = 30_000;
 
-export function createMacPlatform({ env: parentEnv = process.env, applicationDirs }: MacPlatformOptions = {}): PlatformPort {
+export function createMacPlatform({
+  env: parentEnv = process.env,
+  applicationDirs,
+  browserDirs,
+  browserOpenCommand = '/usr/bin/open',
+}: MacPlatformOptions = {}): PlatformPort {
   const home = parentEnv['HOME'] ?? homedir();
   const appDirs = applicationDirs ?? ['/Applications', join(home, 'Applications')];
   const baseEnv = (options: { pathDirs?: string[]; extra?: Record<string, string> } = {}): Record<string, string> =>
@@ -177,6 +252,11 @@ export function createMacPlatform({ env: parentEnv = process.env, applicationDir
     return result.stdout.split('\n').map((line) => line.trim());
   }
 
+  async function runningInstances(executable: string): Promise<AppInstance[]> {
+    const result = await runProcess('/bin/ps', ['-axww', '-o', 'lstart=,pid=,args='], { env: { ...baseEnv(), LC_ALL: 'C' } });
+    return parseInstances(result.stdout, executable);
+  }
+
   return {
     supported: process.platform === 'darwin',
 
@@ -197,6 +277,31 @@ export function createMacPlatform({ env: parentEnv = process.env, applicationDir
     runInPty(executable, args, options = {}) {
       const run = toolRun(executable, { ...options, extraEnv: { TERM: 'xterm-256color', ...options.extraEnv } });
       return runProcess('/usr/bin/script', ['-q', '/dev/null', executable, ...args], run);
+    },
+
+    spawnTool: (executable, args, options) => spawnProcess(executable, args, toolRun(executable, options)),
+
+    captureBrowserRequest(): BrowserCapture {
+      const directory = mkdtempSync(join(tmpdir(), 'agenthub-login-'));
+      const urlFile = join(directory, 'url');
+      const command = join(directory, 'browser');
+      writeFileSync(command, browserCaptureScript(urlFile), { mode: 0o700 });
+      return {
+        command,
+        url: () => (existsSync(urlFile) ? readFileSync(urlFile, 'utf8').trim() || null : null),
+        dispose: () => rmSync(directory, { recursive: true, force: true }),
+      };
+    },
+
+    async openPrivateWindow(url) {
+      const browser = PRIVATE_BROWSERS.find(({ app }) => (browserDirs ?? appDirs).some((dir) => existsSync(join(dir, `${app}.app`))));
+      if (!browser) return null;
+      const opened = await runProcess(browserOpenCommand, privateWindowArgs(browser, url), { env: baseEnv() });
+      return opened.exit === 0 ? browser.app : null;
+    },
+
+    async openInDefaultBrowser(url) {
+      return (await runProcess(browserOpenCommand, [url], { env: baseEnv() })).exit === 0;
     },
 
     async openTerminal({ executable, args, cwd, extraEnv }) {
@@ -233,13 +338,18 @@ export function createMacPlatform({ env: parentEnv = process.env, applicationDir
       return waitFor(async () => (await processLines()).some((line) => line.includes(needle)), 20_000);
     },
 
-    async isInstanceRunning(executable, dataDir) {
-      const needle = `${executable} --user-data-dir=${dataDir}`;
-      return (await processLines()).some((line) => line.includes(needle));
+    async openDefaultInstance({ appName, executable }) {
+      // -n because plain `open` would only bring forward whichever copy is already running.
+      const opened = await runProcess('/usr/bin/open', ['-n', '-a', appName], { env: baseEnv() });
+      if (opened.exit !== 0) return false;
+      return waitFor(async () => (await runningInstances(executable)).some((instance) => instance.dataDir === null), 20_000);
     },
 
-    async isDefaultInstanceRunning(executable) {
-      return (await processLines()).some((line) => line === executable || (line.startsWith(`${executable} `) && !line.includes('--user-data-dir=')));
+    runningInstances,
+
+    async focusProcess(pid) {
+      const result = await runProcess('/usr/bin/osascript', ['-l', 'JavaScript', '-e', focusScript(pid)], { env: baseEnv(), timeoutMs: 10_000 });
+      return result.exit === 0 && result.stdout.trim() === 'true';
     },
 
     defaultDesktopDataDirs() {

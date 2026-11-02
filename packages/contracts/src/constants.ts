@@ -19,7 +19,12 @@ export const IpcChannel = {
   profilesUpdate: 'profiles:update',
   profilesRemove: 'profiles:remove',
   profilesStatus: 'profiles:status',
+  profilesMachineAccount: 'profiles:machine-account',
   profilesOpenLogin: 'profiles:open-login',
+  profilesLoginState: 'profiles:login-state',
+  profilesLoginReopen: 'profiles:login-reopen',
+  profilesLoginCopyLink: 'profiles:login-copy-link',
+  profilesLoginCancel: 'profiles:login-cancel',
   permissionsSet: 'permissions:set',
   launchPlan: 'launch:plan',
   launchExecute: 'launch:execute',
@@ -31,3 +36,5 @@ export const TASK_STATUSES = ['backlog', 'active', 'blocked', 'in_review', 'done
 export const THEMES = ['system', 'light', 'dark'] as const;
 export const PROVIDERS = ['claude', 'codex'] as const;
 export const CLIENT_MODES = ['desktop', 'cli'] as const;
+export const ACCOUNT_SOURCES = ['machine', 'separate'] as const;
+export const LOGIN_BROWSERS = ['private', 'normal'] as const;

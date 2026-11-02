@@ -1,9 +1,9 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { allowlistEnv, createMacPlatform, instanceOpenArgs, shellQuote, terminalScript } from '../src/index';
+import { allowlistEnv, browserCaptureScript, createMacPlatform, focusScript, instanceOpenArgs, parseInstances, privateWindowArgs, shellQuote, terminalScript } from '../src/index';
 
 let root: string;
 
@@ -217,5 +217,156 @@ describe('filesystem helpers', () => {
 
     expect(platform.pathKind(dir)).toBe('directory');
     expect(platform.isEmptyDirectory(dir)).toBe(true);
+  });
+});
+
+describe('login support', () => {
+  const page = "https://claude.com/x?a=1&b='q'&c=$(touch injected)";
+
+  it('asks each browser for a private window with the address as one argument', () => {
+    expect(privateWindowArgs({ app: 'Google Chrome', flag: '--incognito' }, page)).toEqual(['-na', 'Google Chrome', '--args', '--incognito', page]);
+  });
+
+  it('captures the address a CLI would open, unchanged', () => {
+    const capture = createMacPlatform({ env: polluted }).captureBrowserRequest();
+    expect(capture.url()).toBeNull();
+
+    expect(spawnSync(capture.command, [page]).status).toBe(0);
+    expect(capture.url()).toBe(page);
+
+    capture.dispose();
+    expect(capture.url()).toBeNull();
+  });
+
+  it('quotes the capture file in its script', () => {
+    const file = join(root, "url'$(touch injected)");
+    const script = join(root, 'browser');
+    writeFileSync(script, browserCaptureScript(file), { mode: 0o700 });
+
+    expect(spawnSync(script, ['address']).status).toBe(0);
+    expect(existsSync(join(root, 'injected'))).toBe(false);
+    expect(readFileSync(file, 'utf8')).toBe('address');
+  });
+
+  function browserFolder(openExit = 0) {
+    const log = join(root, 'open.log');
+    const dir = join(root, 'browsers');
+    mkdirSync(dir);
+    const command = executable('open', `for arg in "$@"; do echo "$arg" >> ${shellQuote(log)}; done\nexit ${openExit}`);
+    return { log, dir, platform: createMacPlatform({ env: polluted, browserDirs: [dir], browserOpenCommand: command }) };
+  }
+
+  it('prefers a browser that can open a private window', async () => {
+    const { log, dir, platform } = browserFolder();
+    mkdirSync(join(dir, 'Firefox.app'));
+    mkdirSync(join(dir, 'Google Chrome.app'));
+
+    expect(await platform.openPrivateWindow(page)).toBe('Google Chrome');
+    expect(readFileSync(log, 'utf8').trim().split('\n')).toEqual(['-na', 'Google Chrome', '--args', '--incognito', page]);
+  });
+
+  it('uses each browser’s own flag', async () => {
+    const { log, dir, platform } = browserFolder();
+    mkdirSync(join(dir, 'Firefox.app'));
+
+    expect(await platform.openPrivateWindow(page)).toBe('Firefox');
+    expect(readFileSync(log, 'utf8')).toContain('--private-window');
+  });
+
+  it('reports no private window when no such browser exists, or it fails to open', async () => {
+    const none = browserFolder();
+    expect(await none.platform.openPrivateWindow(page)).toBeNull();
+    expect(existsSync(none.log)).toBe(false);
+
+    rmSync(none.dir, { recursive: true });
+    const broken = browserFolder(1);
+    mkdirSync(join(broken.dir, 'Google Chrome.app'));
+    expect(await broken.platform.openPrivateWindow(page)).toBeNull();
+  });
+
+  it('opens the default browser with the address alone', async () => {
+    const { log, platform } = browserFolder();
+
+    expect(await platform.openInDefaultBrowser(page)).toBe(true);
+    expect(readFileSync(log, 'utf8').trim()).toBe(page);
+  });
+});
+
+describe('spawnTool', () => {
+  const platform = () => createMacPlatform({ env: polluted });
+
+  it('streams whole lines, takes input and reports the exit code', async () => {
+    const tool = platform().spawnTool(executable('tool', 'printf "one\\ntw"; printf "o\\n"; read line; echo "got $line"; exit 3'), []);
+    const lines: string[] = [];
+    tool.onLine((line) => lines.push(line));
+
+    tool.write('hello');
+
+    expect(await tool.exited).toBe(3);
+    expect(lines).toEqual(['one', 'two', 'got hello']);
+  });
+
+  it('gives the tool only the allowlisted env and the profile values', async () => {
+    const tool = platform().spawnTool(executable('tool', 'echo "$CLAUDE_CODE_MESSAGING_TOKEN|$BROWSER"'), [], { extraEnv: { BROWSER: '/x' } });
+    const lines: string[] = [];
+    tool.onLine((line) => lines.push(line));
+
+    await tool.exited;
+
+    expect(lines).toEqual(['|/x']);
+  });
+
+  it('stops a tool on request, and survives being asked twice', async () => {
+    const tool = platform().spawnTool(executable('tool', 'exec sleep 30'), []);
+
+    tool.kill();
+    expect(await tool.exited).toBeNull();
+    tool.kill();
+    tool.write('ignored');
+  });
+
+  it('reports a tool that cannot start', async () => {
+    expect(await platform().spawnTool(join(root, 'missing'), []).exited).toBeNull();
+  });
+});
+
+describe('parseInstances', () => {
+  const exe = '/Applications/Claude.app/Contents/MacOS/Claude';
+  const ps = [
+    `Mon Nov  2 09:00:05 2026   300 ${exe}`,
+    `Mon Nov  2 08:59:00 2026   200 ${exe} --user-data-dir=/Users/a/Dữ liệu b --flag`,
+    `Mon Nov  2 09:00:05 2026   150 ${exe} --user-data-dir=/Users/a/c`,
+    `Mon Nov  2 08:00:00 2026   100 /Applications/Claude.app/Contents/Frameworks/Claude Helper --type=gpu`,
+    `Mon Nov  2 08:00:00 2026    90 ${exe}-other`,
+    `Mon Nov  2 08:00:00 2026    80 /bin/zsh -c ${exe}`,
+    'garbage',
+    '',
+  ].join('\n');
+
+  it('lists only the app’s main processes, oldest first, with ties in pid order', () => {
+    expect(parseInstances(ps, exe)).toEqual([
+      { pid: 200, dataDir: '/Users/a/Dữ liệu b' },
+      { pid: 150, dataDir: '/Users/a/c' },
+      { pid: 300, dataDir: null },
+    ]);
+  });
+
+  it('reads the real output of ps', async () => {
+    const child = spawn('/bin/sleep', ['30'], { stdio: 'ignore' });
+
+    const instances = await createMacPlatform({ env: polluted }).runningInstances('/bin/sleep');
+    child.kill();
+
+    expect(instances).toContainEqual({ pid: child.pid, dataDir: null });
+  });
+});
+
+describe('focusProcess', () => {
+  it('only ever puts a number in the script', () => {
+    expect(focusScript(42)).toContain('runningApplicationWithProcessIdentifier(42)');
+  });
+
+  it('reports a process that no longer exists', async () => {
+    expect(await createMacPlatform({ env: polluted }).focusProcess(999_999)).toBe(false);
   });
 });

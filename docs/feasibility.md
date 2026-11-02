@@ -71,7 +71,9 @@ Sau kiểm thử, ghi mức `supported`, `conditional`, `manual` hoặc `unsuppo
 
 **Launch từ Electron (SPIKE-09, macOS):** các launch trong bảng đều chạy được từ app Electron mở bằng Finder, nên các mức giữ nguyên, kết quả trên màn hình là `reported`. Điều kiện thêm cho launcher: `open` chuyển env của process gọi sang app được mở, nên mọi lệnh `open` phải chạy với env allowlist; `claude --desktop` cần pty, và `/usr/bin/script` được chấp nhận với exit 0; profile A của CLI từng mất đăng nhập ngay sau lần chạy đầu, không tái hiện được với token mới, nên launcher cần kiểm tra `claude auth status` trước và sau; CLI tương tác mở được qua file `.command` dùng một lần, không cần quyền Automation, nhưng không có handle của cửa sổ Terminal.
 
-**Nhận diện account (SPIKE-05, macOS):** chỉ Claude CLI báo được danh tính account theo profile. Codex CLI chỉ báo phương thức đăng nhập. Account trên Desktop do người dùng xác nhận, nếu chưa xác nhận thì là `unverified`. Exit 0 của `claude --desktop` không xác nhận account hay session.
+**Chọn instance (SPIKE-07, macOS, 2026-11-02):** `open -b`, link và các lệnh dựa trên chúng đi tới instance khởi động sớm nhất của app, không phải app chính. Khi đó AgentHub không dùng lệnh mở folder cho app chính ([evidence](../spikes/07-desktop-account-switch/evidence/2026-11-02-macos-instance-routing.md)).
+
+**Nhận diện account (SPIKE-05, macOS):** Claude CLI báo danh tính account theo profile qua `claude auth status`. `codex login status` chỉ báo phương thức đăng nhập; `codex app-server` (`[experimental]`) báo email theo `CODEX_HOME` ([evidence 2026-11-02](../spikes/05-account-mapping/evidence/2026-11-02-macos-login-and-identity.md)). Account trên Desktop do người dùng xác nhận, nếu chưa xác nhận thì là `unverified`. Exit 0 của `claude --desktop` không xác nhận account hay session.
 
 ## Mẫu ghi evidence cho mỗi lần chạy
 

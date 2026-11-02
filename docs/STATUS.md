@@ -1,11 +1,16 @@
 # Project status
 
 **Updated:** 2026-11-02  
-**Stage:** Phase 2 đủ deliverables trên macOS, UX đã làm lại theo góp ý của người dùng (2026-11-02); E2E và native smoke đạt, chờ thử với account thật. Việc tiếp theo là duy trì context giữa các account (Phase 3). Windows hoãn theo ADR-015, vẫn `Not run`  
+**Stage:** Phase 2 đủ deliverables trên macOS, UX và đăng nhập đã làm lại theo góp ý của người dùng (2026-11-02); E2E và native smoke đạt, chờ thử đăng nhập với account thật. Việc tiếp theo là duy trì context giữa các account (Phase 3). Windows hoãn theo ADR-015, vẫn `Not run`  
 **Application:** Quản lý Project, Task, context, account; mở Claude/Codex bằng Desktop hoặc Terminal từ một task. Chưa có checkpoint, handoff, Smart Switch. `npm run package` tạo `.app` ký ad hoc
 
 ## Đã hoàn thành
 
+- **Sửa lỗi mở nhầm cửa sổ Desktop (2026-11-02, chưa commit):** người dùng báo khi cửa sổ account B đang chạy một mình, mở account A lại ra B. Nguyên nhân: macOS giao `open -b` và link cho instance khởi động sớm nhất, nên `claude --desktop` và `codex app` đi nhầm ([evidence](../spikes/07-desktop-account-switch/evidence/2026-11-02-macos-instance-routing.md)). Giờ nếu instance sớm nhất là cửa sổ account khác thì app chính được mở bằng `open -n -a` hoặc đưa đúng PID lên trước, và người dùng tự chọn folder. Bấm mở cửa sổ đang chạy cũng đưa nó lên trước; không gọi `open -n` lại vì Claude sinh process trùng. Cảnh báo đăng nhập lần đầu giờ áp dụng cho mọi cửa sổ khác, không chỉ app chính. Người dùng thử trên `.app` với account Claude và Codex thật và báo chạy đúng (reported).
+- **Đăng nhập và tên account ([ADR-018](decisions/018-account-login-and-identity.md), 2026-11-02, chưa commit):**
+  - **Tên:** account hiện theo email do CLI báo, Codex lấy qua `codex app-server`. Alias thành tên gợi nhớ tuỳ chọn; migration 3 bỏ các tên tự đặt `Claude 2`, ... và thêm cột `account_email`.
+  - **Chọn account:** nếu máy đang đăng nhập, app hiện email và hỏi dùng account đó hay đăng nhập account khác, không tự nhận nữa. Đăng nhập chạy CLI ở nền, mở trang trong cửa sổ riêng tư, tự cập nhật khi xong; có Mở lại, Dùng trình duyệt thường, Sao chép link, Huỷ. Huỷ khi đang thêm thì gỡ luôn account đó. Không lấy được địa chỉ trang thì quay về Terminal.
+  - **Kiểm chứng:** xem mục Phase 2 bên dưới và [evidence](../spikes/05-account-mapping/evidence/2026-11-02-macos-login-and-identity.md). Đã chạy `.app` với CLI thật và browser giả: đúng email, đúng địa chỉ trang, Huỷ và thoát không để lại process. Đã xem ảnh chụp UI ở giao diện sáng.
 - **Làm lại UX theo góp ý của người dùng (2026-11-02):**
   - **Thêm account:** bấm Thêm, chọn Claude hoặc Codex, rồi đăng nhập bằng flow chính thức; app tự theo dõi đến khi đăng nhập xong. Account đầu tiên của mỗi loại dùng cấu hình sẵn có của máy; các account sau được tự tạo thư mục trong `~/.agenthub/accounts/<id>/`. Đường dẫn chỉ hiện trong "Thông tin kỹ thuật".
   - **Giao diện:** cột trái là cây project và task giống Claude/Codex; tạo task chỉ cần gõ tiêu đề. Một account có hai nút mở, Desktop và Terminal; app chỉ hỏi lại khi cần quyết định (lần đầu ghép account với project, version chưa kiểm chứng, lần đầu đăng nhập cửa sổ Desktop). Khác với FR-011 và TDD §3.4: khi không có gì cần quyết định thì không hiện kế hoạch trước khi mở, các bước thủ công hiện ở kết quả sau khi mở.
@@ -15,7 +20,7 @@
   - **Launcher 4 target:** Claude và Codex, Desktop và CLI ngang hàng, không chọn sẵn (FR-004–007). Trước khi mở có kế hoạch ghi rõ từng bước tự động, có điều kiện hay thủ công. CLI mở trong Terminal.app (ADR-009); instance theo ADR-013, ADR-014; `claude --desktop` qua pty, có kiểm tra login trước và sau, lỗi thì quay về mở app và chọn folder tay.
   - **Quyền project–profile (FR-016):** cặp mới phải được cho phép rõ ràng; cặp bị từ chối thì không mở được, kiểm tra ở Main.
   - **Lịch sử:** ghi mỗi lần mở, kể cả thất bại. Kết quả không bao giờ là `switched`; account là `Account chưa xác minh` cho đến khi người dùng xác nhận (FR-014).
-  - **Kiểm chứng (sau khi làm lại UX, 2026-11-02):** 129 test; 18 bài E2E chạy trên `.app`; 2 bài native trên `.app` mở Terminal.app và instance Claude Desktop thật, với CLI giả, từ env nhiễm: chỉ có biến allowlist, cwd đúng với path hostile, Desktop chính không đổi. Test chạy thật đã bắt lỗi `status` là biến chỉ đọc trong zsh.
+  - **Kiểm chứng (sau khi sửa mở nhầm cửa sổ, 2026-11-02):** 187 test; 21 bài E2E chạy trên `.app`; 2 bài native trên `.app` mở Terminal.app và instance Claude Desktop thật, với CLI giả, từ env nhiễm: chỉ có biến allowlist, cwd đúng với path hostile, Desktop chính không đổi. Test chạy thật đã bắt lỗi `status` là biến chỉ đọc trong zsh.
 - **Phase 1 (2026-11-01, macOS):**
   - **Tính năng:** thêm, đổi tên, chọn lại folder, gỡ Project; tạo và sửa Task (FR-001, FR-002); context Markdown cho project và task, gồm `task.md`, `decisions.md` (FR-008); settings: giao diện, thư mục dữ liệu, thông tin phiên bản.
   - **Dữ liệu:** migration 1 trong SQLite, có backup trước khi nâng schema và từ chối database mới hơn app; artifact theo TDD §6.3, ghi atomic, phát hiện xung đột bằng checksum (FR-013).
@@ -97,9 +102,10 @@
 - Kết quả Desktop ở SPIKE-02/03/04/05/07/08/09 là `reported`: người dùng báo, không có ảnh chụp. SPIKE-04 trên Claude Desktop đo ở 4.29.0, chưa chạy lại trên 4.4212.0.
 - Windows: toàn bộ `Not run`, hoãn theo ADR-015.
 - Chưa thử hot reload khi sửa code, máy không có toolchain build, và build trên Windows.
-- **Chưa chạy launcher với account và CLI thật:** native smoke dùng CLI giả và thư mục rỗng. Chưa xác nhận: `claude --desktop` từ app sản phẩm, instance đúng account B, nút đăng nhập, `/status`.
+- **Chưa chạy launcher với account và CLI thật:** native smoke dùng CLI giả và thư mục rỗng. Chưa xác nhận: `claude --desktop` từ app sản phẩm, instance đúng account B, `/status`.
+- **Chưa có một lượt đăng nhập trọn vẹn (ADR-018):** chưa mở Chrome thật ở chế độ riêng tư từ app, chưa thấy CLI nhận callback rồi thoát, chưa thử đăng nhập lại đè lên login cũ. Cần người dùng thao tác với account thật.
 - Giới hạn của Phase 1: project đã gỡ chưa khôi phục được trong app; Context Editor chưa có preview và history (TDD §9.1); chưa có log có rotation (TDD §11.3).
-- Giới hạn của Phase 2: AgentHub không tắt được cửa sổ Desktop đã mở; đường dẫn account chưa tách theo thiết bị; chỉ hỗ trợ Terminal.app; đọc exit status của CLI để P1 (FR-105). Account Claude phụ cần đăng nhập hai lần nếu dùng cả Terminal và Desktop, vì hai bên giữ login riêng (SPIKE-04, SPIKE-07).
+- Giới hạn của Phase 2: email chỉ nói về login của CLI, và chỉ cập nhật khi app đọc lại trạng thái; AgentHub không tắt được cửa sổ Desktop đã mở; đường dẫn account chưa tách theo thiết bị; chỉ hỗ trợ Terminal.app; đọc exit status của CLI để P1 (FR-105). Account Claude phụ cần đăng nhập hai lần nếu dùng cả Terminal và Desktop, vì hai bên giữ login riêng (SPIKE-04, SPIKE-07).
 - Chưa có checkpoint, handoff, Git observation và Smart Switch: thuộc Phase 3.
 
 ## Quyết định còn mở
@@ -113,7 +119,7 @@
 
 Chỉ macOS (ADR-015):
 
-1. **Xác nhận Phase 2 với account thật:** mở Claude và Codex bằng Desktop và Terminal theo từng account, kiểm tra account hiển thị và lịch sử.
+1. **Xác nhận Phase 2 với account thật:** thêm account Claude và Codex qua cửa sổ riêng tư (ADR-018), kiểm tra email hiện đúng; mở bằng Desktop và Terminal theo từng account, kiểm tra account hiển thị và lịch sử.
 2. **Phase 3 — duy trì context, là ưu tiên của người dùng:** checkpoint, handoff, Git observation tối thiểu. Thiết kế đề xuất, chờ người dùng chốt: context ba cấp lưu trong AgentHub, không theo account; nút "Đổi account" dựng handoff rồi mở đúng account kèm context; CLI nhận prompt ban đầu và `--add-dir` tới thư mục artifact của task, Desktop dùng prompt đã copy. `--add-dir` và prompt ban đầu mới kiểm tra qua `--help`, cần spike nhỏ với CLI thật. Trước khi bắt đầu, xem các thay đổi chưa commit.
 3. **Kiểm tra lại rủi ro login của SPIKE-09:** khi token của profile A đã cũ (ít nhất một ngày sau lần đăng nhập 2026-11-01 12:54 UTC), chạy `spikes/09-electron-launcher-prototype/check-desktop-login.sh script` một lần; người dùng cần sẵn sàng đăng nhập lại. Việc này không chặn bootstrap, vì vẫn có fallback chọn folder thủ công, và launcher sản phẩm cần kiểm tra login trước và sau khi chạy `--desktop`. Ghi kết quả vào evidence của spike.
 4. Các profile và thư mục dữ liệu dùng cho spike vẫn được giữ; lệnh dọn dẹp nằm trong README của SPIKE-01, SPIKE-07, SPIKE-08 và SPIKE-09.

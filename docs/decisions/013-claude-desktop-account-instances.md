@@ -44,6 +44,10 @@ Quyết định 3 ghi rằng khi version app chưa có evidence, AgentHub quay v
 
 Theo góp ý của người dùng, thêm account chỉ cần chọn loại rồi đăng nhập. Account thứ hai trở đi tự có thư mục cấu hình và dữ liệu Desktop trong `~/.agenthub/accounts/<id>/`; thư mục chỉ được tạo khi dùng tới. Cửa sổ Desktop riêng vẫn là opt-in theo nghĩa chỉ mở khi người dùng bấm mở Desktop cho account đó.
 
+## Note — 2026-11-02 (định tuyến instance)
+
+Người dùng báo mở account chính lại ra cửa sổ của account phụ. [Evidence](../../spikes/07-desktop-account-switch/evidence/2026-11-02-macos-instance-routing.md): macOS giao `open -b` và link cho instance khởi động sớm nhất, nên khi cửa sổ account phụ mở trước thì lệnh mở folder đi nhầm. Khi instance sớm nhất không phải app chính, AgentHub không dùng lệnh mở folder: app chính chưa chạy thì mở bằng `open -n -a`, đang chạy thì đưa đúng PID lên trước; folder do người dùng chọn. Bấm mở một cửa sổ đang chạy cũng đưa nó lên trước, không gọi `open -n` lần nữa vì Claude sinh process trùng trên cùng thư mục. Quyết định về instance và trạng thái `conditional` không đổi.
+
 ## Related decisions
 
 ADR-002 (Desktop/CLI parity), ADR-006 (manual fallback, vẫn áp dụng cho Codex Desktop, cho instance mặc định và khi cơ chế này không đạt) và ADR-012 (package boundaries).

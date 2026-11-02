@@ -1,7 +1,7 @@
 # AgentHub — Technical Design Document (TDD)
 
 > **Project:** AgentHub — Cross-platform AI Agent Workspace & Context Manager  
-> **Version:** 0.1.10 (ADR-009, ADR-013–017: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP; Phase 0 macOS exit review; Phase 1 và 2 trên macOS)  
+> **Version:** 0.1.12 (ADR-009, ADR-013–018: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP; Phase 0 macOS exit review; Phase 1 và 2 trên macOS)  
 > **Updated:** 2026-11-02  
 > **Status:** Draft for implementation review  
 > **Platforms:** macOS and Windows  
@@ -436,6 +436,7 @@ Preload expose **chỉ** những methods đã định nghĩa; không expose `ipc
 - `claude --desktop` từ chối pipe; chạy qua pty (`/usr/bin/script` đủ dùng). Kiểm tra `claude auth status` trước và sau khi chạy, và báo rõ nếu login bị mất; chỉ báo "đã gửi lệnh mở", không dựa vào exit code.
 - Mở CLI tương tác bằng file `.command` dùng một lần trong thư mục tạm riêng, giá trị được quote đầy đủ và dùng `env -i`. Cách này cho PID và exit status, không có handle của cửa sổ Terminal (ADR-009).
 - CLI có thể để lại process nền (daemon của Codex); exit status không có nghĩa là profile đã hết process.
+- Trên macOS, `open -b`, link và lệnh dựa trên chúng (`claude --desktop`, `codex app`) đi tới instance khởi động sớm nhất của app. Khi đó không dùng các lệnh này để mở app chính; không gọi `open -n` lên một thư mục dữ liệu đang chạy, vì Claude sinh process trùng ([evidence](../spikes/07-desktop-account-switch/evidence/2026-11-02-macos-instance-routing.md)).
 
 ### 5.3. Windows-native vs WSL
 
@@ -542,7 +543,7 @@ CREATE TABLE launch_attempts (
 
 **Implementation rules:** timestamps UTC ISO-8601; IDs UUID; indexes trên `tasks(project_id)`, `checkpoints(task_id, created_at)` và `launch_attempts(task_id, created_at)`; foreign keys enabled; versioned migrations. Không suy ra profile đăng nhập Desktop từ field `profile_id`.
 
-**Đã triển khai (Phase 1):** `projects`, `project_locations`, `tasks` ở migration 1. Khác với draft: `projects` có thêm `removed_at`, vì gỡ project chỉ ẩn nó, không xoá task và artifact (§6.4); thêm bảng `settings(key, value)` cho per-device settings (§6.1). Migration 2 thêm `account_profiles`, `project_profile_permissions`, `launch_attempts`. Khác với draft: `account_profiles` có thêm `desktop_data_dir` (ADR-013, ADR-014); `launch_attempts` có thêm `outcome` (JSON) và `account_confirmed_at` (chỉ ghi khi người dùng xác nhận), chưa có `external_session_ref` vì chưa có native ref nào đã xác minh, và status `planned` được ghi trước khi launch. `checkpoints`, `handoffs` thêm ở Phase 3.
+**Đã triển khai (Phase 1):** `projects`, `project_locations`, `tasks` ở migration 1. Khác với draft: `projects` có thêm `removed_at`, vì gỡ project chỉ ẩn nó, không xoá task và artifact (§6.4); thêm bảng `settings(key, value)` cho per-device settings (§6.1). Migration 2 thêm `account_profiles`, `project_profile_permissions`, `launch_attempts`. Khác với draft: `account_profiles` có thêm `desktop_data_dir` (ADR-013, ADR-014); `launch_attempts` có thêm `outcome` (JSON) và `account_confirmed_at` (chỉ ghi khi người dùng xác nhận), chưa có `external_session_ref` vì chưa có native ref nào đã xác minh, và status `planned` được ghi trước khi launch. Migration 3 thêm `account_profiles.account_email` và bỏ các alias do AgentHub tự đặt (ADR-018). `checkpoints`, `handoffs` thêm ở Phase 3.
 
 ### 6.3. Local artifact layout
 
@@ -893,7 +894,8 @@ Một Task có thể có `worktreeId` và `workspacePath` riêng. Khi tạo/mở
 ### 11.4. Credentials and account policy
 
 - Profile alias không đồng nghĩa xác thực: `Claude-A` chỉ là label cấu hình.
-- Chỉ CLI/desktop app chính thức thực hiện login/logout.
+- Chỉ CLI/desktop app chính thức thực hiện login/logout. AgentHub chỉ chọn nơi mở trang đăng nhập, mặc định là cửa sổ riêng tư của trình duyệt; không nhúng trang đăng nhập vào app ([ADR-018](decisions/018-account-login-and-identity.md)).
+- Tên account là email do CLI báo, lưu local dưới dạng "lần cuối thấy" và chỉ nói về login của CLI; không ghi vào log, evidence hay context export (ADR-018).
 - Không copy auth files hoặc session tokens giữa profiles.
 - Thư mục dữ liệu của Desktop instance (ADR-013, ADR-014) và `auth.json` trong `CODEX_HOME` được xem như credential store: AgentHub chỉ tạo thư mục và truyền đường dẫn; không đọc, sao chép, backup, đồng bộ hay ghi log nội dung.
 - Không tự động tăng cường số lượng account để vượt rate/usage restrictions.
@@ -920,6 +922,7 @@ Một Task có thể có `worktreeId` và `workspacePath` riêng. Khi tạo/mở
 | `PROFILE_CONFIG_MISSING` | CLI profile chưa setup | Mở setup wizard |
 | `PROJECT_PATH_MISSING` | Project moved/deleted | Relink location |
 | `PROFILE_NOT_ALLOWED` | Project access denied | Chọn allowed account hoặc xác nhận policy |
+| `LOGIN_NOT_ACTIVE` | Không còn lượt đăng nhập đang chờ | Bấm Đăng nhập lại |
 | `PROFILE_INVALID` | Cấu hình profile không hợp lệ hoặc trùng | Sửa đường dẫn hoặc tên |
 | `CONFIRMATION_REQUIRED` | Kế hoạch cần xác nhận chưa có | Hiện lại mục cần xác nhận |
 | `CONTEXT_STALE` | Git SHA/branch differs | Review changes before handoff |
@@ -1063,6 +1066,7 @@ Theo [ADR-015](decisions/015-macos-first-delivery.md), exit criteria của Phase
 | [ADR-015](decisions/015-macos-first-delivery.md) | macOS-first delivery | Accepted | Chưa có môi trường Windows; gate Phase 0–3 đánh giá trên macOS, Windows thành milestone riêng |
 | [ADR-016](decisions/016-workspace-and-build-tooling.md) | npm workspaces, electron-vite, electron-builder | Accepted; đã kiểm chứng trên macOS | Có sẵn trên máy, hỗ trợ đa nền tảng; đã build và đóng gói được `.app` tối thiểu |
 | [ADR-017](decisions/017-mvp-git-observations.md) | Git observation tối thiểu trong MVP | Accepted | Branch, SHA, dirty đủ cho checkpoint và Scenario D; phần mở rộng ở P1 |
+| [ADR-018](decisions/018-account-login-and-identity.md) | Đăng nhập qua cửa sổ riêng tư, tên account theo email | Accepted for MVP (conditional) | CLI chính thức vẫn đăng nhập; người dùng chọn được account và phân biệt bằng email |
 
 Các ADR-001–ADR-011 hiện được ghi trong bảng này. [ADR index](decisions/README.md) dẫn đến nguồn của từng quyết định; chưa tạo bản sao riêng cho các ADR cũ.
 
@@ -1154,4 +1158,4 @@ account switching tự động. Báo lại những giả định cần xác minh
 
 ---
 
-**End of TDD v0.1.10.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3; revision 0.1.4 thêm ADR-015 (macOS trước, Windows thành milestone riêng); revision 0.1.5 ghi kết quả exit review Phase 0 trên macOS, thêm SPIKE-09 và điều kiện launcher ở §5.2, cho §3.1 khớp với ADR-013 và ADR-014; revision 0.1.6 ghi ADR-009, ADR-016, ADR-017, tách §10.1 theo MVP và P1, trả lời §16 câu 1 và câu 3; revision 0.1.7 ghi kết quả technical bootstrap; revision 0.1.8 ghi kết quả Phase 1, khác biệt schema ở §6.2 và mã lỗi mới ở §12.2; revision 0.1.9 ghi kết quả Phase 2 và khác biệt schema tương ứng; revision 0.1.10 ghi thay đổi UX ở §9.1. ADR-013 và ADR-014 chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.
+**End of TDD v0.1.12.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3; revision 0.1.4 thêm ADR-015 (macOS trước, Windows thành milestone riêng); revision 0.1.5 ghi kết quả exit review Phase 0 trên macOS, thêm SPIKE-09 và điều kiện launcher ở §5.2, cho §3.1 khớp với ADR-013 và ADR-014; revision 0.1.6 ghi ADR-009, ADR-016, ADR-017, tách §10.1 theo MVP và P1, trả lời §16 câu 1 và câu 3; revision 0.1.7 ghi kết quả technical bootstrap; revision 0.1.8 ghi kết quả Phase 1, khác biệt schema ở §6.2 và mã lỗi mới ở §12.2; revision 0.1.9 ghi kết quả Phase 2 và khác biệt schema tương ứng; revision 0.1.10 ghi thay đổi UX ở §9.1; revision 0.1.11 thêm ADR-018 và §11.4 về đăng nhập, tên account theo email; revision 0.1.12 ghi quy tắc macOS chọn instance khởi động sớm nhất ở §5.2. ADR-013 và ADR-014 chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.

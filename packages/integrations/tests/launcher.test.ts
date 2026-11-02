@@ -1,4 +1,4 @@
-import type { InstalledApp, LaunchTarget, PlatformPort, RunOptions, RunResult } from '@agenthub/application';
+import type { InstalledApp, LaunchTarget, PlatformPort, RunOptions, RunResult, ToolProcess } from '@agenthub/application';
 import type { AccountProfile } from '@agenthub/domain';
 import { describe, expect, it } from 'vitest';
 import { createLauncher } from '../src/index';
@@ -26,6 +26,31 @@ function ok(stdout = ''): RunResult {
   return { exit: 0, stdout, stderr: '', timedOut: false, errorCode: null };
 }
 
+// A tool under the test's control; `reply` answers each line AgentHub writes to it.
+function fakeTool(reply: (message: Record<string, unknown>, tool: { send: (value: unknown) => void; exit: (code: number) => void }) => void = () => undefined): ToolProcess & {
+  exit: (code: number) => void;
+  killed: () => boolean;
+} {
+  let exit: (code: number | null) => void = () => undefined;
+  let killed = false;
+  const exited = new Promise<number | null>((resolve) => {
+    exit = resolve;
+  });
+  const listeners: ((line: string) => void)[] = [];
+  const handle = { send: (value: unknown) => listeners.forEach((listener) => listener(JSON.stringify(value))), exit: (code: number) => exit(code) };
+  return {
+    onLine: (listener) => listeners.push(listener),
+    write: (line) => reply(JSON.parse(line) as Record<string, unknown>, handle),
+    kill: () => {
+      killed = true;
+      exit(null);
+    },
+    exited,
+    exit: (code) => exit(code),
+    killed: () => killed,
+  };
+}
+
 function fakePlatform(overrides: Partial<PlatformPort> & { logins?: string[] } = {}): Fake {
   const calls: Call[] = [];
   const record = (method: string, args: unknown[]): void => {
@@ -48,6 +73,13 @@ function fakePlatform(overrides: Partial<PlatformPort> & { logins?: string[] } =
       record('runInPty', [executable, args, options]);
       return ok('Opening');
     },
+    spawnTool: (executable, args, options) => {
+      record('spawnTool', [executable, args, options]);
+      return fakeTool();
+    },
+    captureBrowserRequest: () => ({ command: '/tmp/capture', url: () => null, dispose: () => record('dispose', []) }),
+    openPrivateWindow: async () => 'Google Chrome',
+    openInDefaultBrowser: async () => true,
     openTerminal: async (request) => {
       record('openTerminal', [request]);
       return true;
@@ -61,8 +93,15 @@ function fakePlatform(overrides: Partial<PlatformPort> & { logins?: string[] } =
       record('openInstance', [request]);
       return true;
     },
-    isInstanceRunning: async () => false,
-    isDefaultInstanceRunning: async () => false,
+    openDefaultInstance: async (request) => {
+      record('openDefaultInstance', [request]);
+      return true;
+    },
+    runningInstances: async () => [],
+    focusProcess: async (pid) => {
+      record('focusProcess', [pid]);
+      return true;
+    },
     defaultDesktopDataDirs: () => [],
     ensureDirectory: (path) => record('ensureDirectory', [path]),
     isEmptyDirectory: () => false,
@@ -78,6 +117,7 @@ function profile(overrides: Partial<AccountProfile> = {}): AccountProfile {
     id: 'p',
     provider: 'claude',
     alias: 'A',
+    accountEmail: null,
     cliConfigRoot: null,
     desktopDataDir: null,
     createdAt: '2026-11-01T00:00:00.000Z',
@@ -279,8 +319,11 @@ describe('Desktop instance (ADR-013, ADR-014)', () => {
     expect((await launcher.plan(target({ mode: 'desktop', profile: claudeB }))).requiredConfirmations).toEqual([]);
   });
 
-  it('asks to quit the main app before a first sign-in, and never quits it', async () => {
-    const fake = fakePlatform({ isDefaultInstanceRunning: async () => true, isEmptyDirectory: () => true });
+  it.each([
+    ['the main app', { pid: 1, dataDir: null }],
+    ["another account's window", { pid: 1, dataDir: '/Users/test/other' }],
+  ])('asks to quit %s before a first sign-in, and never quits it', async (_name, instance) => {
+    const fake = fakePlatform({ runningInstances: async () => [instance], isEmptyDirectory: () => true });
     const launcher = createLauncher(fake.platform);
 
     const plan = await launcher.plan(target({ mode: 'desktop', profile: claudeB }));
@@ -288,13 +331,100 @@ describe('Desktop instance (ADR-013, ADR-014)', () => {
     expect(plan.steps.some((step) => step.warning?.includes('tự tắt'))).toBe(true);
   });
 
-  it('does not start a second process on a data directory already in use', async () => {
-    const fake = fakePlatform({ isInstanceRunning: async () => true });
+  it('brings a window already open to the front, and starts no second process on its data', async () => {
+    const fake = fakePlatform({
+      runningInstances: async () => [
+        { pid: 1, dataDir: null },
+        { pid: 2, dataDir: '/Users/test/claude desktop b' },
+      ],
+    });
     const launcher = createLauncher(fake.platform);
 
-    await launcher.launch(await launcher.plan(target({ mode: 'desktop', profile: claudeB })));
+    const outcome = await launcher.launch(await launcher.plan(target({ mode: 'desktop', profile: claudeB })));
 
     expect(callsOf(fake, 'openInstance')).toEqual([]);
+    expect(callsOf(fake, 'focusProcess')).toEqual([[2]]);
+    expect(outcome.warnings).toEqual([]);
+  });
+
+  it('still reports the launch when the window cannot be brought forward', async () => {
+    const fake = fakePlatform({ runningInstances: async () => [{ pid: 2, dataDir: '/Users/test/claude desktop b' }], focusProcess: async () => false });
+    const launcher = createLauncher(fake.platform);
+
+    const outcome = await launcher.launch(await launcher.plan(target({ mode: 'desktop', profile: claudeB })));
+
+    expect(outcome.appOpened).toBe(true);
+    expect(outcome.warnings.join()).toContain('Dock');
+  });
+});
+
+// macOS gives `open -b`, links and `claude --desktop` to the copy that started first (SPIKE-07).
+describe('main app beside a window of another account', () => {
+  const b = { pid: 2, dataDir: '/Users/test/claude desktop b' };
+  const main = { pid: 3, dataDir: null };
+  const a = profile();
+
+  it.each([
+    ['claude', 'Claude', CLAUDE_APP.executable],
+    ['codex', 'ChatGPT', CHATGPT_APP.executable],
+  ] as const)('starts the main %s app itself when only that other window runs', async (provider, appName, executable) => {
+    const fake = fakePlatform({ runningInstances: async () => [b] });
+    const launcher = createLauncher(fake.platform);
+
+    const outcome = await launcher.launch(await launcher.plan(target({ mode: 'desktop', profile: profile({ provider }) })));
+
+    expect(callsOf(fake, 'openDefaultInstance')[0]?.[0]).toMatchObject({ appName, executable });
+    expect(callsOf(fake, 'runInPty')).toEqual([]);
+    expect(callsOf(fake, 'openApp')).toEqual([]);
+    expect(callsOf(fake, 'run').filter(([, args]) => (args as string[])[0] === 'app')).toEqual([]);
+    expect(outcome).toMatchObject({ workspace: 'manual', sessionStarted: false });
+    expect(outcome.userActionRequired[0]).toContain('folder');
+    expect(outcome.warnings.join()).toContain('tự chọn folder');
+  });
+
+  it('brings the main app forward when it started after that other window', async () => {
+    const fake = fakePlatform({ runningInstances: async () => [b, main] });
+    const launcher = createLauncher(fake.platform);
+
+    const outcome = await launcher.launch(await launcher.plan(target({ mode: 'desktop', profile: a })));
+
+    expect(callsOf(fake, 'focusProcess')).toEqual([[3]]);
+    expect(callsOf(fake, 'openDefaultInstance')).toEqual([]);
+    expect(callsOf(fake, 'runInPty')).toEqual([]);
+    expect(outcome.workspace).toBe('manual');
+  });
+
+  it('warns before the launch that the folder will not open by itself', async () => {
+    const plan = await createLauncher(fakePlatform({ runningInstances: async () => [b] }).platform).plan(target({ mode: 'desktop', profile: a }));
+
+    expect(plan.steps[0]?.warning).toContain('đi nhầm');
+    expect(plan.steps.map((step) => step.execution)).toEqual(['conditional', 'manual', 'manual', 'manual']);
+  });
+
+  it('keeps the folder command when the main app started first', async () => {
+    const fake = fakePlatform({ runningInstances: async () => [main, b] });
+    const launcher = createLauncher(fake.platform);
+
+    const outcome = await launcher.launch(await launcher.plan(target({ mode: 'desktop', profile: a })));
+
+    expect(callsOf(fake, 'runInPty')).toHaveLength(1);
+    expect(outcome.workspace).toBe('requested');
+  });
+
+  it('keeps the folder command when nothing is running', async () => {
+    const fake = fakePlatform();
+    const launcher = createLauncher(fake.platform);
+
+    await launcher.launch(await launcher.plan(target({ mode: 'desktop', profile: a })));
+
+    expect(callsOf(fake, 'runInPty')).toHaveLength(1);
+    expect(callsOf(fake, 'openDefaultInstance')).toEqual([]);
+  });
+
+  it('fails clearly when the main app does not start', async () => {
+    const launcher = createLauncher(fakePlatform({ runningInstances: async () => [b], openDefaultInstance: async () => false }).platform);
+
+    await expect(launcher.launch(await launcher.plan(target({ mode: 'desktop', profile: a })))).rejects.toMatchObject({ code: 'LAUNCH_FAILED' });
   });
 });
 
@@ -312,18 +442,65 @@ describe('Codex Desktop, main app', () => {
 });
 
 describe('status', () => {
-  it('reads login for Claude and gives a fingerprint, not an identity', async () => {
+  const codexServer = (account: unknown) =>
+    fakeTool((message, tool) => {
+      if (message['method'] === 'initialize') tool.send({ id: message['id'], result: {} });
+      if (message['method'] === 'account/read') tool.send({ id: message['id'], result: { account } });
+    });
+
+  it('reads login and email for Claude', async () => {
     const status = await createLauncher(fakePlatform().platform).status(profile(), null);
 
-    expect(status).toMatchObject({ login: 'logged_in', loginDetail: 'pro', desktopVersionHasEvidence: true });
-    expect(JSON.stringify(status)).not.toContain('example.com');
+    expect(status).toMatchObject({ login: 'logged_in', loginDetail: 'pro', accountEmail: 'a@example.com', desktopVersionHasEvidence: true });
     expect(status.accountFingerprint).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it('never claims to know the Codex account', async () => {
-    const status = await createLauncher(fakePlatform().platform).status(profile({ provider: 'codex' }), null);
+  it('reports no email for a signed-out Claude profile', async () => {
+    const fake = fakePlatform({ logins: [JSON.stringify({ loggedIn: false })] });
 
-    expect(status).toMatchObject({ login: 'logged_in', loginDetail: 'ChatGPT', accountFingerprint: null });
+    const status = await createLauncher(fake.platform).status(profile(), null);
+
+    expect(status).toMatchObject({ login: 'logged_out', accountEmail: null, accountFingerprint: null });
+  });
+
+  it('asks the Codex app server which account is signed in, then stops it', async () => {
+    const tool = codexServer({ type: 'chatgpt', email: 'c@example.com', planType: 'team', workspaceName: 'Acme' });
+    const fake = fakePlatform({ spawnTool: () => tool });
+
+    const status = await createLauncher(fake.platform).status(profile({ provider: 'codex' }), null);
+
+    expect(status).toMatchObject({ login: 'logged_in', accountEmail: 'c@example.com', loginDetail: 'team, Acme' });
+    expect(status.accountFingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(tool.killed()).toBe(true);
+  });
+
+  it('tells the same Codex email apart across workspaces', async () => {
+    const read = async (workspaceName: string) => {
+      const fake = fakePlatform({ spawnTool: () => codexServer({ type: 'chatgpt', email: 'c@example.com', planType: 'team', workspaceName }) });
+      return (await createLauncher(fake.platform).status(profile({ provider: 'codex' }), null)).accountFingerprint;
+    };
+
+    expect(await read('Acme')).not.toBe(await read('Other'));
+  });
+
+  it('never claims to know the Codex account when the app server cannot say', async () => {
+    for (const tool of [codexServer(null), codexServer({ type: 'apiKey' }), fakeTool((_message, handle) => handle.exit(1))]) {
+      const fake = fakePlatform({ spawnTool: () => tool });
+
+      const status = await createLauncher(fake.platform).status(profile({ provider: 'codex' }), null);
+
+      expect(status).toMatchObject({ login: 'logged_in', loginDetail: 'ChatGPT', accountEmail: null, accountFingerprint: null });
+    }
+  });
+
+  it('does not start the app server for a signed-out Codex profile', async () => {
+    const fake = fakePlatform({
+      run: async () => ok('Not logged in'),
+    });
+
+    await createLauncher(fake.platform).status(profile({ provider: 'codex' }), null);
+
+    expect(callsOf(fake, 'spawnTool')).toEqual([]);
   });
 });
 
@@ -335,7 +512,7 @@ describe('unsupported platform', () => {
   });
 });
 
-describe('sign-in', () => {
+describe('sign-in through Terminal, the fallback', () => {
   it('runs the official login in Terminal with the profile env', async () => {
     const fake = fakePlatform();
     const launcher = createLauncher(fake.platform);
@@ -348,5 +525,178 @@ describe('sign-in', () => {
       args: ['auth', 'login'],
       extraEnv: { CLAUDE_CONFIG_DIR: '/Users/test/b' },
     });
+  });
+});
+
+describe('Claude sign-in', () => {
+  const PAGE = 'https://claude.com/cai/oauth/authorize?state=x';
+  const signedOut = JSON.stringify({ loggedIn: false });
+  const signedInAs = (email: string) => JSON.stringify({ loggedIn: true, email, orgId: 'org' });
+
+  function setup(url: string | null, logins: string[]) {
+    const tool = fakeTool();
+    const fake = fakePlatform({
+      logins,
+      spawnTool: (executable, args, options) => {
+        fake.calls.push({ method: 'spawnTool', args: [executable, args, options] });
+        return tool;
+      },
+      captureBrowserRequest: () => ({ command: '/tmp/capture', url: () => url, dispose: () => fake.calls.push({ method: 'dispose', args: [] }) }),
+    });
+    return { fake, tool, launcher: createLauncher(fake.platform) };
+  }
+  const b = profile({ cliConfigRoot: '/Users/test/b' });
+
+  it('stands in for the browser and hands the page to AgentHub', async () => {
+    const { fake, launcher } = setup(PAGE, [signedOut]);
+
+    const login = await launcher.startLogin(b, null);
+
+    expect(login?.url).toBe(PAGE);
+    expect(callsOf(fake, 'ensureDirectory')).toEqual([['/Users/test/b']]);
+    expect(callsOf(fake, 'spawnTool')[0]).toEqual([
+      '/bin/claude',
+      ['auth', 'login'],
+      { cwd: '/Users/test/b', extraEnv: { CLAUDE_CONFIG_DIR: '/Users/test/b', BROWSER: '/tmp/capture' } },
+    ]);
+    expect(callsOf(fake, 'dispose')).toHaveLength(1);
+    login?.cancel();
+  });
+
+  it('succeeds when the CLI exits cleanly and reports a login', async () => {
+    const { tool, launcher } = setup(PAGE, [signedOut, signedInAs('b@example.com')]);
+
+    const login = await launcher.startLogin(b, null);
+    tool.exit(0);
+
+    expect(await login?.completed).toBe(true);
+  });
+
+  it('fails when the CLI exits with an error', async () => {
+    const { tool, launcher } = setup(PAGE, [signedOut]);
+
+    const login = await launcher.startLogin(b, null);
+    tool.exit(1);
+
+    expect(await login?.completed).toBe(false);
+  });
+
+  it('notices a new login even if the CLI keeps waiting on its prompt', async () => {
+    const { tool, launcher } = setup(PAGE, [signedInAs('old@example.com'), signedInAs('new@example.com')]);
+
+    const login = await launcher.startLogin(b, null);
+
+    expect(await login?.completed).toBe(true);
+    expect(tool.killed()).toBe(true);
+  });
+
+  it('reports a cancelled login as not done', async () => {
+    const { tool, launcher } = setup(PAGE, [signedOut]);
+
+    const login = await launcher.startLogin(b, null);
+    login?.cancel();
+
+    expect(tool.killed()).toBe(true);
+    expect(await login?.completed).toBe(false);
+  });
+
+  it('never opens an address outside the provider', async () => {
+    for (const address of ['https://evil.example/claude.com', 'http://claude.com/x', 'https://claude.com.evil.example/', 'file:///etc/passwd']) {
+      const { tool, launcher } = setup(address, [signedOut]);
+
+      expect(await launcher.startLogin(b, null)).toBeNull();
+      expect(tool.killed()).toBe(true);
+    }
+  });
+
+  it('gives up when the CLI exits without asking for a browser', async () => {
+    const { tool, launcher } = setup(null, [signedOut]);
+
+    const started = launcher.startLogin(b, null);
+    tool.exit(1);
+
+    expect(await started).toBeNull();
+  });
+
+  it('gives up on a sign-in nobody finishes', async () => {
+    const tool = fakeTool();
+    const fake = fakePlatform({
+      logins: [signedOut],
+      spawnTool: () => tool,
+      captureBrowserRequest: () => ({ command: '/tmp/capture', url: () => PAGE, dispose: () => undefined }),
+    });
+
+    const login = await createLauncher(fake.platform, { loginTimeoutMs: 5 }).startLogin(b, null);
+
+    expect(await login?.completed).toBe(false);
+    expect(tool.killed()).toBe(true);
+  });
+
+  it('reports a missing CLI', async () => {
+    const launcher = createLauncher(fakePlatform({ findCli: async () => null }).platform);
+
+    await expect(launcher.startLogin(b, null)).rejects.toMatchObject({ code: 'BIN_NOT_FOUND' });
+  });
+});
+
+describe('Codex sign-in', () => {
+  const PAGE = 'https://auth.openai.com/oauth/authorize?state=x';
+
+  function server(authUrl: unknown = PAGE) {
+    const methods: string[] = [];
+    let send: (value: unknown) => void = () => undefined;
+    const tool = fakeTool((message, handle) => {
+      send = handle.send;
+      methods.push(message['method'] as string);
+      if (message['method'] === 'initialize') handle.send({ id: message['id'], result: {} });
+      if (message['method'] === 'account/login/start') handle.send({ id: message['id'], result: { type: 'chatgpt', loginId: 'l', authUrl } });
+    });
+    return { tool, methods, notify: (params: unknown) => send({ method: 'account/login/completed', params }) };
+  }
+
+  const b = profile({ provider: 'codex', cliConfigRoot: '/Users/test/b' });
+
+  it('gets the page from the app server, in the profile of the account', async () => {
+    const { tool, methods } = server();
+    const fake = fakePlatform({
+      spawnTool: (executable, args, options) => {
+        fake.calls.push({ method: 'spawnTool', args: [executable, args, options] });
+        return tool;
+      },
+    });
+
+    const login = await createLauncher(fake.platform).startLogin(b, null);
+
+    expect(login?.url).toBe(PAGE);
+    expect(methods).toEqual(['initialize', 'initialized', 'account/login/start']);
+    expect(callsOf(fake, 'spawnTool')[0]).toEqual(['/bin/codex', ['app-server'], { cwd: '/Users/test/b', extraEnv: { CODEX_HOME: '/Users/test/b' } }]);
+    login?.cancel();
+  });
+
+  it('reports what the app server says, and then stops it', async () => {
+    for (const success of [true, false]) {
+      const { tool, notify } = server();
+      const login = await createLauncher(fakePlatform({ spawnTool: () => tool }).platform).startLogin(b, null);
+
+      notify({ loginId: 'l', success });
+
+      expect(await login?.completed).toBe(success);
+      expect(tool.killed()).toBe(true);
+    }
+  });
+
+  it('counts a server that dies as a failed login', async () => {
+    const { tool } = server();
+    const login = await createLauncher(fakePlatform({ spawnTool: () => tool }).platform).startLogin(b, null);
+
+    tool.exit(1);
+
+    expect(await login?.completed).toBe(false);
+  });
+
+  it('falls back when the server offers no usable page', async () => {
+    for (const tool of [server('https://evil.example/').tool, server(42).tool, fakeTool((_message, handle) => handle.exit(1))]) {
+      expect(await createLauncher(fakePlatform({ spawnTool: () => tool }).platform).startLogin(b, null)).toBeNull();
+    }
   });
 });

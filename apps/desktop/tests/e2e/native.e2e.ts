@@ -46,14 +46,16 @@ async function prepareTask(projectPath: string, cliPath: string): Promise<void> 
   await cliField.fill(cliPath);
   await cliField.blur();
   const accounts = page.getByRole('region', { name: 'Accounts' });
-  for (const count of [1, 2]) {
-    await accounts.getByRole('button', { name: 'Thêm account' }).click();
-    await accounts.getByRole('button', { name: 'Claude', exact: true }).click();
-    await expect(accounts.getByRole('listitem')).toHaveCount(count);
-  }
+  await accounts.getByRole('button', { name: 'Thêm account' }).click();
+  await accounts.getByRole('button', { name: 'Claude', exact: true }).click();
+  await accounts.getByRole('button', { name: 'Dùng account này' }).click();
+  await expect(accounts.getByRole('listitem')).toHaveCount(1);
+  await accounts.getByRole('button', { name: 'Thêm account' }).click();
+  await accounts.getByRole('button', { name: 'Claude', exact: true }).click();
+  await expect(accounts.getByRole('listitem')).toHaveCount(2);
 
   await page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'Native' }).click();
-  await page.getByLabel('Account', { exact: true }).selectOption({ label: 'Claude 2' });
+  await page.getByLabel('Account', { exact: true }).selectOption({ index: 1 });
 }
 
 test('a CLI opens in Terminal.app with the project as cwd and only the allowlisted env', async () => {
@@ -126,6 +128,15 @@ test('a second account opens its own Claude Desktop window beside the main app',
     const env = spawnSync('/bin/ps', ['-wwE', '-p', instancePid() ?? '0', '-o', 'command='], { encoding: 'utf8', env: psEnv }).stdout;
     expect(env).toContain(`CLAUDE_CONFIG_DIR=${join(root, 'data', 'accounts')}`);
     expect(env).not.toMatch(/\b(ANTHROPIC|CLAUDE_CODE)[A-Z_]*=/);
+
+    // Claude does not refuse a second process on the same data, so a second click must not start one.
+    const running = spawnSync('/bin/ps', ['-axww', '-o', 'args='], { encoding: 'utf8', env: psEnv });
+    const needle = `${executable} --user-data-dir=${join(root, 'data', 'accounts')}`;
+    const copies = (output: string): number => output.split('\n').filter((line) => line.startsWith(needle)).length;
+    expect(copies(running.stdout)).toBe(1);
+    await page.getByRole('button', { name: 'Mở trong Desktop' }).click();
+    await expect(page.getByText('Account chưa xác minh')).toHaveCount(2, { timeout: 15_000 });
+    expect(copies(spawnSync('/bin/ps', ['-axww', '-o', 'args='], { encoding: 'utf8', env: psEnv }).stdout)).toBe(1);
   } finally {
     const pid = instancePid();
     if (pid) process.kill(Number(pid), 'SIGTERM');

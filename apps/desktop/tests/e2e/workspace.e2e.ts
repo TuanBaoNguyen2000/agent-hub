@@ -12,6 +12,7 @@ const appDirectory = resolve(__dirname, '../..');
 let root: string;
 let userData: string;
 let projectDir: string;
+let browserDir: string;
 let app: ElectronApplication | undefined;
 
 function launchArguments(): { executablePath?: string; args: string[] } {
@@ -23,7 +24,9 @@ function launchArguments(): { executablePath?: string; args: string[] } {
 
 async function launch(): Promise<Page> {
   // Playwright forces a light color scheme unless told not to; the theme test needs the real one.
-  app = await _electron.launch({ ...launchArguments(), colorScheme: null });
+  // Sign-ins go to a stand-in browser here, never the real one.
+  const env = { ...(process.env as Record<string, string>), AGENTHUB_E2E_BROWSER_DIR: browserDir };
+  app = await _electron.launch({ ...launchArguments(), colorScheme: null, env });
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
   return page;
@@ -76,6 +79,9 @@ test.beforeEach(() => {
   userData = join(root, 'data');
   projectDir = join(root, "Dự án 'nháy' $(touch injected)");
   mkdirSync(projectDir);
+  browserDir = join(root, 'browser');
+  mkdirSync(join(browserDir, 'Google Chrome.app'), { recursive: true });
+  writeFileSync(join(browserDir, 'open'), `#!/bin/sh\nfor arg in "$@"; do echo "$arg" >> ${JSON.stringify(join(browserDir, 'log'))}; done\n`, { mode: 0o755 });
 });
 
 test.afterEach(async () => {
@@ -302,6 +308,10 @@ async function addAccount(page: Page, kind: 'Claude' | 'Codex'): Promise<void> {
   const before = await accounts(page).getByRole('listitem').count();
   await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
   await accounts(page).getByRole('button', { name: kind, exact: true }).click();
+  const useMachine = accounts(page).getByRole('button', { name: 'Dùng account này' });
+  const added = accounts(page).getByRole('listitem').nth(before);
+  await expect(useMachine.or(added)).toBeVisible();
+  if (await useMachine.isVisible()) await useMachine.click();
   await expect(accounts(page).getByRole('listitem')).toHaveCount(before + 1);
 }
 
@@ -314,15 +324,44 @@ async function setCli(page: Page, label: 'Claude CLI' | 'Codex CLI', path: strin
   await expect(field).toHaveValue(path);
 }
 
-function fakeClaude(signedIn = true): string {
+// Keeps its login per config folder, as the real CLI does. `auth login` asks for a browser, then
+// waits until the test approves it by writing an email into that folder (see approveLogin).
+function fakeClaude(machineEmail: string | null = 'someone@example.com'): string {
   const cli = join(root, 'fake-claude');
+  const machine = join(root, 'machine-claude');
+  mkdirSync(machine, { recursive: true });
+  if (machineEmail) writeFileSync(join(machine, 'email'), machineEmail);
   writeFileSync(
     cli,
-    `#!/bin/sh\nif [ "$1" = "auth" ] && [ "$2" = "status" ]; then echo '{"loggedIn":${signedIn},"email":"someone@example.com","orgId":"org-1","subscriptionType":"pro"}'; exit 0; fi\nif [ "$1" = "--version" ]; then echo '9.9.9 (Claude Code)'; exit 0; fi\nexit 0\n`,
+    `#!/bin/sh
+state="\${CLAUDE_CONFIG_DIR:-${machine}}"
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  if [ -f "$state/email" ]; then echo "{\\"loggedIn\\":true,\\"email\\":\\"$(cat "$state/email")\\",\\"orgId\\":\\"org-1\\",\\"subscriptionType\\":\\"pro\\"}"; else echo '{"loggedIn":false}'; fi
+  exit 0
+fi
+if [ "$1" = "auth" ] && [ "$2" = "login" ]; then
+  "$BROWSER" 'https://claude.com/cai/oauth/authorize?state=e2e'
+  while [ ! -f "$state/approve" ]; do sleep 0.1; done
+  mv "$state/approve" "$state/email"
+  exit 0
+fi
+if [ "$1" = "--version" ]; then echo '9.9.9 (Claude Code)'; exit 0; fi
+exit 0
+`,
     { mode: 0o755 },
   );
   return cli;
 }
+
+function approveLogin(email: string): void {
+  const accountsRoot = join(userData, 'accounts');
+  for (const id of readdirSync(accountsRoot)) {
+    const folder = join(accountsRoot, id, 'cli');
+    if (!existsSync(join(folder, 'email'))) writeFileSync(join(folder, 'approve'), email);
+  }
+}
+
+const browserLog = (): string => readFileSync(join(browserDir, 'log'), 'utf8');
 
 async function openTaskIn(page: Page, title: string): Promise<void> {
   await tree(page).getByRole('button', { name: /Dự án/ }).click();
@@ -331,41 +370,114 @@ async function openTaskIn(page: Page, title: string): Promise<void> {
   await task.click();
 }
 
-test('adding an account asks only for its kind, and hides folders', async () => {
+test('a machine login is only used after asking, and accounts go by their email', async () => {
   let page = await launch();
   await setCli(page, 'Claude CLI', fakeClaude());
 
-  await addAccount(page, 'Claude');
-  await addAccount(page, 'Claude');
-  await expect(accounts(page).getByLabel('Tên account Claude', { exact: true })).toBeVisible();
-  await expect(accounts(page).getByLabel('Tên account Claude 2')).toBeVisible();
-  await expect(accounts(page).getByText('Đã đăng nhập (pro)').first()).toBeVisible();
-  await expect(accounts(page).getByText(join(userData, 'accounts')).first()).toBeHidden();
+  await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
+  await accounts(page).getByRole('button', { name: 'Claude', exact: true }).click();
+  const offer = accounts(page).getByRole('group', { name: 'Chọn account để thêm' });
+  await expect(offer).toContainText('someone@example.com');
+  await expect(accounts(page).getByRole('listitem')).toHaveCount(0);
 
-  const second = accounts(page).getByLabel('Tên account Claude 2');
-  await second.fill('Công việc');
-  await second.press('Enter');
-  await expect(accounts(page).getByLabel('Tên account Công việc')).toBeVisible();
+  await offer.getByRole('button', { name: 'Dùng account này' }).click();
+  const row = accounts(page).getByRole('listitem').first();
+  await expect(row.getByTestId('account-identity')).toHaveText('someone@example.com');
+  await expect(row.getByText('Đã đăng nhập (pro)')).toBeVisible();
+  await expect(row.getByText(join(userData, 'accounts'))).toBeHidden();
+
+  const nickname = row.getByPlaceholder('Tên gợi nhớ (tuỳ chọn)');
+  await nickname.fill('Công việc');
+  await nickname.press('Enter');
+  await expect(row.getByLabel('Tên gợi nhớ của Công việc (someone@example.com)')).toBeVisible();
+
+  await addProject(page);
+  await createTask(page, 'QA-Name');
+  await expect(page.getByLabel('Account', { exact: true }).locator('option')).toHaveText(['Claude · Công việc (someone@example.com)']);
 
   page = await restart();
   await page.getByRole('button', { name: 'Cài đặt' }).click();
-  await expect(accounts(page).getByLabel('Tên account Công việc')).toBeVisible();
+  await expect(accounts(page).getByTestId('account-identity')).toHaveText('someone@example.com');
+  await expect(accounts(page).getByPlaceholder('Tên gợi nhớ (tuỳ chọn)')).toHaveValue('Công việc');
 });
 
-test('two accounts on the same login are flagged without showing who it is', async () => {
+test('another account signs in through a private window and shows up under its own email', async () => {
+  const page = await launch();
+  await setCli(page, 'Claude CLI', fakeClaude());
+
+  await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
+  await accounts(page).getByRole('button', { name: 'Claude', exact: true }).click();
+  await accounts(page).getByRole('button', { name: 'Đăng nhập account khác' }).click();
+
+  const row = accounts(page).getByRole('listitem').first();
+  await expect(row.getByRole('group', { name: 'Đang đăng nhập' })).toContainText('cửa sổ riêng tư của Google Chrome');
+  await expect(row.getByTestId('account-identity')).toHaveText('Chưa rõ account');
+  expect(browserLog().split('\n').slice(0, 5)).toEqual(['-na', 'Google Chrome', '--args', '--incognito', 'https://claude.com/cai/oauth/authorize?state=e2e']);
+
+  await row.getByRole('button', { name: 'Dùng trình duyệt thường' }).click();
+  await expect.poll(() => browserLog().split('\n').at(-2)).toBe('https://claude.com/cai/oauth/authorize?state=e2e');
+  await row.getByRole('button', { name: 'Sao chép link' }).click();
+  await expect
+    .poll(() => app?.evaluate(({ clipboard }) => clipboard.readText()))
+    .toBe('https://claude.com/cai/oauth/authorize?state=e2e');
+
+  approveLogin('second@example.com');
+
+  await expect(row.getByTestId('account-identity')).toHaveText('second@example.com');
+  await expect(row.getByRole('group', { name: 'Đang đăng nhập' })).toBeHidden();
+  await expect(row.getByRole('button', { name: 'Đăng nhập lại' })).toBeVisible();
+  // The machine's own login is untouched and can still be added.
+  await addAccount(page, 'Claude');
+  await expect(accounts(page).getByTestId('account-identity')).toHaveText(['second@example.com', 'someone@example.com']);
+});
+
+test('cancelling a sign-in cancels adding the account', async () => {
+  const page = await launch();
+  await setCli(page, 'Claude CLI', fakeClaude(null));
+
+  await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
+  await accounts(page).getByRole('button', { name: 'Claude', exact: true }).click();
+  await accounts(page).getByRole('button', { name: 'Huỷ' }).click();
+
+  await expect(accounts(page).getByRole('listitem')).toHaveCount(0);
+  await expect(accounts(page).getByRole('button', { name: 'Thêm account' })).toBeVisible();
+});
+
+test('a sign-in in progress is still there after leaving Settings', async () => {
+  const page = await launch();
+  await setCli(page, 'Claude CLI', fakeClaude(null));
+  await addProject(page);
+  await createTask(page, 'QA-Back');
+
+  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
+  await accounts(page).getByRole('button', { name: 'Claude', exact: true }).click();
+  await expect(accounts(page).getByRole('group', { name: 'Đang đăng nhập' })).toBeVisible();
+
+  await openTaskIn(page, 'QA-Back');
+  await page.getByRole('button', { name: 'Cài đặt' }).click();
+
+  await expect(accounts(page).getByRole('group', { name: 'Đang đăng nhập' })).toBeVisible();
+  await accounts(page).getByRole('button', { name: 'Huỷ' }).click();
+});
+
+test('two accounts on the same login are flagged, and internal identifiers stay in Main', async () => {
   const page = await launch();
   await setCli(page, 'Claude CLI', fakeClaude());
   await addAccount(page, 'Claude');
-  await addAccount(page, 'Claude');
+  await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
+  await accounts(page).getByRole('button', { name: 'Claude', exact: true }).click();
+  await expect(accounts(page).getByRole('group', { name: 'Đang đăng nhập' })).toBeVisible();
 
-  await expect(accounts(page).getByText('trùng với').first()).toBeVisible();
-  expect(await page.content()).not.toContain('example.com');
+  approveLogin('someone@example.com');
+
+  await expect(accounts(page).getByText('cùng tài khoản với').first()).toBeVisible();
+  await expect(accounts(page).getByRole('button', { name: 'Đăng nhập lại' }).last()).toBeVisible();
   const reply = await page.evaluate(async () => {
     const scope = globalThis as unknown as { agentHub: { listProfiles(): Promise<{ data: { id: string }[] }>; getProfileStatus(input: { id: string }): Promise<unknown> } };
     const list = await scope.agentHub.listProfiles();
     return JSON.stringify(await scope.agentHub.getProfileStatus({ id: list.data[0]?.id ?? '' }));
   });
-  expect(reply).not.toContain('example.com');
   expect(reply).not.toContain('org-1');
   expect(reply).not.toContain('ingerprint');
 });
@@ -424,7 +536,7 @@ test('the theme setting applies and survives a restart', async () => {
   let page = await launch();
   await page.getByRole('button', { name: 'Cài đặt' }).click();
   await page.getByText('Nâng cao').click();
-  await expect(page.locator('#schema-version')).toHaveText('2');
+  await expect(page.locator('#schema-version')).toHaveText('3');
 
   await page.getByLabel('Giao diện').selectOption('dark');
   await expect(page.getByLabel('Giao diện')).toHaveValue('dark');

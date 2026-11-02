@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { type MetadataStore, createLaunchService, createWorkspace } from '@agenthub/application';
+import { type LaunchService, type MetadataStore, createLaunchService, createWorkspace } from '@agenthub/application';
 import { createLauncher } from '@agenthub/integrations';
 import { createContextStore, openMetadataStore } from '@agenthub/persistence';
 import { createMacPlatform, createPathInspector } from '@agenthub/platform';
@@ -14,6 +14,7 @@ if (!app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
 }
 
 let store: MetadataStore | undefined;
+let launchService: LaunchService | undefined;
 let mainWindow: BrowserWindow | undefined;
 
 const devServerUrl = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL'];
@@ -84,9 +85,10 @@ function start(): void {
     newId,
     now,
   });
-  const platform = createMacPlatform();
   // Dev runs and tests keep accounts inside their own data folder, away from real logins.
   const usesOwnData = !app.isPackaged || app.commandLine.hasSwitch('user-data-dir');
+  const testBrowser = usesOwnData ? process.env['AGENTHUB_E2E_BROWSER_DIR'] : undefined;
+  const platform = createMacPlatform(testBrowser ? { browserDirs: [testBrowser], browserOpenCommand: join(testBrowser, 'open') } : {});
   const accountsRoot = usesOwnData ? join(dataDirectory, 'accounts') : join(homedir(), '.agenthub', 'accounts');
   const launching = createLaunchService({
     store: openedStore,
@@ -98,6 +100,7 @@ function start(): void {
     now,
     accountDirectories: (id) => ({ cli: join(accountsRoot, id, 'cli'), desktop: join(accountsRoot, id, 'desktop') }),
   });
+  launchService = launching;
   nativeTheme.themeSource = workspace.getSettings().theme;
 
   registerIpcHandlers({
@@ -141,5 +144,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+  launchService?.stopLogins();
   store?.close();
 });

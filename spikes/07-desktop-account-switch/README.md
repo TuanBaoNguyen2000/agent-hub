@@ -68,6 +68,12 @@ spikes/07-desktop-account-switch/run-switch-checks.sh stop
 
 Quan sát ghi vào `local/<timestamp>/` (ignored). Script chỉ đếm tên file và đo dung lượng trong thư mục dữ liệu, không đọc nội dung.
 
+Đo macOS chọn instance nào, không dùng app hay account của provider (thư mục làm việc phải được LaunchServices nhận, nên đặt trong `local/`, không đặt trong `/tmp`):
+
+```bash
+spikes/07-desktop-account-switch/check-instance-routing.sh "$PWD/node_modules/electron/dist/Electron.app" "$PWD/spikes/07-desktop-account-switch/local/routing"
+```
+
 ## Dọn dẹp
 
 Đăng xuất account B trong cửa sổ thứ hai trước, rồi tắt instance và xoá thư mục dữ liệu:

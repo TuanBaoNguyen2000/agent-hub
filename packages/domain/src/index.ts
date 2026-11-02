@@ -8,6 +8,7 @@ export type ErrorCode =
   | 'PROFILE_INVALID'
   | 'PROFILE_CONFIG_MISSING'
   | 'PROFILE_NOT_ALLOWED'
+  | 'LOGIN_NOT_ACTIVE'
   | 'CONFIRMATION_REQUIRED'
   | 'BIN_NOT_FOUND'
   | 'APP_NOT_FOUND'
@@ -56,12 +57,22 @@ export type ClientMode = (typeof CLIENT_MODES)[number];
 export interface AccountProfile {
   id: string;
   provider: Provider;
+  // An optional nickname; empty means the account goes by its email.
   alias: string;
+  // Last seen from the official CLI (ADR-018). It names the CLI login, not a Desktop window's.
+  accountEmail: string | null;
   // CLAUDE_CONFIG_DIR or CODEX_HOME; null means the provider's default location.
   cliConfigRoot: string | null;
   // A separate Desktop instance (ADR-013, ADR-014); null means the main app.
   desktopDataDir: string | null;
   createdAt: string;
+}
+
+const PROVIDER_LABELS: Record<Provider, string> = { claude: 'Claude', codex: 'Codex' };
+
+export function accountName({ provider, alias, accountEmail }: Pick<AccountProfile, 'provider' | 'alias' | 'accountEmail'>): string {
+  if (alias && accountEmail) return `${alias} (${accountEmail})`;
+  return alias || accountEmail || `${PROVIDER_LABELS[provider]} (chưa rõ account)`;
 }
 
 export const LAUNCH_STATUSES = ['planned', 'launched', 'manual_step', 'failed'] as const;

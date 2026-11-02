@@ -5,6 +5,7 @@ import {
   type LaunchAttempt,
   type LaunchOutcome,
   type Provider,
+  accountName,
   isSamePath,
   requireLabel,
 } from '@agenthub/domain';
@@ -34,17 +35,48 @@ export interface InstalledApp {
   version: string | null;
 }
 
+// A long-running tool AgentHub talks to or waits for; stderr is dropped so nothing sensitive is kept.
+export interface ToolProcess {
+  onLine(listener: (line: string) => void): void;
+  write(line: string): void;
+  kill(): void;
+  readonly exited: Promise<number | null>;
+}
+
+// Stands in for the browser a CLI would open, so AgentHub chooses where the page opens.
+export interface BrowserCapture {
+  command: string;
+  url(): string | null;
+  dispose(): void;
+}
+
+export type LoginBrowser = 'private' | 'normal';
+
+// One running copy of a Desktop app; dataDir is null for the app's default data.
+export interface AppInstance {
+  pid: number;
+  dataDir: string | null;
+}
+
 export interface PlatformPort {
   readonly supported: boolean;
   findCli(name: string, overridePath: string | null): Promise<string | null>;
   run(executable: string, args: string[], options?: RunOptions): Promise<RunResult>;
   runInPty(executable: string, args: string[], options?: RunOptions): Promise<RunResult>;
+  spawnTool(executable: string, args: string[], options?: RunOptions): ToolProcess;
+  captureBrowserRequest(): BrowserCapture;
+  // The browser holding the private window, or null if none could open one (Safari has no way to ask).
+  openPrivateWindow(url: string): Promise<string | null>;
+  openInDefaultBrowser(url: string): Promise<boolean>;
   openTerminal(request: { executable: string; args: string[]; cwd: string; extraEnv: Record<string, string> }): Promise<boolean>;
   findApp(bundleName: string): Promise<InstalledApp | null>;
   openApp(bundleId: string): Promise<boolean>;
   openInstance(request: { appName: string; envName: string; envValue: string; dataDir: string; executable: string }): Promise<boolean>;
-  isInstanceRunning(executable: string, dataDir: string): Promise<boolean>;
-  isDefaultInstanceRunning(executable: string): Promise<boolean>;
+  // Starts the app on its default data beside other copies; only when that copy is not running.
+  openDefaultInstance(request: { appName: string; executable: string }): Promise<boolean>;
+  // Oldest first, which is also the copy macOS picks for `open -b` and links (SPIKE-07).
+  runningInstances(executable: string): Promise<AppInstance[]>;
+  focusProcess(pid: number): Promise<boolean>;
   defaultDesktopDataDirs(): string[];
   ensureDirectory(path: string): void;
   isEmptyDirectory(path: string): boolean;
@@ -87,17 +119,28 @@ export interface ProfileStatus {
   cliVersion: string | null;
   login: 'logged_in' | 'logged_out' | 'unknown';
   loginDetail: string | null;
-  // Compared from a hash; the identity itself never leaves the adapter.
+  accountEmail: string | null;
+  // Tells accounts apart when the same email sits in several organizations or workspaces.
   accountFingerprint: string | null;
   desktopInstalled: boolean;
   desktopVersion: string | null;
   desktopVersionHasEvidence: boolean;
 }
 
+// An official CLI waiting for the browser. Only the page address passes through AgentHub;
+// the login itself and its tokens stay between the browser and the CLI (ADR-018).
+export interface LoginProcess {
+  url: string;
+  completed: Promise<boolean>;
+  cancel(): void;
+}
+
 export interface Launcher {
   plan(target: LaunchTarget): Promise<LaunchPlan>;
   launch(plan: LaunchPlan): Promise<LaunchOutcome>;
   status(profile: AccountProfile, cliOverride: string | null): Promise<ProfileStatus>;
+  // Null when the CLI gave no page address, so the caller falls back to openLogin.
+  startLogin(profile: AccountProfile, cliOverride: string | null): Promise<LoginProcess | null>;
   openLogin(profile: AccountProfile, cliOverride: string | null): Promise<void>;
 }
 
@@ -141,11 +184,50 @@ export interface ProfileInput {
 
 export type ProfileStatusView = ProfileStatus & { sameAccountAs: string[] };
 
+export type AccountSource = 'machine' | 'separate';
+
+export interface MachineAccount {
+  available: boolean;
+  cliFound: boolean;
+  login: ProfileStatus['login'];
+  accountEmail: string | null;
+  loginDetail: string | null;
+}
+
+export interface LoginState {
+  phase: 'idle' | 'waiting' | 'succeeded' | 'failed' | 'terminal';
+  privateBrowser: string | null;
+}
+
+const IDLE_LOGIN: LoginState = { phase: 'idle', privateBrowser: null };
+
 export type LaunchService = ReturnType<typeof createLaunchService>;
 
-const PROVIDER_LABELS: Record<Provider, string> = { claude: 'Claude', codex: 'Codex' };
+interface ActiveLogin {
+  profileId: string;
+  url: string | null;
+  process: LoginProcess | null;
+  state: LoginState;
+}
 
 export function createLaunchService({ store, launcher, platform, paths, deviceId, newId, now, accountDirectories }: LaunchServiceDependencies) {
+  // One at a time: a Codex login always listens on the same local port.
+  let activeLogin: ActiveLogin | undefined;
+  let loginRequest = 0;
+
+  function stopActiveLogin(): void {
+    loginRequest += 1;
+    activeLogin?.process?.cancel();
+    activeLogin = undefined;
+  }
+
+  function waitingLogin(id: string): ActiveLogin {
+    if (activeLogin?.profileId !== id || activeLogin.url === null || activeLogin.state.phase !== 'waiting') {
+      throw new DomainError('LOGIN_NOT_ACTIVE', 'Không còn lượt đăng nhập nào đang chờ. Hãy bấm Đăng nhập lại.');
+    }
+    return activeLogin;
+  }
+
   const cliOverride = (provider: Provider): string | null => store.settings.get(CLI_PATH_KEYS[provider]) || null;
 
   function requireProfile(id: string): AccountProfile {
@@ -155,7 +237,8 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
   }
 
   function validated(input: ProfileInput, ownId?: string): ProfileInput {
-    const alias = requireLabel(input.alias, 'Tên account');
+    // Empty is allowed: the account then goes by its email.
+    const alias = input.alias.trim() === '' ? '' : requireLabel(input.alias, 'Tên gợi nhớ');
     const { cliConfigRoot, desktopDataDir } = input;
     const invalid = (message: string): DomainError => new DomainError('PROFILE_INVALID', message);
 
@@ -178,12 +261,12 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
 
     for (const other of store.profiles.list()) {
       if (other.id === ownId) continue;
-      if (other.alias === alias) throw invalid(`Đã có account tên "${alias}".`);
+      if (alias !== '' && other.alias === alias) throw invalid(`Đã có account tên "${alias}".`);
       if (other.provider === input.provider && (other.cliConfigRoot ?? '') === (cliConfigRoot ?? '')) {
-        throw invalid(`Account "${other.alias}" đã dùng cấu hình CLI này.`);
+        throw invalid(`Account "${accountName(other)}" đã dùng cấu hình CLI này.`);
       }
       if (desktopDataDir !== null && other.desktopDataDir !== null && isSamePath(other.desktopDataDir, desktopDataDir)) {
-        throw invalid(`Account "${other.alias}" đã dùng thư mục dữ liệu Desktop này.`);
+        throw invalid(`Account "${accountName(other)}" đã dùng thư mục dữ liệu Desktop này.`);
       }
     }
     return { ...input, alias };
@@ -214,37 +297,53 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
       projectPath: project.path,
       cliOverride: cliOverride(profile.provider),
     });
-    return { plan, permission: permissionOf(project.id, profile.id), projectName: project.name, profileAlias: profile.alias };
+    return { plan, permission: permissionOf(project.id, profile.id), projectName: project.name, profileAlias: accountName(profile) };
   }
 
   return {
     listProfiles: (): AccountProfile[] => store.profiles.list(),
 
     createProfile(input: ProfileInput): AccountProfile {
-      const profile: AccountProfile = { ...validated(input), id: newId(), createdAt: now() };
+      const profile: AccountProfile = { ...validated(input), accountEmail: null, id: newId(), createdAt: now() };
       store.profiles.insert(profile);
       return profile;
     },
 
-    // One step for the user: the first account of a provider is whatever the machine already
-    // uses, and each later one gets folders of its own, so accounts can never share a login.
-    addAccount(input: { provider: Provider }): AccountProfile {
-      const existing = store.profiles.list().filter((profile) => profile.provider === input.provider);
-      const label = PROVIDER_LABELS[input.provider];
-      const taken = new Set(store.profiles.list().map((profile) => profile.alias));
-      let alias = label;
-      for (let number = 2; taken.has(alias); number += 1) alias = `${label} ${number}`;
+    // What adding an account would pick up from this machine, so the user can choose first.
+    async machineAccount(provider: Provider): Promise<MachineAccount> {
+      const available = !store.profiles.list().some((profile) => profile.provider === provider && profile.cliConfigRoot === null);
+      const machine: AccountProfile = {
+        id: 'machine',
+        provider,
+        alias: '',
+        accountEmail: null,
+        cliConfigRoot: null,
+        desktopDataDir: null,
+        createdAt: now(),
+      };
+      const status = await launcher.status(machine, cliOverride(provider));
+      return {
+        available,
+        cliFound: status.cliPath !== null,
+        login: status.login,
+        accountEmail: status.accountEmail,
+        loginDetail: status.loginDetail,
+      };
+    },
 
+    // 'machine' adopts the login this machine already has; 'separate' gets folders of its own,
+    // so the new login cannot touch any other account.
+    addAccount(input: { provider: Provider; source: AccountSource }): AccountProfile {
       const id = newId();
-      const usesDefault = !existing.some((profile) => profile.cliConfigRoot === null);
-      const directories = usesDefault ? null : accountDirectories(id);
+      const directories = input.source === 'separate' ? accountDirectories(id) : null;
       const profile: AccountProfile = {
         ...validated({
           provider: input.provider,
-          alias,
+          alias: '',
           cliConfigRoot: directories?.cli ?? null,
           desktopDataDir: directories?.desktop ?? null,
         }),
+        accountEmail: null,
         id,
         createdAt: now(),
       };
@@ -265,27 +364,74 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
     // Only forgets the descriptor: the provider's own login and data stay where they are.
     removeProfile(id: string): void {
       requireProfile(id);
+      if (activeLogin?.profileId === id) stopActiveLogin();
       store.profiles.remove(id);
     },
 
     async profileStatus(id: string): Promise<ProfileStatusView> {
       const profile = requireProfile(id);
       const status = await launcher.status(profile, cliOverride(profile.provider));
+      if (status.login === 'logged_in' && status.accountEmail !== null && status.accountEmail !== profile.accountEmail) {
+        store.profiles.update({ ...profile, accountEmail: status.accountEmail });
+      }
       const sameAccountAs: string[] = [];
       if (status.accountFingerprint !== null) {
         for (const other of store.profiles.list()) {
           if (other.id === profile.id || other.provider !== profile.provider) continue;
           const otherStatus = await launcher.status(other, cliOverride(other.provider));
-          if (otherStatus.accountFingerprint === status.accountFingerprint) sameAccountAs.push(other.alias);
+          if (otherStatus.accountFingerprint === status.accountFingerprint) sameAccountAs.push(accountName(other));
         }
       }
       return { ...status, accountFingerprint: null, sameAccountAs };
     },
 
-    async openProfileLogin(id: string): Promise<void> {
+    // A private window by default: the browser's usual window would sign in with whichever
+    // account it already holds, and offer no choice (SPIKE-01, SPIKE-08, ADR-018).
+    async beginLogin(id: string): Promise<LoginState> {
       const profile = requireProfile(id);
-      await launcher.openLogin(profile, cliOverride(profile.provider));
+      stopActiveLogin();
+      const request = loginRequest;
+      const process = await launcher.startLogin(profile, cliOverride(profile.provider));
+      if (request !== loginRequest) {
+        process?.cancel();
+        return IDLE_LOGIN;
+      }
+      if (!process) {
+        await launcher.openLogin(profile, cliOverride(profile.provider));
+        const state: LoginState = { phase: 'terminal', privateBrowser: null };
+        activeLogin = { profileId: id, url: null, process: null, state };
+        return state;
+      }
+
+      const login: ActiveLogin = { profileId: id, url: process.url, process, state: { phase: 'waiting', privateBrowser: null } };
+      activeLogin = login;
+      void process.completed.then((succeeded) => {
+        login.state = { ...login.state, phase: succeeded ? 'succeeded' : 'failed' };
+      });
+      login.state = { ...login.state, privateBrowser: await platform.openPrivateWindow(process.url) };
+      return login.state;
     },
+
+    loginState: (id: string): LoginState => (activeLogin?.profileId === id ? activeLogin.state : IDLE_LOGIN),
+
+    async reopenLogin(id: string, browser: LoginBrowser): Promise<LoginState> {
+      const login = waitingLogin(id);
+      const url = login.url as string;
+      if (browser === 'normal') {
+        if (!(await platform.openInDefaultBrowser(url))) throw new DomainError('LAUNCH_FAILED', 'Không mở được trình duyệt.');
+      } else {
+        login.state = { ...login.state, privateBrowser: await platform.openPrivateWindow(url) };
+      }
+      return login.state;
+    },
+
+    loginUrl: (id: string): string => waitingLogin(id).url as string,
+
+    cancelLogin(id: string): void {
+      if (activeLogin?.profileId === id) stopActiveLogin();
+    },
+
+    stopLogins: stopActiveLogin,
 
     setPermission(input: { projectId: string; profileId: string; allowed: boolean }): void {
       if (!store.projects.get(input.projectId, deviceId())) throw new DomainError('NOT_FOUND', 'Không tìm thấy project.');
@@ -300,7 +446,7 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
       const { plan, permission } = await preview(request);
 
       if (permission !== 'allowed') {
-        throw new DomainError('PROFILE_NOT_ALLOWED', `Account "${profile.alias}" chưa được phép dùng project "${project.name}".`);
+        throw new DomainError('PROFILE_NOT_ALLOWED', `Account "${accountName(profile)}" chưa được phép dùng project "${project.name}".`);
       }
       if (plan.blocker) throw new DomainError(plan.blocker.code, plan.blocker.message);
       const missing = plan.requiredConfirmations.find((item) => !confirmations.includes(item.id));
@@ -326,12 +472,12 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
         store.launches.finish(attempt.id, 'failed', code, null);
         throw error;
       }
-      return { ...(store.launches.get(attempt.id) as LaunchAttempt), profileAlias: profile.alias };
+      return { ...(store.launches.get(attempt.id) as LaunchAttempt), profileAlias: accountName(profile) };
     },
 
     listLaunches(taskId: string): LaunchHistoryEntry[] {
       // Removed profiles keep their history, so aliases come from all rows the store can still name.
-      const aliases = new Map(store.profiles.list().map((profile) => [profile.id, profile.alias]));
+      const aliases = new Map(store.profiles.list().map((profile) => [profile.id, accountName(profile)]));
       return store.launches.list(taskId).map((attempt) => ({
         ...attempt,
         profileAlias: aliases.get(attempt.profileId) ?? 'Account đã gỡ',

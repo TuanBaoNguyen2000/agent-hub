@@ -5,13 +5,14 @@ import { join } from 'node:path';
 import {
   type LaunchService,
   type Launcher,
+  type LoginProcess,
   type MetadataStore,
   type PlatformPort,
   type Workspace,
   createLaunchService,
   createWorkspace,
 } from '@agenthub/application';
-import { DomainError, type LaunchOutcome } from '@agenthub/domain';
+import { DomainError, type LaunchOutcome, accountName } from '@agenthub/domain';
 import { createContextStore, openMetadataStore } from '@agenthub/persistence';
 import { createMacPlatform, createPathInspector } from '@agenthub/platform';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -26,6 +27,29 @@ let launched: number;
 let plan: Awaited<ReturnType<Launcher['plan']>>;
 let launchResult: () => Promise<LaunchOutcome>;
 const fingerprints = new Map<string, string | null>();
+const emails = new Map<string, string>();
+let loginProcesses: (LoginProcess | null)[] = [];
+let terminalLogins = 0;
+let browserOpens: [string, string][] = [];
+let privateBrowser: string | null = 'Google Chrome';
+
+function pendingLogin(url = 'https://claude.com/login'): LoginProcess & { finish: (succeeded: boolean) => void; cancelled: () => boolean } {
+  let finish: (succeeded: boolean) => void = () => undefined;
+  let cancelled = false;
+  const completed = new Promise<boolean>((resolve) => {
+    finish = resolve;
+  });
+  return {
+    url,
+    completed,
+    cancel: () => {
+      cancelled = true;
+      finish(false);
+    },
+    finish: (succeeded) => finish(succeeded),
+    cancelled: () => cancelled,
+  };
+}
 
 const outcome: LaunchOutcome = { appOpened: true, workspace: 'opened', sessionStarted: false, userActionRequired: [], warnings: [] };
 
@@ -40,12 +64,16 @@ const launcher: Launcher = {
     cliVersion: '1',
     login: 'logged_in',
     loginDetail: null,
+    accountEmail: emails.get(profile.alias) ?? null,
     accountFingerprint: fingerprints.get(profile.alias) ?? null,
     desktopInstalled: true,
     desktopVersion: '1',
     desktopVersionHasEvidence: true,
   }),
-  openLogin: async () => undefined,
+  startLogin: async () => loginProcesses.shift() ?? null,
+  openLogin: async () => {
+    terminalLogins += 1;
+  },
 };
 
 function open(): void {
@@ -53,7 +81,17 @@ function open(): void {
   const paths = createPathInspector();
   const now = (): string => new Date().toISOString();
   workspace = createWorkspace({ store, context: createContextStore(join(root, 'artifacts')), paths, newId: randomUUID, now });
-  const platform: PlatformPort = createMacPlatform();
+  const platform: PlatformPort = {
+    ...createMacPlatform(),
+    openPrivateWindow: async (url) => {
+      browserOpens.push(['private', url]);
+      return privateBrowser;
+    },
+    openInDefaultBrowser: async (url) => {
+      browserOpens.push(['normal', url]);
+      return true;
+    },
+  };
   launching = createLaunchService({
     store,
     launcher,
@@ -93,6 +131,11 @@ beforeEach(() => {
   plan = { steps: [{ label: 'Mở', execution: 'automatic' }], requiredConfirmations: [], blocker: null, action: { secret: 'command' } };
   launchResult = async () => outcome;
   fingerprints.clear();
+  emails.clear();
+  loginProcesses = [];
+  terminalLogins = 0;
+  browserOpens = [];
+  privateBrowser = 'Google Chrome';
   open();
 });
 
@@ -109,7 +152,7 @@ describe('profiles', () => {
     open();
 
     expect(launching.listProfiles()).toEqual([profile]);
-    expect(Object.keys(profile).sort()).toEqual(['alias', 'cliConfigRoot', 'createdAt', 'desktopDataDir', 'id', 'provider']);
+    expect(Object.keys(profile).sort()).toEqual(['accountEmail', 'alias', 'cliConfigRoot', 'createdAt', 'desktopDataDir', 'id', 'provider']);
   });
 
   it('supports two Claude profiles and an optional second Codex profile', () => {
@@ -166,43 +209,198 @@ describe('profiles', () => {
 });
 
 describe('adding an account', () => {
-  it('uses what the machine already has for the first account of a provider', () => {
-    const account = launching.addAccount({ provider: 'claude' });
+  it('adopts the machine login only when asked to, and without making up a name', () => {
+    const account = launching.addAccount({ provider: 'claude', source: 'machine' });
 
-    expect(account).toMatchObject({ provider: 'claude', alias: 'Claude', cliConfigRoot: null, desktopDataDir: null });
+    expect(account).toMatchObject({ provider: 'claude', alias: '', accountEmail: null, cliConfigRoot: null, desktopDataDir: null });
   });
 
-  it('gives each later account its own folders, so accounts never share a login', () => {
-    launching.addAccount({ provider: 'claude' });
+  it('can add a separate account while the machine login is still unclaimed', async () => {
+    const separate = launching.addAccount({ provider: 'claude', source: 'separate' });
 
-    const second = launching.addAccount({ provider: 'claude' });
-    const third = launching.addAccount({ provider: 'claude' });
+    expect(separate.cliConfigRoot).toBe(join(root, 'accounts', separate.id, 'cli'));
+    expect(separate.desktopDataDir).toBe(join(root, 'accounts', separate.id, 'desktop'));
+    expect((await launching.machineAccount('claude')).available).toBe(true);
+  });
 
-    expect(second.alias).toBe('Claude 2');
-    expect(second.cliConfigRoot).toBe(join(root, 'accounts', second.id, 'cli'));
-    expect(second.desktopDataDir).toBe(join(root, 'accounts', second.id, 'desktop'));
-    expect(third.alias).toBe('Claude 3');
+  it('gives each separate account its own folders, so accounts never share a login', () => {
+    const second = launching.addAccount({ provider: 'claude', source: 'separate' });
+    const third = launching.addAccount({ provider: 'claude', source: 'separate' });
+
     expect(third.cliConfigRoot).not.toBe(second.cliConfigRoot);
   });
 
-  it('counts Claude and Codex separately', () => {
-    launching.addAccount({ provider: 'claude' });
+  it('refuses to adopt the machine login twice', async () => {
+    launching.addAccount({ provider: 'claude', source: 'machine' });
 
-    expect(launching.addAccount({ provider: 'codex' })).toMatchObject({ alias: 'Codex', cliConfigRoot: null });
+    expect(await codeOf(() => launching.addAccount({ provider: 'claude', source: 'machine' }))).toBe('PROFILE_INVALID');
+    expect((await launching.machineAccount('claude')).available).toBe(false);
+  });
+
+  it('tracks the machine login of Claude and Codex separately', async () => {
+    launching.addAccount({ provider: 'claude', source: 'machine' });
+
+    expect((await launching.machineAccount('codex')).available).toBe(true);
+  });
+
+  it('reports who the machine is signed in as', async () => {
+    emails.set('', 'machine@example.com');
+
+    expect(await launching.machineAccount('codex')).toMatchObject({ login: 'logged_in', accountEmail: 'machine@example.com', cliFound: true });
   });
 
   it('creates no folder until the account is used', () => {
-    launching.addAccount({ provider: 'claude' });
-    const second = launching.addAccount({ provider: 'claude' });
+    const second = launching.addAccount({ provider: 'claude', source: 'separate' });
 
     expect(createPathInspector().inspect(second.cliConfigRoot ?? '')).toBe('missing');
   });
 
-  it('takes the default slot again after the default account is removed', () => {
-    const first = launching.addAccount({ provider: 'codex' });
+  it('frees the machine login again after that account is removed', async () => {
+    const first = launching.addAccount({ provider: 'codex', source: 'machine' });
     launching.removeProfile(first.id);
 
-    expect(launching.addAccount({ provider: 'codex' }).cliConfigRoot).toBeNull();
+    expect((await launching.machineAccount('codex')).available).toBe(true);
+  });
+});
+
+describe('account names', () => {
+  it('learns the email from the CLI and keeps it across a restart', async () => {
+    emails.set('', 'a@example.com');
+    const account = launching.addAccount({ provider: 'claude', source: 'machine' });
+
+    await launching.profileStatus(account.id);
+    store.close();
+    open();
+
+    expect(launching.listProfiles()[0]?.accountEmail).toBe('a@example.com');
+  });
+
+  it('follows the CLI when a different account signs in', async () => {
+    const account = launching.addAccount({ provider: 'claude', source: 'machine' });
+    emails.set('', 'a@example.com');
+    await launching.profileStatus(account.id);
+    emails.set('', 'b@example.com');
+    await launching.profileStatus(account.id);
+
+    expect(launching.listProfiles()[0]?.accountEmail).toBe('b@example.com');
+  });
+
+  it('keeps a nickname beside the email, and lets it be cleared', async () => {
+    const account = launching.addAccount({ provider: 'claude', source: 'machine' });
+    emails.set('', 'a@example.com');
+    await launching.profileStatus(account.id);
+    const input = { id: account.id, provider: 'claude' as const, cliConfigRoot: null, desktopDataDir: null };
+
+    expect(accountName(launching.updateProfile({ ...input, alias: 'Công việc' }))).toBe('Công việc (a@example.com)');
+    expect(accountName(launching.updateProfile({ ...input, alias: '  ' }))).toBe('a@example.com');
+  });
+
+  it('never makes up a name for an account it knows nothing about', () => {
+    expect(accountName(launching.addAccount({ provider: 'codex', source: 'machine' }))).toBe('Codex (chưa rõ account)');
+  });
+
+  it('lets several accounts go without a nickname', () => {
+    launching.addAccount({ provider: 'claude', source: 'separate' });
+    launching.addAccount({ provider: 'claude', source: 'separate' });
+
+    expect(launching.listProfiles()).toHaveLength(2);
+  });
+});
+
+describe('signing in', () => {
+  const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+  const account = () => launching.addAccount({ provider: 'claude', source: 'separate' });
+
+  it('opens the page in a private window, so the browser cannot pick the account by itself', async () => {
+    loginProcesses = [pendingLogin('https://claude.com/x')];
+
+    const state = await launching.beginLogin(account().id);
+
+    expect(state).toEqual({ phase: 'waiting', privateBrowser: 'Google Chrome' });
+    expect(browserOpens).toEqual([['private', 'https://claude.com/x']]);
+  });
+
+  it('says so when no browser could open a private window', async () => {
+    loginProcesses = [pendingLogin()];
+    privateBrowser = null;
+
+    expect(await launching.beginLogin(account().id)).toEqual({ phase: 'waiting', privateBrowser: null });
+  });
+
+  it('reports the result of the CLI', async () => {
+    const done = pendingLogin();
+    const failed = pendingLogin();
+    loginProcesses = [done, failed];
+    const first = account();
+    const second = account();
+
+    await launching.beginLogin(first.id);
+    done.finish(true);
+    await flush();
+    expect(launching.loginState(first.id).phase).toBe('succeeded');
+
+    await launching.beginLogin(second.id);
+    failed.finish(false);
+    await flush();
+    expect(launching.loginState(second.id).phase).toBe('failed');
+  });
+
+  it('falls back to Terminal when the CLI hands over no page', async () => {
+    loginProcesses = [null];
+    const { id } = account();
+
+    expect((await launching.beginLogin(id)).phase).toBe('terminal');
+    expect(terminalLogins).toBe(1);
+    expect(browserOpens).toEqual([]);
+    expect(await codeOf(() => launching.loginUrl(id))).toBe('LOGIN_NOT_ACTIVE');
+  });
+
+  it('runs one sign-in at a time', async () => {
+    const first = pendingLogin();
+    loginProcesses = [first, pendingLogin()];
+    const a = account();
+    const b = account();
+
+    await launching.beginLogin(a.id);
+    await launching.beginLogin(b.id);
+
+    expect(first.cancelled()).toBe(true);
+    expect(launching.loginState(a.id).phase).toBe('idle');
+    expect(launching.loginState(b.id).phase).toBe('waiting');
+  });
+
+  it('can reopen the page either way while waiting, and only then', async () => {
+    loginProcesses = [pendingLogin('https://claude.com/x')];
+    const { id } = account();
+    expect(await codeOf(() => launching.reopenLogin(id, 'private'))).toBe('LOGIN_NOT_ACTIVE');
+
+    await launching.beginLogin(id);
+    await launching.reopenLogin(id, 'normal');
+    await launching.reopenLogin(id, 'private');
+
+    expect(browserOpens.map(([kind]) => kind)).toEqual(['private', 'normal', 'private']);
+    expect(launching.loginUrl(id)).toBe('https://claude.com/x');
+  });
+
+  it('stops the CLI on cancel, on removing the account and on quitting', async () => {
+    const cancelled = pendingLogin();
+    const removed = pendingLogin();
+    const quit = pendingLogin();
+    loginProcesses = [cancelled, removed, quit];
+    const { id } = account();
+
+    await launching.beginLogin(id);
+    launching.cancelLogin(id);
+    expect(cancelled.cancelled()).toBe(true);
+    expect(launching.loginState(id).phase).toBe('idle');
+
+    await launching.beginLogin(id);
+    launching.removeProfile(id);
+    expect(removed.cancelled()).toBe(true);
+
+    await launching.beginLogin(account().id);
+    launching.stopLogins();
+    expect(quit.cancelled()).toBe(true);
   });
 });
 

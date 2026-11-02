@@ -13,6 +13,7 @@ Bốn launcher adapters: Claude Desktop, Claude CLI, Codex Desktop và Codex CLI
 - Không gọi process/OS trực tiếp; platform adapter thực hiện thao tác hệ thống.
 - Không truy cập provider credentials/private databases hoặc xây lại agent/chat loop.
 - Desktop account alias là target được chọn, không chứng minh account đang đăng nhập.
+- Đăng nhập chạy CLI chính thức ở nền để lấy địa chỉ trang, người gọi quyết định nơi mở; không lấy được thì quay về Terminal ([ADR-018](../../docs/decisions/018-account-login-and-identity.md)).
 - Commands và flags theo evidence ở SPIKE-02, 03, 07, 08, 09; version có evidence nằm trong `src/index.ts`.
 
 ## Kiểm chứng dự kiến

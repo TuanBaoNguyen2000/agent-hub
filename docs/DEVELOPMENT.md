@@ -45,7 +45,7 @@ Cần Node 24 (`.nvmrc`) và npm 11. Chạy từ thư mục gốc; tooling và v
 
 `AGENTHUB_E2E_NATIVE=1 npx playwright test native` mở Terminal.app và một cửa sổ Claude Desktop thật, với CLI giả và thư mục rỗng; không đăng nhập gì. Mặc định E2E bỏ qua hai bài này.
 
-Dữ liệu nằm ngoài repo: bản đóng gói dùng `~/Library/Application Support/AgentHub/`, `npm run dev` dùng `AgentHub Dev` trong cùng thư mục cha, để migration chưa phát hành không đụng dữ liệu thật. Thư mục của account phụ nằm trong `~/.agenthub/accounts/` ở bản đóng gói, và trong thư mục dữ liệu riêng khi chạy dev hoặc E2E, để thử nghiệm không đụng login thật. E2E luôn dùng thư mục tạm. Chạy E2E trên bản đóng gói bằng cách đặt `AGENTHUB_E2E_EXECUTABLE` trỏ tới binary trong `.app`.
+Dữ liệu nằm ngoài repo: bản đóng gói dùng `~/Library/Application Support/AgentHub/`, `npm run dev` dùng `AgentHub Dev` trong cùng thư mục cha, để migration chưa phát hành không đụng dữ liệu thật. Thư mục của account phụ nằm trong `~/.agenthub/accounts/` ở bản đóng gói, và trong thư mục dữ liệu riêng khi chạy dev hoặc E2E, để thử nghiệm không đụng login thật. E2E luôn dùng thư mục tạm, và `AGENTHUB_E2E_BROWSER_DIR` thay trình duyệt bằng script giả để không mở cửa sổ thật; biến này chỉ có tác dụng khi app dùng dữ liệu riêng. Chạy E2E trên bản đóng gói bằng cách đặt `AGENTHUB_E2E_EXECUTABLE` trỏ tới binary trong `.app`.
 
 Thử bản đóng gói bằng double-click trong Finder. Nếu mở bằng `open`, phải xoá env trước (`env -i`), vì `open` chuyển env của process gọi sang app ([SPIKE-09](../spikes/09-electron-launcher-prototype/evidence/2026-11-01-macos.md)).
 

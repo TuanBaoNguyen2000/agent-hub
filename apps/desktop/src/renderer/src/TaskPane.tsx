@@ -5,6 +5,7 @@ import { api, unwrap } from './api';
 import { ContextEditor } from './ContextEditor';
 import { useDirtyForm } from './unsaved';
 
+const PROVIDER_LABELS = { claude: 'Claude', codex: 'Codex' } as const;
 const STATUS_LABELS: Record<TaskStatusDto, string> = {
   backlog: 'Backlog',
   active: 'Đang làm',
@@ -83,6 +84,13 @@ export function TaskPane({ task, project, onChanged, onOpenSettings }: Props) {
         setAccounts(loaded);
         const recent = attempts.find((attempt) => loaded.some((account) => account.id === attempt.profileId));
         setAccountId(recent?.profileId ?? loaded[0]?.id ?? '');
+        // An account not yet seen signed in gets its name as soon as the CLI can tell.
+        const unnamed = loaded.filter((item) => item.accountEmail === null);
+        if (unnamed.length > 0) {
+          void Promise.all(unnamed.map((item) => api.getProfileStatus({ id: item.id })))
+            .then(() => unwrap(api.listProfiles()))
+            .then(setAccounts, () => undefined);
+        }
       },
       (reason: unknown) => setError((reason as Error).message),
     );
@@ -206,7 +214,7 @@ export function TaskPane({ task, project, onChanged, onOpenSettings }: Props) {
           <select aria-label="Account" value={accountId} onChange={(event) => setAccountId(event.target.value)}>
             {accounts?.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.alias}
+                {PROVIDER_LABELS[item.provider]} · {item.name}
               </option>
             ))}
           </select>

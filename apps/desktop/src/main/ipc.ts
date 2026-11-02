@@ -1,7 +1,7 @@
 import type { LaunchService, Workspace } from '@agenthub/application';
 import { IpcChannel, type IpcErrorDto, type IpcInput, type IpcOutput, type IpcResult, ipcInput } from '@agenthub/contracts';
-import { DomainError } from '@agenthub/domain';
-import { type IpcMainInvokeEvent, app, dialog, ipcMain, nativeTheme, shell } from 'electron';
+import { type AccountProfile, DomainError, accountName } from '@agenthub/domain';
+import { type IpcMainInvokeEvent, app, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron';
 
 interface IpcDependencies {
   workspace: Workspace;
@@ -10,6 +10,8 @@ interface IpcDependencies {
   dataDirectory: string;
   isTrustedSender: (event: IpcMainInvokeEvent) => boolean;
 }
+
+const profileDto = (profile: AccountProfile) => ({ ...profile, name: accountName(profile) });
 
 function toErrorDto(error: unknown): IpcErrorDto {
   if (error instanceof DomainError) return { code: error.code, message: error.message };
@@ -74,9 +76,9 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
     return null;
   });
 
-  handle(IpcChannel.profilesList, () => launching.listProfiles());
-  handle(IpcChannel.profilesAdd, (input) => launching.addAccount(input));
-  handle(IpcChannel.profilesUpdate, (input) => launching.updateProfile(input));
+  handle(IpcChannel.profilesList, () => launching.listProfiles().map(profileDto));
+  handle(IpcChannel.profilesAdd, (input) => profileDto(launching.addAccount(input)));
+  handle(IpcChannel.profilesUpdate, (input) => profileDto(launching.updateProfile(input)));
   handle(IpcChannel.profilesRemove, ({ id }) => {
     launching.removeProfile(id);
     return null;
@@ -89,14 +91,24 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
       cliVersion: status.cliVersion,
       login: status.login,
       loginDetail: status.loginDetail,
+      accountEmail: status.accountEmail,
       sameAccountAs: status.sameAccountAs,
       desktopInstalled: status.desktopInstalled,
       desktopVersion: status.desktopVersion,
       desktopVersionHasEvidence: status.desktopVersionHasEvidence,
     };
   });
-  handle(IpcChannel.profilesOpenLogin, async ({ id }) => {
-    await launching.openProfileLogin(id);
+  handle(IpcChannel.profilesMachineAccount, ({ provider }) => launching.machineAccount(provider));
+  handle(IpcChannel.profilesOpenLogin, ({ id }) => launching.beginLogin(id));
+  handle(IpcChannel.profilesLoginState, ({ id }) => launching.loginState(id));
+  handle(IpcChannel.profilesLoginReopen, ({ id, browser }) => launching.reopenLogin(id, browser));
+  handle(IpcChannel.profilesLoginCopyLink, ({ id }) => {
+    // Written here so the address itself never has to reach the renderer.
+    clipboard.writeText(launching.loginUrl(id));
+    return null;
+  });
+  handle(IpcChannel.profilesLoginCancel, ({ id }) => {
+    launching.cancelLogin(id);
     return null;
   });
   handle(IpcChannel.permissionsSet, (input) => {

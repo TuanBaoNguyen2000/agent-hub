@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase, schemaVersion } from '../src/database';
 import { createContextStore, openMetadataStore } from '../src/index';
+import { MIGRATIONS } from '../src/migrations';
 
 const noteTable = { version: 1, up: 'CREATE TABLE note (id INTEGER PRIMARY KEY)' };
 const projectId = '6f1c2b7e-3a44-4c1d-9a55-0d6f3a7b8c91';
@@ -29,6 +30,33 @@ function versionAfterOpening(migrations: { version: number; up: string }[], back
 }
 
 describe('migrations', () => {
+  it('drops the names AgentHub made up for accounts, and keeps real nicknames', () => {
+    const before = openDatabase(databasePath, MIGRATIONS.filter((migration) => migration.version <= 2));
+    const insert = before.prepare("INSERT INTO account_profiles (id, provider, alias, created_at) VALUES (?, ?, ?, '2026-11-01')");
+    insert.run('1', 'claude', 'Claude');
+    insert.run('2', 'claude', 'Claude 2');
+    insert.run('3', 'codex', 'Codex 12');
+    insert.run('4', 'claude', 'Công việc');
+    insert.run('5', 'claude', 'Claude 2 riêng');
+    insert.run('6', 'codex', 'Claude');
+    before.close();
+
+    const store = openMetadataStore(databasePath);
+    const aliases = store.profiles.list().map((profile) => [profile.id, profile.alias, profile.accountEmail]);
+    store.close();
+
+    expect(aliases).toEqual(
+      expect.arrayContaining([
+        ['1', '', null],
+        ['2', '', null],
+        ['3', '', null],
+        ['4', 'Công việc', null],
+        ['5', 'Claude 2 riêng', null],
+        ['6', 'Claude', null],
+      ]),
+    );
+  });
+
   it('opens a database at a path with Unicode, spaces and quotes', () => {
     expect(versionAfterOpening([])).toBe(0);
   });

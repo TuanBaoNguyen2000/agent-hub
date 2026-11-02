@@ -10,6 +10,14 @@ describe('ipcInput', () => {
     }
   });
 
+  it('accepts only the known ways to add an account and open a sign-in page', () => {
+    expect(ipcInput[IpcChannel.profilesAdd].safeParse({ provider: 'claude', source: 'separate' }).success).toBe(true);
+    expect(ipcInput[IpcChannel.profilesAdd].safeParse({ provider: 'claude' }).success).toBe(false);
+    expect(ipcInput[IpcChannel.profilesAdd].safeParse({ provider: 'claude', source: '/tmp/x' }).success).toBe(false);
+    expect(ipcInput[IpcChannel.profilesLoginReopen].safeParse({ id, browser: 'private' }).success).toBe(true);
+    expect(ipcInput[IpcChannel.profilesLoginReopen].safeParse({ id, browser: 'https://evil.example' }).success).toBe(false);
+  });
+
   it('accepts a path with Unicode, spaces and quotes', () => {
     const path = "/Users/a/Dự án 'nháy' $(x)";
     expect(ipcInput[IpcChannel.projectsAdd].parse({ path })).toEqual({ path });

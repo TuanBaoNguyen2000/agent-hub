@@ -147,6 +147,7 @@ interface ProfileRow {
   id: string;
   provider: Provider;
   alias: string;
+  account_email: string | null;
   cli_config_root: string | null;
   desktop_data_dir: string | null;
   created_at: string;
@@ -156,6 +157,7 @@ const toProfile = (row: ProfileRow): AccountProfile => ({
   id: row.id,
   provider: row.provider,
   alias: row.alias,
+  accountEmail: row.account_email,
   cliConfigRoot: row.cli_config_root,
   desktopDataDir: row.desktop_data_dir,
   createdAt: row.created_at,
@@ -163,14 +165,14 @@ const toProfile = (row: ProfileRow): AccountProfile => ({
 
 // A removed profile keeps its row, because launch history refers to it.
 function profileRepository(db: SqliteDatabase): ProfileRepository {
-  const list = db.prepare('SELECT * FROM account_profiles WHERE enabled = 1 ORDER BY provider, alias COLLATE NOCASE');
+  const list = db.prepare('SELECT * FROM account_profiles WHERE enabled = 1 ORDER BY provider, created_at');
   const get = db.prepare('SELECT * FROM account_profiles WHERE id = ? AND enabled = 1');
   const insert = db.prepare(`
-    INSERT INTO account_profiles (id, provider, alias, cli_config_root, desktop_data_dir, created_at)
-    VALUES (@id, @provider, @alias, @cliConfigRoot, @desktopDataDir, @createdAt)`);
+    INSERT INTO account_profiles (id, provider, alias, account_email, cli_config_root, desktop_data_dir, created_at)
+    VALUES (@id, @provider, @alias, @accountEmail, @cliConfigRoot, @desktopDataDir, @createdAt)`);
   const update = db.prepare(`
     UPDATE account_profiles
-    SET alias = @alias, cli_config_root = @cliConfigRoot, desktop_data_dir = @desktopDataDir
+    SET alias = @alias, account_email = @accountEmail, cli_config_root = @cliConfigRoot, desktop_data_dir = @desktopDataDir
     WHERE id = @id`);
   const disable = db.prepare('UPDATE account_profiles SET enabled = 0 WHERE id = ?');
 
