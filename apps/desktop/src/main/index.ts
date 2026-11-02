@@ -30,6 +30,8 @@ function createWindow(): void {
     minWidth: 760,
     minHeight: 480,
     title: 'AgentHub',
+    // The sidebar runs up under the traffic lights, as in Claude and Codex.
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 16 } } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

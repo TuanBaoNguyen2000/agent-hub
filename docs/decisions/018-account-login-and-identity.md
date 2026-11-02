@@ -32,6 +32,10 @@
 - Đăng nhập trong cửa sổ riêng tư không có phiên sẵn nên phải nhập lại thông tin; đây là cái giá của việc chọn được account.
 - Windows chưa áp dụng (ADR-015).
 
+## Note — 2026-11-02 (bỏ tên gợi nhớ)
+
+Theo góp ý của người dùng, tên gợi nhớ không cần thiết vì email đã đủ phân biệt. UI không còn ô nhập alias và tên account chỉ là email, hoặc "<Provider> (chưa rõ account)" khi CLI chưa báo email. Cột `alias` vẫn giữ trong database để không cần migration; alias cũ không còn hiện ở đâu. Quyết định 5 đổi theo: không còn alias tuỳ chọn.
+
 ## Related
 
 ADR-006, ADR-009 (Terminal ngoài vẫn là đường chính để chạy CLI), [ADR-013](013-claude-desktop-account-instances.md), [ADR-014](014-codex-profiles.md), TDD §11.4.

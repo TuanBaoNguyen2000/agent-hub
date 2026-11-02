@@ -1,11 +1,13 @@
 import type { ClientModeDto, LaunchAttemptDto, LaunchPreviewDto, ProfileDto, ProjectDto, TaskDto, TaskStatusDto } from '@agenthub/contracts';
 import { TASK_STATUSES } from '@agenthub/contracts/constants';
 import { useCallback, useEffect, useState } from 'react';
+import { AccountAvatar, PROVIDER_LABELS, needsDecision, windowLabel } from './accounts';
 import { api, unwrap } from './api';
 import { ContextEditor } from './ContextEditor';
+import { ChevronUpDown, Folder, Gear, Monitor, Terminal } from './icons';
+import { Menu, MenuItem, MenuSeparator, Select } from './ui';
 import { useDirtyForm } from './unsaved';
 
-const PROVIDER_LABELS = { claude: 'Claude', codex: 'Codex' } as const;
 const STATUS_LABELS: Record<TaskStatusDto, string> = {
   backlog: 'Backlog',
   active: 'Đang làm',
@@ -40,21 +42,18 @@ const TABS: { id: Tab; label: string }[] = [
 interface Props {
   task: TaskDto;
   project: ProjectDto;
+  accounts: ProfileDto[] | undefined;
   onChanged: (task: TaskDto) => void;
   onOpenSettings: () => void;
 }
 
-// Asks only when the user has something to decide; otherwise a click just opens.
-function needsDecision(preview: LaunchPreviewDto): boolean {
-  return (
-    preview.blocker !== null ||
-    preview.permission !== 'allowed' ||
-    preview.requiredConfirmations.length > 0 ||
-    preview.steps.some((step) => step.warning !== undefined)
-  );
-}
+const STATUS_OPTIONS = TASK_STATUSES.map((value) => ({
+  value,
+  label: STATUS_LABELS[value],
+  icon: <span className={`dot ${value === 'active' ? 'active' : value === 'blocked' ? 'blocked' : value === 'done' || value === 'archived' ? 'done' : ''}`} />,
+}));
 
-export function TaskPane({ task, project, onChanged, onOpenSettings }: Props) {
+export function TaskPane({ task, project, accounts, onChanged, onOpenSettings }: Props) {
   const [title, setTitle] = useState(task.title);
   const [objective, setObjective] = useState(task.objective);
   const [acceptanceCriteria, setAcceptanceCriteria] = useState(task.acceptanceCriteria);
@@ -62,7 +61,6 @@ export function TaskPane({ task, project, onChanged, onOpenSettings }: Props) {
   const [error, setError] = useState<string>();
   const [tab, setTab] = useState<Tab>('context');
 
-  const [accounts, setAccounts] = useState<ProfileDto[]>();
   const [accountId, setAccountId] = useState('');
   const [pending, setPending] = useState<{ mode: ClientModeDto; preview: LaunchPreviewDto }>();
   const [confirmed, setConfirmed] = useState<string[]>([]);
@@ -79,22 +77,15 @@ export function TaskPane({ task, project, onChanged, onOpenSettings }: Props) {
   }, [task.id]);
 
   useEffect(() => {
-    Promise.all([unwrap(api.listProfiles()), refreshHistory()]).then(
-      ([loaded, attempts]) => {
-        setAccounts(loaded);
-        const recent = attempts.find((attempt) => loaded.some((account) => account.id === attempt.profileId));
-        setAccountId(recent?.profileId ?? loaded[0]?.id ?? '');
-        // An account not yet seen signed in gets its name as soon as the CLI can tell.
-        const unnamed = loaded.filter((item) => item.accountEmail === null);
-        if (unnamed.length > 0) {
-          void Promise.all(unnamed.map((item) => api.getProfileStatus({ id: item.id })))
-            .then(() => unwrap(api.listProfiles()))
-            .then(setAccounts, () => undefined);
-        }
-      },
-      (reason: unknown) => setError((reason as Error).message),
-    );
+    refreshHistory().catch((reason: unknown) => setError((reason as Error).message));
   }, [refreshHistory]);
+
+  // The account last used for this task, until the user picks another one.
+  useEffect(() => {
+    if (!accounts || accounts.some((item) => item.id === accountId)) return;
+    const recent = history.find((attempt) => accounts.some((item) => item.id === attempt.profileId));
+    setAccountId(recent?.profileId ?? accounts[0]?.id ?? '');
+  }, [accounts, history, accountId]);
 
   async function saveFields(fields: { title?: string; objective?: string; acceptanceCriteria?: string; status?: TaskStatusDto }): Promise<void> {
     setError(undefined);
@@ -133,7 +124,7 @@ export function TaskPane({ task, project, onChanged, onOpenSettings }: Props) {
     setLast(undefined);
     try {
       const preview = await unwrap(api.planLaunch({ taskId: task.id, profileId: accountId, mode }));
-      if (needsDecision(preview)) {
+      if (needsDecision(preview) || preview.permission !== 'allowed') {
         setConfirmed([]);
         setPending({ mode, preview });
       } else {
@@ -169,10 +160,26 @@ export function TaskPane({ task, project, onChanged, onOpenSettings }: Props) {
   const account = accounts?.find((item) => item.id === accountId);
 
   return (
-    <div className="stack">
-      <header className="stack">
+    <div className="stack page">
+      <header className="page-header">
+        <div className="header-row">
+          <p className="breadcrumb grow" id="project-path" title={project.path ?? undefined}>
+            <Folder />
+            <span className="truncate">
+              {project.name} — {project.path}
+            </span>
+          </p>
+          <Select
+            label="Trạng thái"
+            className="pill"
+            align="end"
+            value={task.status}
+            options={STATUS_OPTIONS}
+            onChange={(status) => void saveFields({ status })}
+          />
+        </div>
         <input
-          className="bare-input"
+          className="bare-input page-title"
           aria-label="Tiêu đề task"
           value={title}
           onChange={(event) => {
@@ -184,47 +191,68 @@ export function TaskPane({ task, project, onChanged, onOpenSettings }: Props) {
             if (event.key === 'Enter') event.currentTarget.blur();
           }}
         />
-        <div className="row">
-          <p className="path grow" id="project-path">
-            {project.name} — {project.path}
-          </p>
-          <select
-            aria-label="Trạng thái"
-            value={task.status}
-            onChange={(event) => void saveFields({ status: event.target.value as TaskStatusDto })}
-          >
-            {TASK_STATUSES.map((option) => (
-              <option key={option} value={option}>
-                {STATUS_LABELS[option]}
-              </option>
-            ))}
-          </select>
-        </div>
       </header>
 
       {accounts?.length === 0 ? (
-        <div className="banner warning">
-          <p>Chưa có account nào.</p>
-          <button type="button" onClick={onOpenSettings}>
+        <div className="launch-bar empty-launch">
+          <p className="hint grow">Chưa có account nào để mở task này.</p>
+          <button type="button" className="primary" onClick={onOpenSettings}>
             Thêm account
           </button>
         </div>
       ) : (
-        <div className="toolbar" role="group" aria-label="Mở task">
-          <select aria-label="Account" value={accountId} onChange={(event) => setAccountId(event.target.value)}>
+        <div className="launch-bar" role="group" aria-label="Mở task">
+          <Menu
+            label="Account"
+            value={accountId}
+            triggerClassName="account-picker"
+            disabled={!accounts}
+            trigger={
+              account ? (
+                <>
+                  <AccountAvatar account={account} />
+                  <span className="account-picker-text">
+                    <span className="truncate">{account.name}</span>
+                    <span className="account-picker-meta">
+                      {PROVIDER_LABELS[account.provider]} · {windowLabel(account)}
+                    </span>
+                  </span>
+                  <span className="select-chevron">
+                    <ChevronUpDown />
+                  </span>
+                </>
+              ) : (
+                <span className="hint">Chọn account</span>
+              )
+            }
+          >
             {accounts?.map((item) => (
-              <option key={item.id} value={item.id}>
-                {PROVIDER_LABELS[item.provider]} · {item.name}
-              </option>
+              <MenuItem
+                key={item.id}
+                icon={<AccountAvatar account={item} size="sm" />}
+                description={`${PROVIDER_LABELS[item.provider]} · ${windowLabel(item)}`}
+                checked={item.id === accountId}
+                onSelect={() => setAccountId(item.id)}
+              >
+                {item.name}
+              </MenuItem>
             ))}
-          </select>
+            <MenuSeparator />
+            <MenuItem icon={<Gear />} onSelect={onOpenSettings}>
+              Quản lý account
+            </MenuItem>
+          </Menu>
           {/* Desktop and CLI are the same account opened two ways (TDD §9.2). */}
-          <button type="button" className="primary" disabled={!account || busy} onClick={() => void open('desktop')}>
-            Mở trong Desktop
-          </button>
-          <button type="button" className="primary" disabled={!account || busy} onClick={() => void open('cli')}>
-            Mở trong Terminal
-          </button>
+          <div className="launch-actions">
+            <button type="button" className="primary" disabled={!account || busy} onClick={() => void open('desktop')}>
+              <Monitor />
+              Mở trong Desktop
+            </button>
+            <button type="button" className="primary" disabled={!account || busy} onClick={() => void open('cli')}>
+              <Terminal />
+              Mở trong Terminal
+            </button>
+          </div>
         </div>
       )}
 

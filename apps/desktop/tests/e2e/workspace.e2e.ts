@@ -62,6 +62,11 @@ async function createTask(page: Page, title: string): Promise<void> {
 }
 
 const tree = (page: Page) => page.getByRole('navigation', { name: 'Projects' });
+
+async function setStatus(page: Page, label: string): Promise<void> {
+  await page.getByLabel('Trạng thái').click();
+  await page.getByRole('menuitemradio', { name: label }).click();
+}
 const openTab = (page: Page, name: string) => page.getByRole('tab', { name }).click();
 
 function contextEditor(page: Page, label: string) {
@@ -95,7 +100,7 @@ test('Phase 1 exit criteria: project, task and context survive a restart', async
 
   await addProject(page);
   await createTask(page, 'QA-024 — sửa lỗi');
-  await page.getByLabel('Trạng thái').selectOption('active');
+  await setStatus(page, 'Đang làm');
   await openTab(page, 'Chi tiết');
   await page.getByLabel('Mục tiêu').fill('Sửa lỗi spawn');
   await page.getByLabel('Tiêu chí hoàn thành').fill('Không crash');
@@ -111,7 +116,7 @@ test('Phase 1 exit criteria: project, task and context survive a restart', async
 
   await expect(page.locator('#project-path')).toHaveText(projectDir);
   await tree(page).getByRole('button', { name: /QA-024/ }).click();
-  await expect(page.getByLabel('Trạng thái')).toHaveValue('active');
+  await expect(page.getByLabel('Trạng thái')).toHaveAttribute('data-value', 'active');
   await expect(contextEditor(page, 'Task context').text).toHaveValue('# Bối cảnh\nGhi chú tiếng Việt — 日本語');
   await openTab(page, 'Chi tiết');
   await expect(page.getByLabel('Mục tiêu')).toHaveValue('Sửa lỗi spawn');
@@ -219,7 +224,8 @@ test('renaming and removing a project leaves its folder alone', async () => {
   await expect(tree(page).getByRole('button', { name: 'Game A' })).toBeVisible();
 
   page.once('dialog', (dialog) => void dialog.accept());
-  await page.getByRole('button', { name: 'Gỡ khỏi AgentHub' }).click();
+  await page.getByRole('button', { name: 'Thao tác với project' }).click();
+  await page.getByRole('menuitem', { name: 'Gỡ khỏi AgentHub' }).click();
 
   await expect(page.getByRole('heading', { name: 'Chưa có project nào' })).toBeVisible();
   expect(existsSync(projectDir)).toBe(true);
@@ -307,7 +313,7 @@ async function addAccount(page: Page, kind: 'Claude' | 'Codex'): Promise<void> {
   await page.getByRole('button', { name: 'Cài đặt' }).click();
   const before = await accounts(page).getByRole('listitem').count();
   await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
-  await accounts(page).getByRole('button', { name: kind, exact: true }).click();
+  await page.getByRole('menuitem', { name: kind, exact: true }).click();
   const useMachine = accounts(page).getByRole('button', { name: 'Dùng account này' });
   const added = accounts(page).getByRole('listitem').nth(before);
   await expect(useMachine.or(added)).toBeVisible();
@@ -375,7 +381,7 @@ test('a machine login is only used after asking, and accounts go by their email'
   await setCli(page, 'Claude CLI', fakeClaude());
 
   await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
-  await accounts(page).getByRole('button', { name: 'Claude', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
   const offer = accounts(page).getByRole('group', { name: 'Chọn account để thêm' });
   await expect(offer).toContainText('someone@example.com');
   await expect(accounts(page).getByRole('listitem')).toHaveCount(0);
@@ -386,19 +392,21 @@ test('a machine login is only used after asking, and accounts go by their email'
   await expect(row.getByText('Đã đăng nhập (pro)')).toBeVisible();
   await expect(row.getByText(join(userData, 'accounts'))).toBeHidden();
 
-  const nickname = row.getByPlaceholder('Tên gợi nhớ (tuỳ chọn)');
-  await nickname.fill('Công việc');
-  await nickname.press('Enter');
-  await expect(row.getByLabel('Tên gợi nhớ của Công việc (someone@example.com)')).toBeVisible();
+  // No nickname to fill in: the email is the name everywhere.
+  await expect(row.getByRole('textbox')).toHaveCount(0);
+  await expect(tree(page).getByRole('button', { name: 'Mở someone@example.com' })).toBeVisible();
 
   await addProject(page);
   await createTask(page, 'QA-Name');
-  await expect(page.getByLabel('Account', { exact: true }).locator('option')).toHaveText(['Claude · Công việc (someone@example.com)']);
+  const picker = page.getByRole('button', { name: 'Account', exact: true });
+  await expect(picker).toContainText('someone@example.com');
+  await expect(picker).toContainText('Claude · App chính');
+  await picker.click();
+  await expect(page.getByRole('menuitemradio')).toHaveText([/someone@example\.com/]);
 
   page = await restart();
   await page.getByRole('button', { name: 'Cài đặt' }).click();
   await expect(accounts(page).getByTestId('account-identity')).toHaveText('someone@example.com');
-  await expect(accounts(page).getByPlaceholder('Tên gợi nhớ (tuỳ chọn)')).toHaveValue('Công việc');
 });
 
 test('another account signs in through a private window and shows up under its own email', async () => {
@@ -406,7 +414,7 @@ test('another account signs in through a private window and shows up under its o
   await setCli(page, 'Claude CLI', fakeClaude());
 
   await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
-  await accounts(page).getByRole('button', { name: 'Claude', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
   await accounts(page).getByRole('button', { name: 'Đăng nhập account khác' }).click();
 
   const row = accounts(page).getByRole('listitem').first();
@@ -436,7 +444,7 @@ test('cancelling a sign-in cancels adding the account', async () => {
   await setCli(page, 'Claude CLI', fakeClaude(null));
 
   await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
-  await accounts(page).getByRole('button', { name: 'Claude', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
   await accounts(page).getByRole('button', { name: 'Huỷ' }).click();
 
   await expect(accounts(page).getByRole('listitem')).toHaveCount(0);
@@ -451,7 +459,7 @@ test('a sign-in in progress is still there after leaving Settings', async () => 
 
   await page.getByRole('button', { name: 'Cài đặt' }).click();
   await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
-  await accounts(page).getByRole('button', { name: 'Claude', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
   await expect(accounts(page).getByRole('group', { name: 'Đang đăng nhập' })).toBeVisible();
 
   await openTaskIn(page, 'QA-Back');
@@ -466,7 +474,7 @@ test('two accounts on the same login are flagged, and internal identifiers stay 
   await setCli(page, 'Claude CLI', fakeClaude());
   await addAccount(page, 'Claude');
   await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
-  await accounts(page).getByRole('button', { name: 'Claude', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
   await expect(accounts(page).getByRole('group', { name: 'Đang đăng nhập' })).toBeVisible();
 
   approveLogin('someone@example.com');
@@ -487,7 +495,7 @@ test('a task with no account points to where to add one', async () => {
   await addProject(page);
   await createTask(page, 'QA-N');
 
-  await page.getByRole('button', { name: 'Thêm account' }).click();
+  await page.getByRole('main').getByRole('button', { name: 'Thêm account' }).click();
 
   await expect(accounts(page)).toBeVisible();
 });
@@ -538,23 +546,24 @@ test('the theme setting applies and survives a restart', async () => {
   await page.getByText('Nâng cao').click();
   await expect(page.locator('#schema-version')).toHaveText('3');
 
-  await page.getByLabel('Giao diện').selectOption('dark');
-  await expect(page.getByLabel('Giao diện')).toHaveValue('dark');
+  const theme = (label: string) => page.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: label });
+  await theme('Tối').click();
+  await expect(theme('Tối')).toBeChecked();
   expect(await app?.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('dark');
   expect(await isDark(page)).toBe(true);
 
-  await page.getByLabel('Giao diện').selectOption('light');
-  await expect(page.getByLabel('Giao diện')).toHaveValue('light');
+  await theme('Sáng').click();
+  await expect(theme('Sáng')).toBeChecked();
   await expect.poll(() => isDark(page)).toBe(false);
 
-  await page.getByLabel('Giao diện').selectOption('dark');
+  await theme('Tối').click();
   await expect.poll(() => isDark(page)).toBe(true);
 
   page = await restart();
   await expect.poll(() => isDark(page)).toBe(true);
   expect(await app?.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('dark');
   await page.getByRole('button', { name: 'Cài đặt' }).click();
-  await expect(page.getByLabel('Giao diện')).toHaveValue('dark');
+  await expect(page.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: 'Tối' })).toBeChecked();
 });
 
 test('the renderer has no system access and bad payloads are refused', async () => {
@@ -603,4 +612,42 @@ test('a second instance exits and leaves the first one running', async () => {
 
   expect(second.status).toBe(0);
   await expect(page.getByRole('button', { name: 'Thêm project' })).toBeVisible();
+});
+
+test('menus open right beside the control that opened them, and give focus back', async () => {
+  const page = await launch();
+  await setCli(page, 'Claude CLI', fakeClaude());
+  await addAccount(page, 'Claude');
+  await addProject(page);
+  await createTask(page, 'QA-Menu');
+
+  const picker = page.getByRole('button', { name: 'Account', exact: true });
+  await picker.click();
+  const menu = page.getByRole('menu', { name: 'Account' });
+  await expect(menu.getByRole('menuitemradio', { name: 'someone@example.com' })).toBeFocused();
+  await page.waitForTimeout(200);
+  const anchor = await picker.boundingBox();
+  const panel = await menu.boundingBox();
+  if (!anchor || !panel) throw new Error('Menu not laid out');
+  expect(panel.y - (anchor.y + anchor.height)).toBeGreaterThanOrEqual(4);
+  expect(panel.y - (anchor.y + anchor.height)).toBeLessThanOrEqual(8);
+  expect(Math.abs(panel.x - anchor.x)).toBeLessThanOrEqual(1);
+  expect(panel.width).toBeGreaterThanOrEqual(anchor.width - 1);
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(picker).toBeFocused();
+
+  // The accounts sit at the bottom of the sidebar, so their menu opens upwards.
+  const account = tree(page).getByRole('button', { name: 'Mở someone@example.com' });
+  await account.click();
+  const accountMenu = page.getByRole('menu', { name: 'Mở someone@example.com' });
+  await expect(accountMenu.getByRole('menuitem', { name: 'Mở trong Desktop' })).toBeVisible();
+  await expect(accountMenu.getByRole('menuitem', { name: 'Mở trong Terminal' })).toBeVisible();
+  await page.waitForTimeout(200);
+  const row = await account.boundingBox();
+  const above = await accountMenu.boundingBox();
+  if (!row || !above) throw new Error('Menu not laid out');
+  expect(row.y - (above.y + above.height)).toBeGreaterThanOrEqual(4);
+  await page.mouse.click(600, 400);
+  await expect(accountMenu).toBeHidden();
 });

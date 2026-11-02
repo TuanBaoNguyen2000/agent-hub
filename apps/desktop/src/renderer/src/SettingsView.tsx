@@ -3,12 +3,14 @@ import { THEMES } from '@agenthub/contracts/constants';
 import { useEffect, useState } from 'react';
 import { api, unwrap } from './api';
 import { AccountsSection } from './AccountsSection';
+import { Disclosure, Segmented } from './ui';
 
 const THEME_LABELS: Record<ThemeDto, string> = {
   system: 'Theo hệ thống',
   light: 'Sáng',
   dark: 'Tối',
 };
+const THEME_OPTIONS = THEMES.map((value) => ({ value, label: THEME_LABELS[value] }));
 
 function CliPathField({ label, value, onSave }: { label: string; value: string | null; onSave: (path: string | null) => Promise<void> }) {
   const [draft, setDraft] = useState(value ?? '');
@@ -29,7 +31,7 @@ function CliPathField({ label, value, onSave }: { label: string; value: string |
   );
 }
 
-export function SettingsView({ onError }: { onError: (message: string | undefined) => void }) {
+export function SettingsView({ onError, onAccountsChanged }: { onError: (message: string | undefined) => void; onAccountsChanged: () => void }) {
   const [settings, setSettings] = useState<SettingsDto>();
   const [status, setStatus] = useState<SystemStatusDto>();
 
@@ -52,41 +54,38 @@ export function SettingsView({ onError }: { onError: (message: string | undefine
   }
 
   return (
-    <div className="stack">
-      <h1>Cài đặt</h1>
+    <div className="stack page">
+      <header className="page-header">
+        <h1 className="page-title">Cài đặt</h1>
+      </header>
       {settings && (
-        <label className="field">
-          <span className="field-label">Giao diện</span>
-          <select value={settings.theme} onChange={(event) => void saveSettings({ theme: event.target.value as ThemeDto })}>
-            {THEMES.map((theme) => (
-              <option key={theme} value={theme}>
-                {THEME_LABELS[theme]}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      {settings && (
-        <div className="field">
-          <span className="field-label">Dữ liệu của AgentHub</span>
-          <p className="path">{settings.dataDirectory}</p>
-          <div className="row">
+        <section className="settings-group" aria-label="Chung">
+          <div className="settings-row">
+            <div className="grow">
+              <span className="settings-row-label">Giao diện</span>
+            </div>
+            <Segmented label="Giao diện" value={settings.theme} options={THEME_OPTIONS} onChange={(theme) => void saveSettings({ theme })} />
+          </div>
+          <div className="settings-row">
+            <div className="grow settings-row-text">
+              <span className="settings-row-label">Dữ liệu của AgentHub</span>
+              <span className="path">{settings.dataDirectory}</span>
+            </div>
             <button type="button" onClick={() => void unwrap(api.openDataFolder())}>
               Mở trong Finder
             </button>
           </div>
-        </div>
+        </section>
       )}
-      <AccountsSection onError={onError} />
+      <AccountsSection onError={onError} onChanged={onAccountsChanged} />
       {settings && (
-        <details className="section">
-          <summary>Nâng cao</summary>
+        <Disclosure summary="Nâng cao" className="settings-advanced">
           <div className="stack">
             <p className="hint">AgentHub tự tìm Claude và Codex CLI qua shell của bạn. Chỉ điền nếu nó tìm sai.</p>
             <CliPathField label="Claude CLI" value={settings.claudeCliPath} onSave={(claudeCliPath) => saveSettings({ claudeCliPath })} />
             <CliPathField label="Codex CLI" value={settings.codexCliPath} onSave={(codexCliPath) => saveSettings({ codexCliPath })} />
             {status && (
-              <dl>
+              <dl className="facts">
                 <dt>Phiên bản app</dt>
                 <dd id="app-version">{status.appVersion}</dd>
                 <dt>SQLite</dt>
@@ -98,7 +97,7 @@ export function SettingsView({ onError }: { onError: (message: string | undefine
               </dl>
             )}
           </div>
-        </details>
+        </Disclosure>
       )}
     </div>
   );

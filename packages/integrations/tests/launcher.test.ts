@@ -428,6 +428,61 @@ describe('main app beside a window of another account', () => {
   });
 });
 
+describe('an account opened without a project', () => {
+  const claudeB = profile({ cliConfigRoot: '/Users/test/claude b', desktopDataDir: '/Users/test/claude desktop b' });
+  const noFolder = (outcome: { userActionRequired: string[] }) => outcome.userActionRequired.every((item) => !item.includes('folder'));
+
+  it('starts the CLI at home and never claims a project folder', async () => {
+    const fake = fakePlatform();
+    const launcher = createLauncher(fake.platform);
+
+    const plan = await launcher.plan(target({ projectPath: null }));
+    const outcome = await launcher.launch(plan);
+
+    expect(callsOf(fake, 'openTerminal')[0]?.[0]).toMatchObject({ cwd: '/Users/test' });
+    expect(plan.steps[0]?.label).toContain('thư mục home');
+    expect(outcome.workspace).toBe('none');
+  });
+
+  it.each(['claude', 'codex'] as const)('just opens the main %s app, with no folder command', async (provider) => {
+    const fake = fakePlatform();
+    const launcher = createLauncher(fake.platform);
+
+    const plan = await launcher.plan(target({ mode: 'desktop', projectPath: null, profile: profile({ provider }) }));
+    const outcome = await launcher.launch(plan);
+
+    expect(callsOf(fake, 'openApp')).toHaveLength(1);
+    expect(callsOf(fake, 'runInPty')).toEqual([]);
+    expect(callsOf(fake, 'run').filter(([, args]) => (args as string[])[0] === 'app')).toEqual([]);
+    expect(plan.steps.some((step) => step.warning)).toBe(false);
+    expect(noFolder(outcome)).toBe(true);
+  });
+
+  it('opens the window of the account and leaves no folder step', async () => {
+    const fake = fakePlatform();
+    const launcher = createLauncher(fake.platform);
+
+    const outcome = await launcher.launch(await launcher.plan(target({ mode: 'desktop', projectPath: null, profile: claudeB })));
+
+    expect(callsOf(fake, 'openInstance')).toHaveLength(1);
+    expect(noFolder(outcome)).toBe(true);
+  });
+
+  it('still avoids the window of another account, but has nothing to warn about', async () => {
+    const fake = fakePlatform({ runningInstances: async () => [{ pid: 2, dataDir: '/Users/test/claude desktop b' }] });
+    const launcher = createLauncher(fake.platform);
+
+    const plan = await launcher.plan(target({ mode: 'desktop', projectPath: null }));
+    const outcome = await launcher.launch(plan);
+
+    expect(callsOf(fake, 'openDefaultInstance')).toHaveLength(1);
+    expect(callsOf(fake, 'openApp')).toEqual([]);
+    expect(plan.steps.some((step) => step.warning)).toBe(false);
+    expect(outcome.warnings).toEqual([]);
+    expect(noFolder(outcome)).toBe(true);
+  });
+});
+
 describe('Codex Desktop, main app', () => {
   it('uses codex app PATH and only claims a request', async () => {
     const fake = fakePlatform();

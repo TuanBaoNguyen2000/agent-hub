@@ -52,11 +52,11 @@ const PROVIDERS: Record<Provider, ProviderSpec> = {
 };
 
 type Action =
-  | { kind: 'terminal'; executable: string; cwd: string; extraEnv: Record<string, string>; ensureDirs: string[] }
+  | { kind: 'terminal'; executable: string; cwd: string; inProject: boolean; extraEnv: Record<string, string>; ensureDirs: string[] }
   | { kind: 'claude-desktop'; executable: string; cwd: string; bundleId: string }
   | { kind: 'codex-app'; executable: string; path: string; bundleId: string }
   | { kind: 'open-app'; bundleId: string; manual: string[] }
-  | { kind: 'open-main'; appName: string; executable: string; manual: string[]; warning: string }
+  | { kind: 'open-main'; appName: string; executable: string; manual: string[]; warning: string | null }
   | { kind: 'focus'; pid: number; manual: string[]; warning: string | null }
   | { kind: 'instance'; appName: string; envName: string; envValue: string; dataDir: string; executable: string; manual: string[] };
 
@@ -282,7 +282,11 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
     if (root !== null && platform.pathKind(root) === 'missing') {
       steps.push({ label: 'Tạo thư mục cấu hình của account', execution: 'automatic' });
     }
-    steps.push({ label: `Mở ${spec.label} trong Terminal, tại folder của project`, execution: 'automatic' });
+    const inProject = target.projectPath !== null;
+    steps.push({
+      label: inProject ? `Mở ${spec.label} trong Terminal, tại folder của project` : `Mở ${spec.label} trong Terminal, tại thư mục home`,
+      execution: 'automatic',
+    });
 
     const { login } = root !== null && platform.pathKind(root) === 'missing'
       ? { login: 'logged_out' as const }
@@ -294,7 +298,8 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
     const action: Action = {
       kind: 'terminal',
       executable,
-      cwd: target.projectPath,
+      cwd: target.projectPath ?? platform.homeDirectory(),
+      inProject,
       extraEnv,
       ensureDirs: root === null ? [] : [root],
     };
@@ -310,9 +315,11 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
       return planInstance(target, spec, { ...app, dataDir: profile.desktopDataDir, configRoot: profile.cliConfigRoot });
     }
 
+    const inProject = target.projectPath !== null;
     const manualFolder = 'Chọn folder của project trong app';
     const manualAccount = 'Kiểm tra đúng account trong app; nếu sai, đăng xuất rồi đăng nhập lại trong app';
     const manualPrompt = 'Tạo cuộc trò chuyện mới và nhập prompt';
+    const manual = inProject ? [manualFolder, manualAccount, manualPrompt] : [manualAccount, manualPrompt];
     const openWarning =
       profile.cliConfigRoot === null
         ? undefined
@@ -323,22 +330,31 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
     const instances = await platform.runningInstances(app.executable);
     if (instances[0] && instances[0].dataDir !== null) {
       const running = instances.find((instance) => instance.dataDir === null);
-      const warning = `Cửa sổ ${spec.desktopLabel} của account khác đã mở từ trước, nên lệnh mở folder sẽ đi nhầm sang đó. Hãy tự chọn folder trong app chính.`;
+      // Without a project there is no folder to send astray, so nothing to warn about.
+      const warning = inProject
+        ? `Cửa sổ ${spec.desktopLabel} của account khác đã mở từ trước, nên lệnh mở folder sẽ đi nhầm sang đó. Hãy tự chọn folder trong app chính.`
+        : null;
+      const stepWarning = [openWarning, warning].filter(Boolean).join(' ');
       const steps: PlannedStep[] = [
         {
           label: running ? `Chuyển sang ${spec.desktopLabel} chính, đang mở sẵn` : `Mở ${spec.desktopLabel} chính, bên cạnh cửa sổ đang mở`,
           execution: 'conditional',
-          warning: openWarning ? `${openWarning} ${warning}` : warning,
+          ...(stepWarning ? { warning: stepWarning } : {}),
         },
-        { label: manualFolder, execution: 'manual' },
-        { label: manualAccount, execution: 'manual' },
-        { label: manualPrompt, execution: 'manual' },
+        ...manual.map((label): PlannedStep => ({ label, execution: 'manual' })),
       ];
-      const manual = [manualFolder, manualAccount, manualPrompt];
       const action: Action = running
         ? { kind: 'focus', pid: running.pid, manual, warning }
         : { kind: 'open-main', appName: spec.appName, executable: app.executable, manual, warning };
       return { steps, requiredConfirmations: [], blocker: null, action };
+    }
+
+    if (target.projectPath === null) {
+      const steps: PlannedStep[] = [
+        { label: `Mở ${spec.desktopLabel}`, execution: 'automatic', ...(openWarning ? { warning: openWarning } : {}) },
+        ...manual.map((label): PlannedStep => ({ label, execution: 'manual' })),
+      ];
+      return { steps, requiredConfirmations: [], blocker: null, action: { kind: 'open-app', bundleId: spec.bundleId, manual } };
     }
 
     const executable = await platform.findCli(spec.cli, target.cliOverride);
@@ -408,11 +424,9 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
         });
       }
     }
-    steps.push({ label: manualFolder, execution: 'manual' });
-    steps.push({ label: manualAccount, execution: 'manual' });
-    steps.push({ label: manualPrompt, execution: 'manual' });
+    const manual = target.projectPath !== null ? [manualFolder, manualAccount, manualPrompt] : [manualAccount, manualPrompt];
+    for (const label of manual) steps.push({ label, execution: 'manual' });
 
-    const manual = [manualFolder, manualAccount, manualPrompt];
     const action: Action = running
       ? { kind: 'focus', pid: running.pid, manual, warning: null }
       : {
@@ -477,7 +491,7 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
         if (!started) throw new DomainError('LAUNCH_FAILED', 'Không mở được Terminal.');
         return {
           appOpened: true,
-          workspace: 'opened',
+          workspace: action.inProject ? 'opened' : 'none',
           sessionStarted: false,
           userActionRequired: ['Kiểm tra đúng account bằng lệnh /status', 'Nhập prompt để bắt đầu'],
           warnings: [],
@@ -512,7 +526,13 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
       }
       case 'open-main': {
         if (!(await platform.openDefaultInstance(action))) throw new DomainError('LAUNCH_FAILED', 'Không thấy app chính khởi động.');
-        return { appOpened: true, workspace: 'manual', sessionStarted: false, userActionRequired: action.manual, warnings: [action.warning] };
+        return {
+          appOpened: true,
+          workspace: 'manual',
+          sessionStarted: false,
+          userActionRequired: action.manual,
+          warnings: action.warning ? [action.warning] : [],
+        };
       }
       case 'focus': {
         // Not worth failing the launch: the window is open, only bringing it forward did not work.

@@ -70,9 +70,9 @@ export interface AccountProfile {
 
 const PROVIDER_LABELS: Record<Provider, string> = { claude: 'Claude', codex: 'Codex' };
 
-export function accountName({ provider, alias, accountEmail }: Pick<AccountProfile, 'provider' | 'alias' | 'accountEmail'>): string {
-  if (alias && accountEmail) return `${alias} (${accountEmail})`;
-  return alias || accountEmail || `${PROVIDER_LABELS[provider]} (chưa rõ account)`;
+// The email is the name: a nickname added nothing the email did not already say (ADR-018 note).
+export function accountName({ provider, accountEmail }: Pick<AccountProfile, 'provider' | 'accountEmail'>): string {
+  return accountEmail ?? `${PROVIDER_LABELS[provider]} (chưa rõ account)`;
 }
 
 export const LAUNCH_STATUSES = ['planned', 'launched', 'manual_step', 'failed'] as const;

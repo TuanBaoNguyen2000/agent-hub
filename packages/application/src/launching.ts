@@ -110,7 +110,8 @@ export interface LaunchPlan {
 export interface LaunchTarget {
   profile: AccountProfile;
   mode: ClientMode;
-  projectPath: string;
+  // null opens the account on its own: the app without a folder, or Terminal at home.
+  projectPath: string | null;
   cliOverride: string | null;
 }
 
@@ -160,6 +161,12 @@ export interface LaunchServiceDependencies {
 
 export interface LaunchRequest {
   taskId: string;
+  profileId: string;
+  mode: ClientMode;
+}
+
+// Opens an account without a task, the way clicking the app would.
+export interface AccountLaunchRequest {
   profileId: string;
   mode: ClientMode;
 }
@@ -298,6 +305,11 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
       cliOverride: cliOverride(profile.provider),
     });
     return { plan, permission: permissionOf(project.id, profile.id), projectName: project.name, profileAlias: accountName(profile) };
+  }
+
+  function previewAccount(request: AccountLaunchRequest): Promise<LaunchPlan> {
+    const profile = requireProfile(request.profileId);
+    return launcher.plan({ profile, mode: request.mode, projectPath: null, cliOverride: cliOverride(profile.provider) });
   }
 
   return {
@@ -473,6 +485,19 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
         throw error;
       }
       return { ...(store.launches.get(attempt.id) as LaunchAttempt), profileAlias: accountName(profile) };
+    },
+
+    previewAccount,
+
+    // No project means no source code to grant, so no permission check. History belongs to
+    // tasks, so this launch leaves none.
+    async openAccount(request: AccountLaunchRequest, confirmations: string[]): Promise<LaunchOutcome> {
+      const plan = await previewAccount(request);
+      if (plan.blocker) throw new DomainError(plan.blocker.code, plan.blocker.message);
+      const missing = plan.requiredConfirmations.find((item) => !confirmations.includes(item.id));
+      if (missing) throw new DomainError('CONFIRMATION_REQUIRED', missing.label);
+      const outcome = await launcher.launch(plan);
+      return { ...outcome, workspace: 'none' };
     },
 
     listLaunches(taskId: string): LaunchHistoryEntry[] {

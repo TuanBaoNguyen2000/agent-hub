@@ -30,6 +30,11 @@ const launchRequestSchema = z.strictObject({
   mode: z.enum(CLIENT_MODES),
 });
 
+const accountLaunchSchema = z.strictObject({
+  profileId: idSchema,
+  mode: z.enum(CLIENT_MODES),
+});
+
 const contextReferenceSchema = z.discriminatedUnion('scope', [
   z.strictObject({ scope: z.literal('project'), projectId: idSchema }),
   z.strictObject({ scope: z.literal('task'), taskId: idSchema, document: z.enum(['task', 'decisions']) }),
@@ -84,6 +89,11 @@ export const ipcInput = {
   }),
   [IpcChannel.launchHistory]: z.strictObject({ taskId: idSchema }),
   [IpcChannel.launchConfirmAccount]: z.strictObject({ attemptId: idSchema }),
+  [IpcChannel.launchAccountPlan]: accountLaunchSchema,
+  [IpcChannel.launchAccountExecute]: z.strictObject({
+    request: accountLaunchSchema,
+    confirmations: z.array(z.string().max(100)).max(20),
+  }),
 } as const;
 
 export type IpcInput<C extends keyof typeof ipcInput> = z.infer<(typeof ipcInput)[C]>;
@@ -139,7 +149,7 @@ export interface SettingsDto {
 export interface ProfileDto {
   id: string;
   provider: ProviderDto;
-  // What to call the account everywhere: its email, with the nickname if it has one.
+  // What to call the account everywhere: its email.
   name: string;
   alias: string;
   accountEmail: string | null;
@@ -184,6 +194,9 @@ export interface LaunchPreviewDto {
   projectName: string;
   profileAlias: string;
 }
+
+// Opening an account without a task has no project to ask permission for.
+export type AccountLaunchPreviewDto = Pick<LaunchPreviewDto, 'steps' | 'requiredConfirmations' | 'blocker'>;
 
 export interface LaunchOutcomeDto {
   appOpened: boolean;
@@ -237,6 +250,8 @@ export interface IpcOutput {
   [IpcChannel.launchExecute]: LaunchAttemptDto;
   [IpcChannel.launchHistory]: LaunchAttemptDto[];
   [IpcChannel.launchConfirmAccount]: null;
+  [IpcChannel.launchAccountPlan]: AccountLaunchPreviewDto;
+  [IpcChannel.launchAccountExecute]: LaunchOutcomeDto;
 }
 
 export interface IpcErrorDto {
@@ -279,4 +294,6 @@ export interface AgentHubApi {
   executeLaunch(input: IpcInput<typeof IpcChannel.launchExecute>): Reply<typeof IpcChannel.launchExecute>;
   listLaunches(input: IpcInput<typeof IpcChannel.launchHistory>): Reply<typeof IpcChannel.launchHistory>;
   confirmLaunchAccount(input: IpcInput<typeof IpcChannel.launchConfirmAccount>): Reply<typeof IpcChannel.launchConfirmAccount>;
+  planAccountLaunch(input: IpcInput<typeof IpcChannel.launchAccountPlan>): Reply<typeof IpcChannel.launchAccountPlan>;
+  openAccount(input: IpcInput<typeof IpcChannel.launchAccountExecute>): Reply<typeof IpcChannel.launchAccountExecute>;
 }

@@ -30,6 +30,8 @@ export const IpcChannel = {
   launchExecute: 'launch:execute',
   launchHistory: 'launch:history',
   launchConfirmAccount: 'launch:confirm-account',
+  launchAccountPlan: 'launch:account-plan',
+  launchAccountExecute: 'launch:account-execute',
 } as const;
 
 export const TASK_STATUSES = ['backlog', 'active', 'blocked', 'in_review', 'done', 'archived'] as const;

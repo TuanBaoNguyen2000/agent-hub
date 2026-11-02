@@ -133,4 +133,9 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
     launching.confirmAccount(attemptId);
     return null;
   });
+  handle(IpcChannel.launchAccountPlan, async (request) => {
+    const { steps, requiredConfirmations, blocker } = await launching.previewAccount(request);
+    return { steps, requiredConfirmations, blocker };
+  });
+  handle(IpcChannel.launchAccountExecute, ({ request, confirmations }) => launching.openAccount(request, confirmations));
 }

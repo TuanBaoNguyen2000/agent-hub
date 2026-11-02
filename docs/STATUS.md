@@ -1,13 +1,19 @@
 # Project status
 
 **Updated:** 2026-11-02  
-**Stage:** Phase 2 đủ deliverables trên macOS, UX và đăng nhập đã làm lại theo góp ý của người dùng (2026-11-02); E2E và native smoke đạt, chờ thử đăng nhập với account thật. Việc tiếp theo là duy trì context giữa các account (Phase 3). Windows hoãn theo ADR-015, vẫn `Not run`  
+**Stage:** Phase 2 đủ deliverables trên macOS, UX, đăng nhập và giao diện đã làm lại theo góp ý của người dùng (2026-11-02); E2E và native smoke đạt, chờ thử đăng nhập với account thật. Việc tiếp theo là duy trì context giữa các account (Phase 3). Windows hoãn theo ADR-015, vẫn `Not run`  
 **Application:** Quản lý Project, Task, context, account; mở Claude/Codex bằng Desktop hoặc Terminal từ một task. Chưa có checkpoint, handoff, Smart Switch. `npm run package` tạo `.app` ký ad hoc
 
 ## Đã hoàn thành
 
-- **Sửa lỗi mở nhầm cửa sổ Desktop (2026-11-02, chưa commit):** người dùng báo khi cửa sổ account B đang chạy một mình, mở account A lại ra B. Nguyên nhân: macOS giao `open -b` và link cho instance khởi động sớm nhất, nên `claude --desktop` và `codex app` đi nhầm ([evidence](../spikes/07-desktop-account-switch/evidence/2026-11-02-macos-instance-routing.md)). Giờ nếu instance sớm nhất là cửa sổ account khác thì app chính được mở bằng `open -n -a` hoặc đưa đúng PID lên trước, và người dùng tự chọn folder. Bấm mở cửa sổ đang chạy cũng đưa nó lên trước; không gọi `open -n` lại vì Claude sinh process trùng. Cảnh báo đăng nhập lần đầu giờ áp dụng cho mọi cửa sổ khác, không chỉ app chính. Người dùng thử trên `.app` với account Claude và Codex thật và báo chạy đúng (reported).
-- **Đăng nhập và tên account ([ADR-018](decisions/018-account-login-and-identity.md), 2026-11-02, chưa commit):**
+- **Giao diện theo phong cách Claude/Codex Desktop (2026-11-02):** theo góp ý của người dùng.
+  - **Khung:** thanh tiêu đề ẩn trên macOS, sidebar sát đèn giao thông và kéo được cửa sổ; bảng màu trung tính ấm cho cả sáng và tối; tiêu đề trang dùng font serif; icon SVG nội bộ, không thêm dependency.
+  - **Dropdown:** thay `<select>` và `<details>` bằng menu và disclosure tự viết (`renderer/src/ui.tsx`). Menu cách nút mở 6px, rộng ít nhất bằng nút, tự lật lên trên khi thiếu chỗ, có phím mũi tên, Escape trả focus về nút. Nội dung mở rộng thụt vào dưới chữ của tiêu đề.
+  - **Account:** bỏ ô tên gợi nhớ, tên là email (ghi chú ở ADR-018). Mỗi account hiện "App chính" hoặc "Cửa sổ riêng". Chọn account cho task bằng menu có avatar, email và loại cửa sổ.
+  - **Mở từ account:** account nằm ở cuối sidebar và trong Cài đặt, mở được Desktop hoặc Terminal không cần task. Desktop mở app hoặc cửa sổ của account mà không gửi lệnh mở folder; Terminal mở ở thư mục home. Không có project nên không hỏi quyền project và không ghi lịch sử, vì lịch sử gắn với task. Vẫn giữ định tuyến tránh cửa sổ account khác và xác nhận version chưa kiểm chứng.
+  - **Kiểm chứng:** 194 unit test, có test mới cho mở không project ở launcher và use case; 22 bài E2E, có bài mới đo vị trí menu so với nút mở và kiểm tra focus. Đã xem ảnh chụp ở giao diện sáng và tối với dữ liệu mẫu. Người dùng xem trên `.app` và báo UI ổn (reported). Chưa thử mở từ account với Claude và Codex thật.
+- **Sửa lỗi mở nhầm cửa sổ Desktop (2026-11-02):** người dùng báo khi cửa sổ account B đang chạy một mình, mở account A lại ra B. Nguyên nhân: macOS giao `open -b` và link cho instance khởi động sớm nhất, nên `claude --desktop` và `codex app` đi nhầm ([evidence](../spikes/07-desktop-account-switch/evidence/2026-11-02-macos-instance-routing.md)). Giờ nếu instance sớm nhất là cửa sổ account khác thì app chính được mở bằng `open -n -a` hoặc đưa đúng PID lên trước, và người dùng tự chọn folder. Bấm mở cửa sổ đang chạy cũng đưa nó lên trước; không gọi `open -n` lại vì Claude sinh process trùng. Cảnh báo đăng nhập lần đầu giờ áp dụng cho mọi cửa sổ khác, không chỉ app chính. Người dùng thử trên `.app` với account Claude và Codex thật và báo chạy đúng (reported).
+- **Đăng nhập và tên account ([ADR-018](decisions/018-account-login-and-identity.md), 2026-11-02):**
   - **Tên:** account hiện theo email do CLI báo, Codex lấy qua `codex app-server`. Alias thành tên gợi nhớ tuỳ chọn; migration 3 bỏ các tên tự đặt `Claude 2`, ... và thêm cột `account_email`.
   - **Chọn account:** nếu máy đang đăng nhập, app hiện email và hỏi dùng account đó hay đăng nhập account khác, không tự nhận nữa. Đăng nhập chạy CLI ở nền, mở trang trong cửa sổ riêng tư, tự cập nhật khi xong; có Mở lại, Dùng trình duyệt thường, Sao chép link, Huỷ. Huỷ khi đang thêm thì gỡ luôn account đó. Không lấy được địa chỉ trang thì quay về Terminal.
   - **Kiểm chứng:** xem mục Phase 2 bên dưới và [evidence](../spikes/05-account-mapping/evidence/2026-11-02-macos-login-and-identity.md). Đã chạy `.app` với CLI thật và browser giả: đúng email, đúng địa chỉ trang, Huỷ và thoát không để lại process. Đã xem ảnh chụp UI ở giao diện sáng.
@@ -105,6 +111,7 @@
 - **Chưa chạy launcher với account và CLI thật:** native smoke dùng CLI giả và thư mục rỗng. Chưa xác nhận: `claude --desktop` từ app sản phẩm, instance đúng account B, `/status`.
 - **Chưa có một lượt đăng nhập trọn vẹn (ADR-018):** chưa mở Chrome thật ở chế độ riêng tư từ app, chưa thấy CLI nhận callback rồi thoát, chưa thử đăng nhập lại đè lên login cũ. Cần người dùng thao tác với account thật.
 - Giới hạn của Phase 1: project đã gỡ chưa khôi phục được trong app; Context Editor chưa có preview và history (TDD §9.1); chưa có log có rotation (TDD §11.3).
+- Mở account không cần task chưa thử với app thật; lần mở này không có trong lịch sử.
 - Giới hạn của Phase 2: email chỉ nói về login của CLI, và chỉ cập nhật khi app đọc lại trạng thái; AgentHub không tắt được cửa sổ Desktop đã mở; đường dẫn account chưa tách theo thiết bị; chỉ hỗ trợ Terminal.app; đọc exit status của CLI để P1 (FR-105). Account Claude phụ cần đăng nhập hai lần nếu dùng cả Terminal và Desktop, vì hai bên giữ login riêng (SPIKE-04, SPIKE-07).
 - Chưa có checkpoint, handoff, Git observation và Smart Switch: thuộc Phase 3.
 

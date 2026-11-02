@@ -34,6 +34,8 @@ const api: AgentHubApi = {
   executeLaunch: (input) => ipcRenderer.invoke(IpcChannel.launchExecute, input),
   listLaunches: (input) => ipcRenderer.invoke(IpcChannel.launchHistory, input),
   confirmLaunchAccount: (input) => ipcRenderer.invoke(IpcChannel.launchConfirmAccount, input),
+  planAccountLaunch: (input) => ipcRenderer.invoke(IpcChannel.launchAccountPlan, input),
+  openAccount: (input) => ipcRenderer.invoke(IpcChannel.launchAccountExecute, input),
 };
 
 contextBridge.exposeInMainWorld('agentHub', api);

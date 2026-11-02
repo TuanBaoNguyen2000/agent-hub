@@ -1,8 +1,9 @@
 import type { LoginStateDto, MachineAccountDto, ProfileDto, ProfileStatusDto, ProviderDto } from '@agenthub/contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AccountAvatar, PROVIDER_LABELS, useAccountLauncher, windowLabel } from './accounts';
 import { api, unwrap } from './api';
-
-const PROVIDER_LABELS = { claude: 'Claude', codex: 'Codex' } as const;
+import { Monitor, More, Plus, Terminal } from './icons';
+import { Disclosure, Menu, MenuItem, MenuSeparator } from './ui';
 const LOGIN_POLL_MS = 1500;
 const TERMINAL_POLL_MS = 3000;
 const LOGIN_POLL_LIMIT = 100;
@@ -69,8 +70,8 @@ function AccountRow({
   status,
   login,
   starting,
-  onRename,
   onLogin,
+  onOpen,
   onReopen,
   onCopy,
   onCancel,
@@ -80,66 +81,65 @@ function AccountRow({
   status: ProfileStatusDto | undefined;
   login: LoginStateDto | undefined;
   starting: boolean;
-  onRename: (alias: string) => Promise<boolean>;
   onLogin: () => void;
+  onOpen: (mode: 'desktop' | 'cli') => void;
   onReopen: (browser: 'private' | 'normal') => void;
   onCopy: () => void;
   onCancel: () => void;
   onRemove: () => void;
 }) {
-  const [alias, setAlias] = useState(account.alias);
   const signedIn = status?.login === 'logged_in';
   const inProgress = starting || login?.phase === 'waiting' || login?.phase === 'terminal';
   return (
-    <li className="card">
-      <div className="row">
-        <strong className="grow" data-testid="account-identity">
-          {account.accountEmail ?? 'Chưa rõ account'}
-        </strong>
-        <span className="badge">{PROVIDER_LABELS[account.provider]}</span>
-        <span className={signedIn ? 'badge' : 'badge manual'} data-testid="login-state">
-          {loginText(status)}
-        </span>
-      </div>
-      <input
-        aria-label={`Tên gợi nhớ của ${account.name}`}
-        placeholder="Tên gợi nhớ (tuỳ chọn)"
-        value={alias}
-        onChange={(event) => setAlias(event.target.value)}
-        onBlur={() => {
-          if (alias.trim() === account.alias) return;
-          void onRename(alias).then((ok) => {
-            if (!ok) setAlias(account.alias);
-          });
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') event.currentTarget.blur();
-        }}
-      />
-      {starting && (
-        <p className="hint" role="status">
-          Đang chuẩn bị đăng nhập…
-        </p>
-      )}
-      {login && <LoginProgress state={login} onReopen={onReopen} onCopy={onCopy} onCancel={onCancel} />}
-      {status && status.sameAccountAs.length > 0 && (
-        <p className="banner warning">
-          Account này đang đăng nhập cùng tài khoản với "{status.sameAccountAs.join(', ')}". Có thể trình duyệt đã tự dùng phiên cũ; hãy bấm Đăng nhập lại và chọn account khác trong cửa sổ riêng tư.
-        </p>
-      )}
-      {!inProgress && (
-        <div className="row">
+    <li className="account-row">
+      <div className="account-row-main">
+        <AccountAvatar account={account} />
+        <div className="grow account-row-text">
+          <strong className="truncate" data-testid="account-identity">
+            {account.accountEmail ?? 'Chưa rõ account'}
+          </strong>
+          <span className="account-row-meta">
+            {PROVIDER_LABELS[account.provider]} · {windowLabel(account)} ·{' '}
+            <span className={signedIn ? 'login-state ok' : 'login-state'} data-testid="login-state">
+              {loginText(status)}
+            </span>
+          </span>
+        </div>
+        {!inProgress && (
           <button type="button" onClick={onLogin}>
             {signedIn ? 'Đăng nhập lại' : 'Đăng nhập'}
           </button>
-          <button type="button" onClick={onRemove}>
-            Gỡ
-          </button>
+        )}
+        <Menu label={`Thao tác với ${account.name}`} triggerClassName="icon-button" align="end" trigger={<More />}>
+          <MenuItem icon={<Monitor />} onSelect={() => onOpen('desktop')}>
+            Mở trong Desktop
+          </MenuItem>
+          <MenuItem icon={<Terminal />} onSelect={() => onOpen('cli')}>
+            Mở trong Terminal
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem tone="danger" onSelect={onRemove}>
+            Gỡ khỏi AgentHub
+          </MenuItem>
+        </Menu>
+      </div>
+      {starting && (
+        <p className="hint account-row-detail" role="status">
+          Đang chuẩn bị đăng nhập…
+        </p>
+      )}
+      {login && (
+        <div className="account-row-detail">
+          <LoginProgress state={login} onReopen={onReopen} onCopy={onCopy} onCancel={onCancel} />
         </div>
       )}
-      <details>
-        <summary>Thông tin kỹ thuật</summary>
-        <dl>
+      {status && status.sameAccountAs.length > 0 && (
+        <p className="banner warning account-row-detail">
+          Account này đang đăng nhập cùng tài khoản với "{status.sameAccountAs.join(', ')}". Có thể trình duyệt đã tự dùng phiên cũ; hãy bấm Đăng nhập lại và chọn account khác trong cửa sổ riêng tư.
+        </p>
+      )}
+      <Disclosure summary="Thông tin kỹ thuật" className="account-row-detail">
+        <dl className="facts">
           <dt>Email</dt>
           <dd>Do CLI báo. {account.provider === 'claude' && account.desktopDataDir ? 'Cửa sổ Desktop của account này có đăng nhập riêng.' : ''}</dd>
           <dt>Cấu hình CLI</dt>
@@ -151,15 +151,14 @@ function AccountRow({
           <dt>Desktop</dt>
           <dd>{status?.desktopInstalled ? (status.desktopVersion ?? 'không rõ version') : 'Chưa cài'}</dd>
         </dl>
-      </details>
+      </Disclosure>
     </li>
   );
 }
 
-export function AccountsSection({ onError }: { onError: (message: string | undefined) => void }) {
-  const [accounts, setAccounts] = useState<ProfileDto[]>();
+export function AccountsSection({ onError, onChanged }: { onError: (message: string | undefined) => void; onChanged: () => void }) {
+  const [accounts, setLoadedAccounts] = useState<ProfileDto[]>();
   const [statuses, setStatuses] = useState<Record<string, ProfileStatusDto>>({});
-  const [choosing, setChoosing] = useState(false);
   const [checking, setChecking] = useState(false);
   const [offer, setOffer] = useState<{ provider: ProviderDto; machine: MachineAccountDto }>();
   const [login, setLogin] = useState<{ id: string; state: LoginStateDto }>();
@@ -167,6 +166,16 @@ export function AccountsSection({ onError }: { onError: (message: string | undef
   // Cancelling the sign-in of an account being added also cancels adding it.
   const justAdded = useRef<string>(undefined);
   const polls = useRef(0);
+  const launcher = useAccountLauncher(onError);
+
+  // The sidebar lists accounts too, so every change goes to it as well.
+  const setAccounts = useCallback(
+    (loaded: ProfileDto[]) => {
+      setLoadedAccounts(loaded);
+      onChanged();
+    },
+    [onChanged],
+  );
 
   const refreshStatus = useCallback(async (id: string): Promise<ProfileStatusDto | undefined> => {
     try {
@@ -178,7 +187,7 @@ export function AccountsSection({ onError }: { onError: (message: string | undef
     } catch {
       return undefined;
     }
-  }, []);
+  }, [setAccounts]);
 
   useEffect(() => {
     unwrap(api.listProfiles()).then(
@@ -194,7 +203,7 @@ export function AccountsSection({ onError }: { onError: (message: string | undef
       },
       (reason: unknown) => onError((reason as Error).message),
     );
-  }, [onError, refreshStatus]);
+  }, [onError, refreshStatus, setAccounts]);
 
   const loginId = login?.id;
   const loginPhase = login?.state.phase;
@@ -303,7 +312,6 @@ export function AccountsSection({ onError }: { onError: (message: string | undef
 
   async function choose(provider: ProviderDto): Promise<void> {
     onError(undefined);
-    setChoosing(false);
     setChecking(true);
     try {
       const machine = await unwrap(api.getMachineAccount({ provider }));
@@ -314,26 +322,6 @@ export function AccountsSection({ onError }: { onError: (message: string | undef
       onError((reason as Error).message);
     } finally {
       setChecking(false);
-    }
-  }
-
-  async function rename(account: ProfileDto, alias: string): Promise<boolean> {
-    onError(undefined);
-    try {
-      await unwrap(
-        api.updateProfile({
-          id: account.id,
-          provider: account.provider,
-          alias,
-          cliConfigRoot: account.cliConfigRoot,
-          desktopDataDir: account.desktopDataDir,
-        }),
-      );
-      setAccounts(await unwrap(api.listProfiles()));
-      return true;
-    } catch (reason) {
-      onError((reason as Error).message);
-      return false;
     }
   }
 
@@ -351,10 +339,34 @@ export function AccountsSection({ onError }: { onError: (message: string | undef
   }
 
   return (
-    <section className="stack section" aria-label="Accounts">
-      <h2>Accounts</h2>
-      {accounts?.length === 0 && <p className="hint">Chưa có account nào.</p>}
-      <ul className="stack list-plain">
+    <section className="settings-group" aria-label="Accounts">
+      <div className="settings-group-header">
+        <div className="grow">
+          <h2>Accounts</h2>
+          <p className="hint">Đăng nhập do Claude và Codex xử lý trong trình duyệt; AgentHub không thấy và không lưu mật khẩu hay token.</p>
+        </div>
+        {!offer && !checking && (
+          <Menu
+            label="Thêm account"
+            align="end"
+            trigger={
+              <>
+                <Plus />
+                Thêm account
+              </>
+            }
+          >
+            <MenuItem icon={<span className="avatar claude sm" aria-hidden="true">C</span>} description="Claude Desktop và Claude Code" onSelect={() => void choose('claude')}>
+              Claude
+            </MenuItem>
+            <MenuItem icon={<span className="avatar codex sm" aria-hidden="true">C</span>} description="Codex Desktop và Codex CLI" onSelect={() => void choose('codex')}>
+              Codex
+            </MenuItem>
+          </Menu>
+        )}
+      </div>
+      {accounts?.length === 0 && !offer && !checking && <p className="hint settings-empty">Chưa có account nào.</p>}
+      <ul className="settings-list">
         {accounts?.map((account) => (
           <AccountRow
             key={account.id}
@@ -362,7 +374,7 @@ export function AccountsSection({ onError }: { onError: (message: string | undef
             status={statuses[account.id]}
             login={login?.id === account.id ? login.state : undefined}
             starting={starting === account.id}
-            onRename={(alias) => rename(account, alias)}
+            onOpen={(mode) => launcher.launch(account, mode)}
             onLogin={() => void requestLogin(account)}
             onReopen={(browser) => void reopenLogin(account.id, browser)}
             onCopy={() => void copyLink(account.id)}
@@ -372,12 +384,12 @@ export function AccountsSection({ onError }: { onError: (message: string | undef
         ))}
       </ul>
       {checking && (
-        <p className="hint" role="status">
+        <p className="hint settings-empty" role="status">
           Đang kiểm tra account trên máy…
         </p>
       )}
       {offer && (
-        <div className="card" role="group" aria-label="Chọn account để thêm">
+        <div className="card offer" role="group" aria-label="Chọn account để thêm">
           <p>
             {PROVIDER_LABELS[offer.provider]} trên máy này đang đăng nhập bằng{' '}
             <strong>{offer.machine.accountEmail ?? 'một account chưa rõ email'}</strong>
@@ -396,29 +408,7 @@ export function AccountsSection({ onError }: { onError: (message: string | undef
           </div>
         </div>
       )}
-      {choosing ? (
-        <div className="row" role="group" aria-label="Chọn loại account">
-          <button type="button" onClick={() => void choose('claude')}>
-            Claude
-          </button>
-          <button type="button" onClick={() => void choose('codex')}>
-            Codex
-          </button>
-          <button type="button" onClick={() => setChoosing(false)}>
-            Huỷ
-          </button>
-        </div>
-      ) : (
-        !offer &&
-        !checking && (
-          <div className="row">
-            <button type="button" className="primary" onClick={() => setChoosing(true)}>
-              Thêm account
-            </button>
-          </div>
-        )
-      )}
-      <p className="hint">Đăng nhập do Claude và Codex xử lý trong trình duyệt; AgentHub không thấy và không lưu mật khẩu hay token.</p>
+      {launcher.view}
     </section>
   );
 }

@@ -47,15 +47,16 @@ async function prepareTask(projectPath: string, cliPath: string): Promise<void> 
   await cliField.blur();
   const accounts = page.getByRole('region', { name: 'Accounts' });
   await accounts.getByRole('button', { name: 'Thêm account' }).click();
-  await accounts.getByRole('button', { name: 'Claude', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
   await accounts.getByRole('button', { name: 'Dùng account này' }).click();
   await expect(accounts.getByRole('listitem')).toHaveCount(1);
   await accounts.getByRole('button', { name: 'Thêm account' }).click();
-  await accounts.getByRole('button', { name: 'Claude', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
   await expect(accounts.getByRole('listitem')).toHaveCount(2);
 
   await page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'Native' }).click();
-  await page.getByLabel('Account', { exact: true }).selectOption({ index: 1 });
+  await page.getByRole('button', { name: 'Account', exact: true }).click();
+  await page.getByRole('menuitemradio').nth(1).click();
 }
 
 test('a CLI opens in Terminal.app with the project as cwd and only the allowlisted env', async () => {

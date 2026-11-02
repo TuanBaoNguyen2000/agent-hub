@@ -2,6 +2,8 @@ import type { ProjectDto } from '@agenthub/contracts';
 import { useState } from 'react';
 import { api, unwrap } from './api';
 import { ContextEditor } from './ContextEditor';
+import { Folder, More } from './icons';
+import { Menu, MenuItem } from './ui';
 import { confirmDiscard } from './unsaved';
 
 interface Props {
@@ -59,10 +61,26 @@ export function ProjectPane({ project, onChanged, onRemoved, onError }: Props) {
   }
 
   return (
-    <div className="stack">
-      <header className="stack">
+    <div className="stack page">
+      <header className="page-header">
+        <div className="header-row">
+          <p className="breadcrumb grow" id="project-path">
+            <Folder />
+            <span className="truncate">{project.path ?? 'Chưa có đường dẫn trên máy này'}</span>
+          </p>
+          <Menu label="Thao tác với project" triggerClassName="icon-button" align="end" trigger={<More />}>
+            {project.pathStatus === 'directory' && (
+              <MenuItem icon={<Folder />} onSelect={() => void relink()}>
+                Đổi folder
+              </MenuItem>
+            )}
+            <MenuItem tone="danger" onSelect={() => void remove()}>
+              Gỡ khỏi AgentHub
+            </MenuItem>
+          </Menu>
+        </div>
         <input
-          className="bare-input"
+          className="bare-input page-title"
           aria-label="Tên project"
           value={name}
           onChange={(event) => setName(event.target.value)}
@@ -71,9 +89,6 @@ export function ProjectPane({ project, onChanged, onRemoved, onError }: Props) {
             if (event.key === 'Enter') event.currentTarget.blur();
           }}
         />
-        <p className="path" id="project-path">
-          {project.path ?? 'Chưa có đường dẫn trên máy này'}
-        </p>
         {project.pathStatus !== 'directory' && (
           <div className="banner warning" role="alert">
             <p>Không tìm thấy folder của project. Task và context vẫn còn nguyên.</p>
@@ -82,16 +97,6 @@ export function ProjectPane({ project, onChanged, onRemoved, onError }: Props) {
             </button>
           </div>
         )}
-        <div className="row">
-          {project.pathStatus === 'directory' && (
-            <button type="button" onClick={() => void relink()}>
-              Đổi folder
-            </button>
-          )}
-          <button type="button" onClick={() => void remove()}>
-            Gỡ khỏi AgentHub
-          </button>
-        </div>
       </header>
       <ContextEditor
         key={project.id}

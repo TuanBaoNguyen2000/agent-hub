@@ -53,8 +53,13 @@ function pendingLogin(url = 'https://claude.com/login'): LoginProcess & { finish
 
 const outcome: LaunchOutcome = { appOpened: true, workspace: 'opened', sessionStarted: false, userActionRequired: [], warnings: [] };
 
+let plannedPaths: (string | null)[] = [];
+
 const launcher: Launcher = {
-  plan: async () => plan,
+  plan: async (target) => {
+    plannedPaths.push(target.projectPath);
+    return plan;
+  },
   launch: () => {
     launched += 1;
     return launchResult();
@@ -128,6 +133,7 @@ beforeEach(() => {
   projectDir = join(root, 'Dự án thử');
   mkdirSync(projectDir);
   launched = 0;
+  plannedPaths = [];
   plan = { steps: [{ label: 'Mở', execution: 'automatic' }], requiredConfirmations: [], blocker: null, action: { secret: 'command' } };
   launchResult = async () => outcome;
   fingerprints.clear();
@@ -197,13 +203,15 @@ describe('profiles', () => {
 
   it('warns when two profiles report the same account, without exposing it', async () => {
     const a = claudeProfile('A');
-    claudeProfile('B', join(root, 'b'));
+    const b = claudeProfile('B', join(root, 'b'));
+    emails.set('B', 'b@example.com');
+    await launching.profileStatus(b.id);
     fingerprints.set('A', 'same');
     fingerprints.set('B', 'same');
 
     const status = await launching.profileStatus(a.id);
 
-    expect(status.sameAccountAs).toEqual(['B']);
+    expect(status.sameAccountAs).toEqual(['b@example.com']);
     expect(status.accountFingerprint).toBeNull();
   });
 });
@@ -285,14 +293,13 @@ describe('account names', () => {
     expect(launching.listProfiles()[0]?.accountEmail).toBe('b@example.com');
   });
 
-  it('keeps a nickname beside the email, and lets it be cleared', async () => {
+  it('goes by the email alone, even with a nickname left from before', async () => {
     const account = launching.addAccount({ provider: 'claude', source: 'machine' });
     emails.set('', 'a@example.com');
     await launching.profileStatus(account.id);
     const input = { id: account.id, provider: 'claude' as const, cliConfigRoot: null, desktopDataDir: null };
 
-    expect(accountName(launching.updateProfile({ ...input, alias: 'Công việc' }))).toBe('Công việc (a@example.com)');
-    expect(accountName(launching.updateProfile({ ...input, alias: '  ' }))).toBe('a@example.com');
+    expect(accountName(launching.updateProfile({ ...input, alias: 'Công việc' }))).toBe('a@example.com');
   });
 
   it('never makes up a name for an account it knows nothing about', () => {
@@ -466,6 +473,29 @@ describe('launch rules', () => {
   });
 });
 
+describe('opening an account without a task', () => {
+  it('opens with no project and no permission, leaving no history', async () => {
+    const { task } = context();
+    const profile = claudeProfile();
+
+    const opened = await launching.openAccount({ profileId: profile.id, mode: 'desktop' }, []);
+
+    expect(plannedPaths).toEqual([null]);
+    expect(launched).toBe(1);
+    expect(opened.workspace).toBe('none');
+    expect(launching.listLaunches(task.id)).toEqual([]);
+  });
+
+  it('still needs every confirmation and stops at a blocker', async () => {
+    const profile = claudeProfile();
+    plan = { ...plan, requiredConfirmations: [{ id: 'risky', label: 'Rủi ro' }] };
+    expect(await codeOf(() => launching.openAccount({ profileId: profile.id, mode: 'desktop' }, []))).toBe('CONFIRMATION_REQUIRED');
+    plan = { ...plan, requiredConfirmations: [], blocker: { code: 'APP_NOT_FOUND', message: 'Không có app' } };
+    expect(await codeOf(() => launching.openAccount({ profileId: profile.id, mode: 'desktop' }, []))).toBe('APP_NOT_FOUND');
+    expect(launched).toBe(0);
+  });
+});
+
 describe('launch history', () => {
   function allowed() {
     const { project, task } = context();
@@ -479,7 +509,7 @@ describe('launch history', () => {
 
     const attempt = await launching.execute(request, []);
 
-    expect(attempt).toMatchObject({ status: 'launched', accountConfirmedAt: null, profileAlias: 'Cá nhân', outcome });
+    expect(attempt).toMatchObject({ status: 'launched', accountConfirmedAt: null, profileAlias: 'Claude (chưa rõ account)', outcome });
     store.close();
     open();
     expect(launching.listLaunches(task.id).map((item) => item.id)).toEqual([attempt.id]);
