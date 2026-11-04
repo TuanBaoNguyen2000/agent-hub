@@ -75,6 +75,7 @@ export const ipcInput = {
   [IpcChannel.profilesUpdate]: z.strictObject({ id: idSchema, provider: z.enum(PROVIDERS), ...profileFieldsSchema }),
   [IpcChannel.profilesRemove]: z.strictObject({ id: idSchema }),
   [IpcChannel.profilesStatus]: z.strictObject({ id: idSchema }),
+  [IpcChannel.profilesUsage]: z.strictObject({ id: idSchema, refresh: z.boolean().optional() }),
   [IpcChannel.profilesMachineAccount]: z.strictObject({ provider: z.enum(PROVIDERS) }),
   [IpcChannel.profilesOpenLogin]: z.strictObject({ id: idSchema }),
   [IpcChannel.profilesLoginState]: z.strictObject({ id: idSchema }),
@@ -186,6 +187,26 @@ export interface ProfileStatusDto {
   desktopVersionHasEvidence: boolean;
 }
 
+// Usage limits as the account's own CLI reports them (SPIKE-16).
+export interface UsageWindowDto {
+  kind: 'session' | 'weekly' | 'other';
+  label: string | null;
+  usedPercent: number;
+  windowMinutes: number | null;
+  resetsAt: string | null;
+  // The provider's wording when it gives no timestamp, e.g. Claude's "Nov 4 at 8:19pm (Asia/Saigon)".
+  resetsText: string | null;
+}
+
+export interface UsageDto {
+  state: 'ok' | 'logged_out' | 'unavailable';
+  windows: UsageWindowDto[];
+  plan: string | null;
+  limitReached: boolean;
+  detail: string | null;
+  checkedAt: string;
+}
+
 export interface LaunchPreviewDto {
   steps: { label: string; execution: 'automatic' | 'conditional' | 'manual'; warning?: string }[];
   requiredConfirmations: { id: string; label: string }[];
@@ -239,6 +260,7 @@ export interface IpcOutput {
   [IpcChannel.profilesUpdate]: ProfileDto;
   [IpcChannel.profilesRemove]: null;
   [IpcChannel.profilesStatus]: ProfileStatusDto;
+  [IpcChannel.profilesUsage]: UsageDto;
   [IpcChannel.profilesMachineAccount]: MachineAccountDto;
   [IpcChannel.profilesOpenLogin]: LoginStateDto;
   [IpcChannel.profilesLoginState]: LoginStateDto;
@@ -283,6 +305,7 @@ export interface AgentHubApi {
   updateProfile(input: IpcInput<typeof IpcChannel.profilesUpdate>): Reply<typeof IpcChannel.profilesUpdate>;
   removeProfile(input: IpcInput<typeof IpcChannel.profilesRemove>): Reply<typeof IpcChannel.profilesRemove>;
   getProfileStatus(input: IpcInput<typeof IpcChannel.profilesStatus>): Reply<typeof IpcChannel.profilesStatus>;
+  getProfileUsage(input: IpcInput<typeof IpcChannel.profilesUsage>): Reply<typeof IpcChannel.profilesUsage>;
   getMachineAccount(input: IpcInput<typeof IpcChannel.profilesMachineAccount>): Reply<typeof IpcChannel.profilesMachineAccount>;
   openProfileLogin(input: IpcInput<typeof IpcChannel.profilesOpenLogin>): Reply<typeof IpcChannel.profilesOpenLogin>;
   getLoginState(input: IpcInput<typeof IpcChannel.profilesLoginState>): Reply<typeof IpcChannel.profilesLoginState>;

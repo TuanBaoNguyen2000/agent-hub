@@ -2,10 +2,15 @@
 
 **Updated:** 2026-11-04  
 **Stage:** Phase 2 đủ deliverables trên macOS; người dùng báo đăng nhập với account thật ổn (reported, 2026-11-03). Hướng Phase 3 đã chốt ở ADR-019 (context do agent duy trì qua tài liệu, skill và MCP), chưa triển khai; đang chạy các spike điều kiện (SPIKE-10 đạt; SPIKE-11 đạt ở CLI và TUI; SPIKE-12 đạt, Chat cần mỗi account một instance; SPIKE-13 đạt; SPIKE-14 đạt, tránh `~/.agents/skills` của Codex; SPIKE-15 đạt — đủ bảy điều kiện). Windows hoãn theo ADR-015, vẫn `Not run`  
-**Application:** Quản lý Project, Task, context, account; mở Claude/Codex bằng Desktop hoặc Terminal từ một task. Chưa có checkpoint, handoff, Smart Switch. `npm run package` tạo `.app` ký ad hoc
+**Application:** Quản lý Project, Task, context, account; hiển thị usage limit của từng account; mở Claude/Codex bằng Desktop hoặc Terminal từ một task. Chưa có checkpoint, handoff, Smart Switch. `npm run package` tạo `.app` ký ad hoc
 
 ## Đã hoàn thành
 
+- **Usage limit của account (FR-018, 2026-11-04):** theo yêu cầu người dùng.
+  - **Nguồn ([SPIKE-16](../spikes/16-usage-limits/evidence/2026-11-04-macos.md), observed):** Claude `claude -p /usage` (lệnh cục bộ, không tốn token, tắt hook và MCP, không lưu session); Codex `account/rateLimits/read` của app-server. Kiểm tra login trước; chưa đăng nhập thì không chạy.
+  - **App:** mỗi account trong Cài đặt có thanh "Phiên 5 giờ" và "Tuần" kèm giờ đặt lại, gói (Codex), giờ cập nhật và nút Làm mới; cảnh báo khi chạm hạn mức. Sidebar hiện phần trăm cao nhất, đọc lại mỗi 10 phút. Main giữ kết quả trong bộ nhớ 60 giây, gộp các lần hỏi cùng lúc; không lưu vào database.
+  - **Kiểm chứng:** 205 unit test (thêm parser Claude/Codex, cờ dòng lệnh, không chạy CLI khi chưa đăng nhập, cache); 23 bài E2E, có bài mới cho thanh usage, chip ở sidebar và Làm mới. Gọi `launcher.usage` với CLI thật cho một account Claude và Codex: đúng số liệu. Đã xem ảnh chụp UI sáng và tối. Chưa thử trên `.app` với nhiều account; chưa thử account Claude dùng API key, Codex Free.
+- **Đánh giá OmniRoute (2026-11-04):** [docs/research](research/2026-11-04-omniroute.md). Không dùng lại mô hình gateway giữ token và tự xoay account (trái TDD §1.4, §11.4); ghi lại vài ý tưởng có thể mượn.
 - **SPIKE-15 — Định vị session gần nhất theo folder (ADR-019 điều kiện 7), macOS Pass (observed, 2026-11-04):** [evidence](../spikes/15-session-locate/evidence/2026-11-04-macos.md). `locate.mjs` chỉ đọc metadata; profile B, session ngắn có từ mã.
   - Claude: tên thư mục `projects/<cwd mã hoá>` có thể trùng giữa hai folder (`src dự án` và `src-dự-án`) và bị cắt ở 200 ký tự kèm hash, nên tìm theo tiền tố rồi kiểm tra `cwd` trong file. Session tab Code của Desktop nằm cùng chỗ (`entrypoint` `claude-desktop`).
   - Codex: bảng `threads` của `state_5.sqlite` (better-sqlite3 `readonly`, chỉ cột định vị) khớp với file rollout; quét dòng `session_meta` làm fallback. Folder tên NFD: Codex ghi `cwd` dạng NFD, Claude ghi NFC, nên phải so sánh sau khi chuẩn hoá.
@@ -158,6 +163,7 @@ Chỉ macOS (ADR-015):
 
 1. **Triển khai Phase 3** (bảy điều kiện của ADR-019 đã có spike SPIKE-10 đến SPIKE-15; các mục "Chưa xác minh" trong evidence kiểm tra khi triển khai phần liên quan) theo thứ tự ở TDD §13: mô hình Project và migration bỏ `tasks` → skill và lời nhắc khi mở (thử trước với tài liệu trong repo của dự án Unity cũ) → MCP → hiển thị task và cảnh báo → không tài liệu và Chat rời → fallback transcript. Trước khi bắt đầu, xem các thay đổi chưa commit.
 2. **Kiểm tra lại rủi ro login của SPIKE-09:** khi token của profile A đã cũ (ít nhất một ngày sau lần đăng nhập 2026-11-01 12:54 UTC), chạy `spikes/09-electron-launcher-prototype/check-desktop-login.sh script` một lần; người dùng cần sẵn sàng đăng nhập lại. Việc này không chặn bootstrap, vì vẫn có fallback chọn folder thủ công, và launcher sản phẩm cần kiểm tra login trước và sau khi chạy `--desktop`. Ghi kết quả vào evidence của spike.
+3. **Người dùng thử usage limit trên `.app`** (`npm run package`) với các account thật, kể cả cửa sổ riêng; ghi kết quả vào evidence SPIKE-16. Khi Claude CLI đổi version lớn, chạy lại lệnh ở README SPIKE-16 vì `/usage` trả văn bản.
 4. Các profile và thư mục dữ liệu dùng cho spike vẫn được giữ; lệnh dọn dẹp nằm trong README của SPIKE-01, SPIKE-07, SPIKE-08 và SPIKE-09.
 
 ## Bàn giao cho phiên tiếp theo

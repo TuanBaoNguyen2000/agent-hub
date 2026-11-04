@@ -1,9 +1,10 @@
-import type { LoginStateDto, MachineAccountDto, ProfileDto, ProfileStatusDto, ProviderDto } from '@agenthub/contracts';
+import type { LoginStateDto, MachineAccountDto, ProfileDto, ProfileStatusDto, ProviderDto, UsageDto } from '@agenthub/contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AccountAvatar, PROVIDER_LABELS, useAccountLauncher, windowLabel } from './accounts';
 import { api, unwrap } from './api';
 import { Monitor, More, Plus, Terminal } from './icons';
 import { Disclosure, Menu, MenuItem, MenuSeparator } from './ui';
+import { UsagePanel } from './usage';
 const LOGIN_POLL_MS = 1500;
 const TERMINAL_POLL_MS = 3000;
 const LOGIN_POLL_LIMIT = 100;
@@ -68,9 +69,12 @@ function LoginProgress({
 function AccountRow({
   account,
   status,
+  usage,
+  usageLoading,
   login,
   starting,
   onLogin,
+  onRefreshUsage,
   onOpen,
   onReopen,
   onCopy,
@@ -79,9 +83,12 @@ function AccountRow({
 }: {
   account: ProfileDto;
   status: ProfileStatusDto | undefined;
+  usage: UsageDto | undefined;
+  usageLoading: boolean;
   login: LoginStateDto | undefined;
   starting: boolean;
   onLogin: () => void;
+  onRefreshUsage: () => void;
   onOpen: (mode: 'desktop' | 'cli') => void;
   onReopen: (browser: 'private' | 'normal') => void;
   onCopy: () => void;
@@ -123,6 +130,11 @@ function AccountRow({
           </MenuItem>
         </Menu>
       </div>
+      {signedIn && (
+        <div className="account-row-detail">
+          <UsagePanel usage={usage} loading={usageLoading} onRefresh={onRefreshUsage} />
+        </div>
+      )}
       {starting && (
         <p className="hint account-row-detail" role="status">
           Đang chuẩn bị đăng nhập…
@@ -159,6 +171,8 @@ function AccountRow({
 export function AccountsSection({ onError, onChanged }: { onError: (message: string | undefined) => void; onChanged: () => void }) {
   const [accounts, setLoadedAccounts] = useState<ProfileDto[]>();
   const [statuses, setStatuses] = useState<Record<string, ProfileStatusDto>>({});
+  const [usages, setUsages] = useState<Record<string, UsageDto>>({});
+  const [usageLoading, setUsageLoading] = useState<Record<string, boolean>>({});
   const [checking, setChecking] = useState(false);
   const [offer, setOffer] = useState<{ provider: ProviderDto; machine: MachineAccountDto }>();
   const [login, setLogin] = useState<{ id: string; state: LoginStateDto }>();
@@ -177,17 +191,31 @@ export function AccountsSection({ onError, onChanged }: { onError: (message: str
     [onChanged],
   );
 
+  const loadUsage = useCallback(async (id: string, refresh: boolean): Promise<void> => {
+    setUsageLoading((current) => ({ ...current, [id]: true }));
+    try {
+      const usage = await unwrap(api.getProfileUsage({ id, refresh }));
+      setUsages((current) => ({ ...current, [id]: usage }));
+    } catch {
+      // Usage is extra information; the row stays usable without it.
+    } finally {
+      setUsageLoading((current) => ({ ...current, [id]: false }));
+    }
+  }, []);
+
   const refreshStatus = useCallback(async (id: string): Promise<ProfileStatusDto | undefined> => {
     try {
       const status = await unwrap(api.getProfileStatus({ id }));
       setStatuses((current) => ({ ...current, [id]: status }));
+      // A changed login means the old figures belong to another account.
+      if (status.login === 'logged_in') void loadUsage(id, false);
       // The status is what teaches Main the email, and with it the account's name.
       if (status.accountEmail) setAccounts(await unwrap(api.listProfiles()));
       return status;
     } catch {
       return undefined;
     }
-  }, [setAccounts]);
+  }, [setAccounts, loadUsage]);
 
   useEffect(() => {
     unwrap(api.listProfiles()).then(
@@ -372,6 +400,9 @@ export function AccountsSection({ onError, onChanged }: { onError: (message: str
             key={account.id}
             account={account}
             status={statuses[account.id]}
+            usage={usages[account.id]}
+            usageLoading={usageLoading[account.id] === true}
+            onRefreshUsage={() => void loadUsage(account.id, true)}
             login={login?.id === account.id ? login.state : undefined}
             starting={starting === account.id}
             onOpen={(mode) => launcher.launch(account, mode)}

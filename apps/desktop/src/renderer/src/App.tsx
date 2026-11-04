@@ -1,4 +1,4 @@
-import type { ProfileDto, ProjectDto, TaskDto } from '@agenthub/contracts';
+import type { ProfileDto, ProjectDto, TaskDto, UsageDto } from '@agenthub/contracts';
 import { useCallback, useEffect, useState } from 'react';
 import { AccountAvatar, PROVIDER_LABELS, useAccountLauncher, windowLabel } from './accounts';
 import { api, unwrap } from './api';
@@ -8,6 +8,16 @@ import { SettingsView } from './SettingsView';
 import { TaskPane } from './TaskPane';
 import { Menu, MenuItem, MenuSeparator } from './ui';
 import { confirmDiscard } from './unsaved';
+import { highestUsage, resetText, usageTone, windowTitle } from './usage';
+
+// Each read starts the account's CLI, so the sidebar only checks now and then.
+const USAGE_REFRESH_MS = 10 * 60_000;
+
+function usageSummary(usage: UsageDto): string {
+  return usage.windows
+    .map((window) => [`${windowTitle(window)}: ${Math.round(window.usedPercent)}%`, resetText(window)].filter(Boolean).join(', '))
+    .join('\n');
+}
 
 type Screen = { kind: 'project'; id: string } | { kind: 'task'; id: string; projectId: string } | { kind: 'settings' } | { kind: 'none' };
 
@@ -38,6 +48,7 @@ export function App() {
   const [tasksByProject, setTasksByProject] = useState<Record<string, TaskDto[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [accounts, setAccounts] = useState<ProfileDto[]>();
+  const [usages, setUsages] = useState<Record<string, UsageDto>>({});
   const [screen, setScreen] = useState<Screen>({ kind: 'none' });
   const [error, setError] = useState<string>();
 
@@ -68,6 +79,23 @@ export function App() {
   }, [showError]);
 
   const reloadAccounts = useCallback(() => void loadAccounts(), [loadAccounts]);
+
+  const accountIds = accounts?.map((account) => account.id).join(',') ?? '';
+  useEffect(() => {
+    if (!accountIds) return;
+    const ids = accountIds.split(',');
+    const read = (): void => {
+      for (const id of ids) {
+        unwrap(api.getProfileUsage({ id })).then(
+          (usage) => setUsages((current) => ({ ...current, [id]: usage })),
+          () => undefined,
+        );
+      }
+    };
+    read();
+    const timer = setInterval(read, USAGE_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [accountIds]);
 
   function expand(projectId: string): void {
     setExpanded((current) => new Set(current).add(projectId));
@@ -222,6 +250,7 @@ export function App() {
                     <>
                       <AccountAvatar account={account} size="sm" />
                       <span className="grow truncate">{account.name}</span>
+                      <UsageChip usage={usages[account.id]} />
                     </>
                   }
                 >
@@ -322,5 +351,16 @@ export function App() {
       </main>
       {launcher.view}
     </div>
+  );
+}
+
+function UsageChip({ usage }: { usage: UsageDto | undefined }) {
+  const highest = highestUsage(usage);
+  if (!usage || highest === null) return null;
+  const tone = usage.limitReached ? 'full' : usageTone(highest);
+  return (
+    <span className={`usage-chip ${tone}`} title={usageSummary(usage)} data-testid="usage-chip">
+      {Math.round(highest)}%
+    </span>
   );
 }

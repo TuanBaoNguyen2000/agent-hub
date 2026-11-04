@@ -1,7 +1,7 @@
 import type { InstalledApp, LaunchTarget, PlatformPort, RunOptions, RunResult, ToolProcess } from '@agenthub/application';
 import type { AccountProfile } from '@agenthub/domain';
 import { describe, expect, it } from 'vitest';
-import { createLauncher } from '../src/index';
+import { CLAUDE_USAGE_ARGS, createLauncher, parseClaudeUsage, parseCodexUsage } from '../src/index';
 
 const CLAUDE_APP: InstalledApp = {
   path: '/Applications/Claude.app',
@@ -753,5 +753,135 @@ describe('Codex sign-in', () => {
     for (const tool of [server('https://evil.example/').tool, server(42).tool, fakeTool((_message, handle) => handle.exit(1))]) {
       expect(await createLauncher(fakePlatform({ spawnTool: () => tool }).platform).startLogin(b, null)).toBeNull();
     }
+  });
+});
+
+describe('usage limits (SPIKE-16)', () => {
+  // Shape of Claude CLI 2.1.318 `-p /usage --output-format json`, with the figures changed.
+  const claudeReply = (result: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ type: 'result', subtype: 'success', is_error: false, num_turns: 0, local_command: 'usage', result, ...extra });
+  const CLAUDE_TEXT = [
+    'You are currently using your subscription to power your Claude Code usage',
+    '',
+    'Current session: 19% used · resets Nov 4 at 8:19pm (Asia/Saigon)',
+    'Current week (all models): 10% used · resets Nov 6 at 11:59pm (Asia/Saigon)',
+    'Current week (Sonnet only): 104% used · resets Nov 6 at 11:59pm (Asia/Saigon)',
+    '',
+    "What's contributing to your usage?",
+    '  62%  Start fresh when you switch tasks · run /clear',
+  ].join('\n');
+
+  it('reads only the limit lines of Claude /usage', () => {
+    const report = parseClaudeUsage(claudeReply(CLAUDE_TEXT));
+
+    expect(report.state).toBe('ok');
+    expect(report.limitReached).toBe(true);
+    expect(report.windows).toEqual([
+      { kind: 'session', label: null, usedPercent: 19, windowMinutes: 300, resetsAt: null, resetsText: 'Nov 4 at 8:19pm (Asia/Saigon)' },
+      { kind: 'weekly', label: null, usedPercent: 10, windowMinutes: 10080, resetsAt: null, resetsText: 'Nov 6 at 11:59pm (Asia/Saigon)' },
+      { kind: 'other', label: 'Tuần, Sonnet only', usedPercent: 104, windowMinutes: 10080, resetsAt: null, resetsText: 'Nov 6 at 11:59pm (Asia/Saigon)' },
+    ]);
+  });
+
+  it('says so, instead of showing zero, when Claude gives no figures', () => {
+    for (const stdout of ['not json', claudeReply('Total cost: $0.0000'), claudeReply(CLAUDE_TEXT, { local_command: undefined }), claudeReply(CLAUDE_TEXT, { is_error: true })]) {
+      const report = parseClaudeUsage(stdout);
+      expect(report.state).toBe('unavailable');
+      expect(report.windows).toEqual([]);
+      expect(report.detail).not.toBeNull();
+    }
+  });
+
+  it('maps the Codex windows and leaves out ids and reset credits', () => {
+    const report = parseCodexUsage({
+      accountId: 'acct-secret',
+      ordinaryUsageAllowed: true,
+      rateLimits: {
+        limitId: 'codex',
+        primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1793804279 },
+        secondary: { usedPercent: 7, windowDurationMins: 10080, resetsAt: 1794397350 },
+        planType: 'team',
+        rateLimitReachedType: null,
+      },
+      rateLimitsByLimitId: {
+        codex: { limitId: 'codex' },
+        other: { limitId: 'other', limitName: 'GPT-5 Pro', primary: { usedPercent: 3, windowDurationMins: 10080, resetsAt: null } },
+      },
+      rateLimitResetCredits: { availableCount: 3, credits: [{ id: 'RateLimitResetCredit_x' }] },
+    });
+
+    expect(report).toEqual({
+      state: 'ok',
+      plan: 'team',
+      limitReached: false,
+      detail: null,
+      windows: [
+        { kind: 'session', label: null, usedPercent: 42, windowMinutes: 300, resetsAt: '2026-11-04T14:57:59.000Z', resetsText: null },
+        { kind: 'weekly', label: null, usedPercent: 7, windowMinutes: 10080, resetsAt: '2026-11-11T11:42:30.000Z', resetsText: null },
+        { kind: 'other', label: 'GPT-5 Pro', usedPercent: 3, windowMinutes: 10080, resetsAt: null, resetsText: null },
+      ],
+    });
+    expect(JSON.stringify(report)).not.toMatch(/acct-secret|RateLimitResetCredit/);
+  });
+
+  it('marks a Codex limit as reached on the backend flags, not only on percentages', () => {
+    const base = { primary: { usedPercent: 60, windowDurationMins: 300, resetsAt: null } };
+    expect(parseCodexUsage({ rateLimits: { ...base, rateLimitReachedType: 'rate_limit_reached' } }).limitReached).toBe(true);
+    expect(parseCodexUsage({ ordinaryUsageAllowed: false, rateLimits: base }).limitReached).toBe(true);
+    expect(parseCodexUsage({ rateLimits: base }).limitReached).toBe(false);
+    expect(parseCodexUsage(null).state).toBe('unavailable');
+  });
+
+  it('runs Claude /usage in the profile of the account, with hooks and MCP servers off', async () => {
+    const fake = fakePlatform({
+      run: async (executable, args, options) => {
+        fake.calls.push({ method: 'run', args: [executable, args, options] });
+        if (args.join(' ') === 'auth status') return ok(JSON.stringify({ loggedIn: true, email: 'a@example.com' }));
+        return ok(claudeReply(CLAUDE_TEXT));
+      },
+    });
+
+    const report = await createLauncher(fake.platform).usage(profile({ cliConfigRoot: '/Users/test/b' }), null);
+
+    expect(report.windows).toHaveLength(3);
+    expect(callsOf(fake, 'run').at(-1)).toEqual([
+      '/bin/claude',
+      CLAUDE_USAGE_ARGS,
+      { cwd: '/Users/test/b', extraEnv: { CLAUDE_CONFIG_DIR: '/Users/test/b' }, timeoutMs: 30_000 },
+    ]);
+    expect(CLAUDE_USAGE_ARGS).toEqual(expect.arrayContaining(['--no-session-persistence', '--strict-mcp-config']));
+  });
+
+  it('asks the Codex app server, then stops it', async () => {
+    const methods: string[] = [];
+    const tool = fakeTool((message, handle) => {
+      methods.push(message['method'] as string);
+      if (message['method'] === 'initialize') handle.send({ id: message['id'], result: {} });
+      if (message['method'] === 'account/rateLimits/read') {
+        handle.send({ id: message['id'], result: { rateLimits: { primary: { usedPercent: 5, windowDurationMins: 300, resetsAt: null } } } });
+      }
+    });
+
+    const report = await createLauncher(fakePlatform({ spawnTool: () => tool }).platform).usage(profile({ provider: 'codex' }), null);
+
+    expect(report.windows[0]).toMatchObject({ kind: 'session', usedPercent: 5 });
+    expect(methods).toEqual(['initialize', 'initialized', 'account/rateLimits/read']);
+    expect(tool.killed()).toBe(true);
+  });
+
+  it('starts nothing for a signed-out account or one whose folder does not exist yet', async () => {
+    const signedOut = fakePlatform({ logins: [JSON.stringify({ loggedIn: false })] });
+    expect((await createLauncher(signedOut.platform).usage(profile(), null)).state).toBe('logged_out');
+    expect(callsOf(signedOut, 'run').map((args) => (args[1] as string[]).join(' '))).toEqual(['auth status']);
+
+    const missing = fakePlatform({ pathKind: () => 'missing' });
+    expect((await createLauncher(missing.platform).usage(profile({ cliConfigRoot: '/Users/test/new' }), null)).state).toBe('logged_out');
+    expect(callsOf(missing, 'run')).toEqual([]);
+    expect(callsOf(missing, 'spawnTool')).toEqual([]);
+  });
+
+  it('reports a missing CLI as unavailable', async () => {
+    const report = await createLauncher(fakePlatform({ findCli: async () => null }).platform).usage(profile(), null);
+    expect(report).toMatchObject({ state: 'unavailable', windows: [] });
   });
 });

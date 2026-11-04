@@ -337,6 +337,15 @@ function fakeClaude(machineEmail: string | null = 'someone@example.com'): string
   const machine = join(root, 'machine-claude');
   mkdirSync(machine, { recursive: true });
   if (machineEmail) writeFileSync(join(machine, 'email'), machineEmail);
+  // Shape of Claude CLI 2.1.318 `-p /usage --output-format json` (SPIKE-16).
+  const usage = [
+    'Current session: USED% used · resets Nov 4 at 8:19pm (Asia/Saigon)',
+    'Current week (all models): 91% used · resets Nov 6 at 11:59pm (Asia/Saigon)',
+    '',
+    "What's contributing to your usage?",
+    '  62%  Start fresh when you switch tasks',
+  ].join('\n');
+  writeFileSync(join(root, 'claude-usage.json'), JSON.stringify({ type: 'result', is_error: false, num_turns: 0, local_command: 'usage', result: usage }));
   writeFileSync(
     cli,
     `#!/bin/sh
@@ -352,6 +361,11 @@ if [ "$1" = "auth" ] && [ "$2" = "login" ]; then
   exit 0
 fi
 if [ "$1" = "--version" ]; then echo '9.9.9 (Claude Code)'; exit 0; fi
+if [ "$1" = "-p" ] && [ "$2" = "/usage" ]; then
+  used=42; [ -f "$state/used" ] && used="$(cat "$state/used")"
+  sed "s/USED/$used/" ${JSON.stringify(join(root, 'claude-usage.json'))}
+  exit 0
+fi
 exit 0
 `,
     { mode: 0o755 },
@@ -437,6 +451,26 @@ test('another account signs in through a private window and shows up under its o
   // The machine's own login is untouched and can still be added.
   await addAccount(page, 'Claude');
   await expect(accounts(page).getByTestId('account-identity')).toHaveText(['second@example.com', 'someone@example.com']);
+});
+
+test('each account shows its usage limits from its own CLI, and refreshes on request', async () => {
+  const page = await launch();
+  await setCli(page, 'Claude CLI', fakeClaude());
+  await addAccount(page, 'Claude');
+
+  const row = accounts(page).getByRole('listitem').first();
+  const usage = row.getByTestId('usage');
+  await expect(usage.getByRole('meter', { name: 'Phiên 5 giờ: đã dùng 42%' })).toBeVisible();
+  await expect(usage.getByRole('meter', { name: 'Tuần: đã dùng 91%' })).toBeVisible();
+  await expect(usage).toContainText('đặt lại Nov 4 at 8:19pm (Asia/Saigon)');
+  // Only the limit lines are read; what the usage went to stays out.
+  await expect(usage).not.toContainText('Start fresh');
+  await expect(tree(page).getByTestId('usage-chip')).toHaveText('91%');
+
+  writeFileSync(join(root, 'machine-claude', 'used'), '100');
+  await usage.getByRole('button', { name: 'Làm mới' }).click();
+  await expect(usage.getByRole('meter', { name: 'Phiên 5 giờ: đã dùng 100%' })).toBeVisible();
+  await expect(usage.getByRole('status')).toContainText('đã chạm hạn mức');
 });
 
 test('cancelling a sign-in cancels adding the account', async () => {

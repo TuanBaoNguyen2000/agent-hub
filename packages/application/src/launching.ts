@@ -136,10 +136,38 @@ export interface LoginProcess {
   cancel(): void;
 }
 
+// One usage limit as the provider's own CLI reports it (SPIKE-16). Only percentages and reset
+// times cross this port: never tokens, account ids or what the usage was spent on.
+export interface UsageWindow {
+  kind: 'session' | 'weekly' | 'other';
+  // The provider's own name for an 'other' limit, such as a model-specific week.
+  label: string | null;
+  // Above 100 once a limit is exceeded.
+  usedPercent: number;
+  windowMinutes: number | null;
+  // ISO time when the provider gives a timestamp; otherwise its own wording in resetsText.
+  resetsAt: string | null;
+  resetsText: string | null;
+}
+
+export interface UsageReport {
+  // 'unavailable': the CLI is missing, gave no figures (an API-key login, say), or answered in a
+  // form this version does not know. The detail says which, so nothing reads as zero usage.
+  state: 'ok' | 'logged_out' | 'unavailable';
+  windows: UsageWindow[];
+  plan: string | null;
+  limitReached: boolean;
+  detail: string | null;
+}
+
+export type UsageView = UsageReport & { checkedAt: string };
+
 export interface Launcher {
   plan(target: LaunchTarget): Promise<LaunchPlan>;
   launch(plan: LaunchPlan): Promise<LaunchOutcome>;
   status(profile: AccountProfile, cliOverride: string | null): Promise<ProfileStatus>;
+  // Asks the official CLI, read-only; it spends no tokens of the account (SPIKE-16).
+  usage(profile: AccountProfile, cliOverride: string | null): Promise<UsageReport>;
   // Null when the CLI gave no page address, so the caller falls back to openLogin.
   startLogin(profile: AccountProfile, cliOverride: string | null): Promise<LoginProcess | null>;
   openLogin(profile: AccountProfile, cliOverride: string | null): Promise<void>;
@@ -208,6 +236,8 @@ export interface LoginState {
 
 const IDLE_LOGIN: LoginState = { phase: 'idle', privateBrowser: null };
 
+const USAGE_FRESH_MS = 60_000;
+
 export type LaunchService = ReturnType<typeof createLaunchService>;
 
 interface ActiveLogin {
@@ -221,6 +251,9 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
   // One at a time: a Codex login always listens on the same local port.
   let activeLogin: ActiveLogin | undefined;
   let loginRequest = 0;
+  // Each read starts a CLI, and the sidebar and Settings both ask; kept in memory only.
+  const usageCache = new Map<string, UsageView>();
+  const usageReads = new Map<string, Promise<UsageView>>();
 
   function stopActiveLogin(): void {
     loginRequest += 1;
@@ -377,7 +410,27 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
     removeProfile(id: string): void {
       requireProfile(id);
       if (activeLogin?.profileId === id) stopActiveLogin();
+      usageCache.delete(id);
       store.profiles.remove(id);
+    },
+
+    // A fresh read unless one from the last minute is at hand; `refresh` always asks again.
+    async profileUsage(id: string, { refresh = false }: { refresh?: boolean } = {}): Promise<UsageView> {
+      const profile = requireProfile(id);
+      const cached = usageCache.get(id);
+      if (!refresh && cached && Date.parse(now()) - Date.parse(cached.checkedAt) < USAGE_FRESH_MS) return cached;
+      const pending = usageReads.get(id);
+      if (pending) return pending;
+      const read = launcher
+        .usage(profile, cliOverride(profile.provider))
+        .then((report): UsageView => {
+          const view = { ...report, checkedAt: now() };
+          if (store.profiles.get(id)) usageCache.set(id, view);
+          return view;
+        })
+        .finally(() => usageReads.delete(id));
+      usageReads.set(id, read);
+      return read;
     },
 
     async profileStatus(id: string): Promise<ProfileStatusView> {
@@ -402,6 +455,8 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
     async beginLogin(id: string): Promise<LoginState> {
       const profile = requireProfile(id);
       stopActiveLogin();
+      // The figures belong to whichever account was signed in before.
+      usageCache.delete(id);
       const request = loginRequest;
       const process = await launcher.startLogin(profile, cliOverride(profile.provider));
       if (request !== loginRequest) {

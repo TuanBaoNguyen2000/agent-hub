@@ -23,6 +23,7 @@ const api: AgentHubApi = {
   updateProfile: (input) => ipcRenderer.invoke(IpcChannel.profilesUpdate, input),
   removeProfile: (input) => ipcRenderer.invoke(IpcChannel.profilesRemove, input),
   getProfileStatus: (input) => ipcRenderer.invoke(IpcChannel.profilesStatus, input),
+  getProfileUsage: (input) => ipcRenderer.invoke(IpcChannel.profilesUsage, input),
   getMachineAccount: (input) => ipcRenderer.invoke(IpcChannel.profilesMachineAccount, input),
   openProfileLogin: (input) => ipcRenderer.invoke(IpcChannel.profilesOpenLogin, input),
   getLoginState: (input) => ipcRenderer.invoke(IpcChannel.profilesLoginState, input),

@@ -19,6 +19,7 @@ export const IpcChannel = {
   profilesUpdate: 'profiles:update',
   profilesRemove: 'profiles:remove',
   profilesStatus: 'profiles:status',
+  profilesUsage: 'profiles:usage',
   profilesMachineAccount: 'profiles:machine-account',
   profilesOpenLogin: 'profiles:open-login',
   profilesLoginState: 'profiles:login-state',

@@ -98,6 +98,17 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
       desktopVersionHasEvidence: status.desktopVersionHasEvidence,
     };
   });
+  handle(IpcChannel.profilesUsage, async ({ id, refresh }) => {
+    const usage = await launching.profileUsage(id, { refresh: refresh === true });
+    return {
+      state: usage.state,
+      windows: usage.windows.map((window) => ({ ...window })),
+      plan: usage.plan,
+      limitReached: usage.limitReached,
+      detail: usage.detail,
+      checkedAt: usage.checkedAt,
+    };
+  });
   handle(IpcChannel.profilesMachineAccount, ({ provider }) => launching.machineAccount(provider));
   handle(IpcChannel.profilesOpenLogin, ({ id }) => launching.beginLogin(id));
   handle(IpcChannel.profilesLoginState, ({ id }) => launching.loginState(id));

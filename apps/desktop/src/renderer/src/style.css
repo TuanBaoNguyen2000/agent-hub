@@ -1191,3 +1191,105 @@ button.link:hover:not(:disabled) {
 .warning-text {
   color: var(--warning-fg);
 }
+
+/* ---------- Usage limits ---------- */
+
+.link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.link-button:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
+}
+
+.link-button:disabled {
+  color: var(--fg-faint);
+  cursor: default;
+}
+
+.usage {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.usage .hint {
+  margin: 0;
+}
+
+.usage-windows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.usage-window-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+  font-size: 12.5px;
+}
+
+.usage-figure strong {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-reset,
+.usage-footer {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.usage-footer {
+  margin: 0;
+}
+
+.usage-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-active);
+}
+
+.usage-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--success);
+}
+
+.usage-bar.high > span {
+  background: var(--warning-fg);
+}
+
+.usage-bar.full > span {
+  background: var(--error-fg);
+}
+
+.usage-chip {
+  flex: none;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-chip.high {
+  color: var(--warning-fg);
+}
+
+.usage-chip.full {
+  color: var(--error-fg);
+  font-weight: 600;
+}

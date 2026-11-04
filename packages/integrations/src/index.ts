@@ -9,6 +9,8 @@ import type {
   ProfileStatus,
   RequiredConfirmation,
   ToolProcess,
+  UsageReport,
+  UsageWindow,
 } from '@agenthub/application';
 import { type AccountProfile, DomainError, type LaunchOutcome, type Provider } from '@agenthub/domain';
 
@@ -194,6 +196,117 @@ async function readLogin(
   return method
     ? { login: 'logged_in', detail: method[1]?.trim() ?? null, email: null, fingerprint: null }
     : { login: 'unknown', detail: null, email: null, fingerprint: null };
+}
+
+// --- Usage limits (SPIKE-16): only through the CLIs' own commands, never their credentials. ---
+
+const USAGE_TIMEOUT_MS = 30_000;
+const SESSION_MINUTES = 300;
+const WEEK_MINUTES = 10_080;
+
+const unavailable = (detail: string): UsageReport => ({ state: 'unavailable', windows: [], plan: null, limitReached: false, detail });
+
+// `/usage` is a local command: in print mode it answers without a model turn. Hooks and MCP
+// servers stay off so that reading a number starts nothing of the user's.
+export const CLAUDE_USAGE_ARGS = [
+  '-p',
+  '/usage',
+  '--output-format',
+  'json',
+  '--no-session-persistence',
+  '--strict-mcp-config',
+  '--settings',
+  '{"disableAllHooks":true}',
+];
+
+const CLAUDE_USAGE_LINE = /^\s*([^:\n]+?):\s*(\d+(?:\.\d+)?)%\s+used(?:\s*·\s*resets\s+(.+?))?\s*$/gm;
+
+// The command prints text meant for people, so this reads only the "<limit>: N% used · resets …"
+// lines; the rest (what the usage went to) is dropped unread.
+export function parseClaudeUsage(stdout: string): UsageReport {
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(stdout) as Record<string, unknown>;
+  } catch {
+    return unavailable('Claude CLI không trả kết quả đọc được cho /usage.');
+  }
+  if (data['local_command'] !== 'usage' || data['is_error'] === true || typeof data['result'] !== 'string') {
+    return unavailable('Claude CLI không trả kết quả đọc được cho /usage.');
+  }
+  const windows: UsageWindow[] = [];
+  for (const match of data['result'].matchAll(CLAUDE_USAGE_LINE)) {
+    const name = match[1]?.trim() ?? '';
+    const usedPercent = Number(match[2]);
+    const resetsText = match[3]?.trim() ?? null;
+    if (/^current session$/i.test(name)) {
+      windows.push({ kind: 'session', label: null, usedPercent, windowMinutes: SESSION_MINUTES, resetsAt: null, resetsText });
+    } else if (/^current week \(all models\)$/i.test(name)) {
+      windows.push({ kind: 'weekly', label: null, usedPercent, windowMinutes: WEEK_MINUTES, resetsAt: null, resetsText });
+    } else {
+      const scope = /^current week \((.+)\)$/i.exec(name)?.[1];
+      windows.push({
+        kind: 'other',
+        label: scope ? `Tuần, ${scope}` : name,
+        usedPercent,
+        windowMinutes: scope ? WEEK_MINUTES : null,
+        resetsAt: null,
+        resetsText,
+      });
+    }
+  }
+  if (windows.length === 0) {
+    return unavailable('Claude CLI không báo hạn mức. Hạn mức chỉ có với gói thuê bao Claude, không có khi dùng API key.');
+  }
+  return { state: 'ok', windows, plan: null, limitReached: windows.some((window) => window.usedPercent >= 100), detail: null };
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+function codexWindow(raw: unknown, label: string | null): UsageWindow | null {
+  if (!isRecord(raw) || typeof raw['usedPercent'] !== 'number') return null;
+  const minutes = typeof raw['windowDurationMins'] === 'number' ? raw['windowDurationMins'] : null;
+  const resetsAt = typeof raw['resetsAt'] === 'number' ? new Date(raw['resetsAt'] * 1000).toISOString() : null;
+  const kind = label === null && minutes === SESSION_MINUTES ? 'session' : label === null && minutes === WEEK_MINUTES ? 'weekly' : 'other';
+  return { kind, label: kind === 'other' ? (label ?? null) : null, usedPercent: raw['usedPercent'], windowMinutes: minutes, resetsAt, resetsText: null };
+}
+
+// The reply of `account/rateLimits/read`. Reset credits, the upsell banner and the account id
+// are left out on purpose.
+export function parseCodexUsage(reply: Record<string, unknown> | null): UsageReport {
+  const main = reply?.['rateLimits'];
+  if (!reply || !isRecord(main)) return unavailable('Codex không trả về hạn mức của account này.');
+  const windows: UsageWindow[] = [];
+  const addBucket = (bucket: Record<string, unknown>, label: string | null): void => {
+    for (const key of ['primary', 'secondary']) {
+      const window = codexWindow(bucket[key], label);
+      if (window) windows.push(window);
+    }
+  };
+  addBucket(main, null);
+  const others = isRecord(reply['rateLimitsByLimitId']) ? reply['rateLimitsByLimitId'] : {};
+  for (const [limitId, bucket] of Object.entries(others)) {
+    if (!isRecord(bucket) || limitId === main['limitId']) continue;
+    addBucket(bucket, typeof bucket['limitName'] === 'string' ? bucket['limitName'] : limitId);
+  }
+  const reached =
+    main['rateLimitReachedType'] != null ||
+    main['spendControlReached'] === true ||
+    reply['ordinaryUsageAllowed'] === false ||
+    windows.some((window) => window.usedPercent >= 100);
+  const plan = typeof main['planType'] === 'string' && main['planType'] !== 'unknown' ? main['planType'] : null;
+  if (windows.length === 0 && !reached) return { ...unavailable('Codex không báo hạn mức theo thời gian cho account này.'), plan };
+  return { state: 'ok', windows, plan, limitReached: reached, detail: null };
+}
+
+async function readCodexUsage(platform: PlatformPort, executable: string, extraEnv: Record<string, string>): Promise<UsageReport> {
+  const tool = platform.spawnTool(executable, ['app-server'], { extraEnv });
+  try {
+    const server = codexAppServer(tool);
+    if (!(await server.initialize())) return unavailable('Không khởi động được Codex app-server.');
+    return parseCodexUsage(await server.request('account/rateLimits/read', undefined));
+  } finally {
+    tool.kill();
+  }
 }
 
 const LOGIN_TIMEOUT_MS = 15 * 60_000;
@@ -592,6 +705,29 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
         desktopVersion: app?.version ?? null,
         desktopVersionHasEvidence: app?.version != null && spec.evidencedDesktopVersions.includes(app.version),
       };
+    },
+
+    async usage(profile, cliOverride) {
+      if (!platform.supported) return unavailable('Launcher hiện chỉ hỗ trợ macOS.');
+      const spec = PROVIDERS[profile.provider];
+      const executable = await platform.findCli(spec.cli, cliOverride);
+      if (!executable) return unavailable(`Không tìm thấy ${spec.label}.`);
+      const root = profile.cliConfigRoot;
+      // Asking a CLI with no folder yet would create one; there is no login in it anyway.
+      const signedOut: UsageReport = { state: 'logged_out', windows: [], plan: null, limitReached: false, detail: null };
+      if (root !== null && platform.pathKind(root) === 'missing') return signedOut;
+      const extraEnv = envFor(spec, profile);
+      // Signed out, Claude would answer with a session cost summary instead, and Codex with an error.
+      const { login } = await readLogin(platform, profile.provider, executable, extraEnv);
+      if (login === 'logged_out') return signedOut;
+      if (profile.provider === 'codex') return readCodexUsage(platform, executable, extraEnv);
+      const result = await platform.run(executable, CLAUDE_USAGE_ARGS, {
+        cwd: root ?? platform.homeDirectory(),
+        extraEnv,
+        timeoutMs: USAGE_TIMEOUT_MS,
+      });
+      if (result.timedOut) return unavailable('Claude CLI không trả lời /usage kịp thời.');
+      return parseClaudeUsage(result.stdout);
     },
 
     async startLogin(profile, cliOverride) {

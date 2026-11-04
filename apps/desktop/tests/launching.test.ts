@@ -54,6 +54,9 @@ function pendingLogin(url = 'https://claude.com/login'): LoginProcess & { finish
 const outcome: LaunchOutcome = { appOpened: true, workspace: 'opened', sessionStarted: false, userActionRequired: [], warnings: [] };
 
 let plannedPaths: (string | null)[] = [];
+let usageReads = 0;
+let usagePercent = 10;
+let clock = Date.parse('2026-11-04T10:00:00.000Z');
 
 const launcher: Launcher = {
   plan: async (target) => {
@@ -75,6 +78,17 @@ const launcher: Launcher = {
     desktopVersion: '1',
     desktopVersionHasEvidence: true,
   }),
+  usage: async () => {
+    usageReads += 1;
+    const usedPercent = usagePercent;
+    return {
+      state: 'ok',
+      windows: [{ kind: 'session', label: null, usedPercent, windowMinutes: 300, resetsAt: null, resetsText: null }],
+      plan: null,
+      limitReached: false,
+      detail: null,
+    };
+  },
   startLogin: async () => loginProcesses.shift() ?? null,
   openLogin: async () => {
     terminalLogins += 1;
@@ -104,7 +118,7 @@ function open(): void {
     paths,
     deviceId: () => workspace.getSettings().deviceId,
     newId: randomUUID,
-    now,
+    now: () => new Date(clock).toISOString(),
     accountDirectories: (id) => ({ cli: join(root, 'accounts', id, 'cli'), desktop: join(root, 'accounts', id, 'desktop') }),
   });
 }
@@ -134,6 +148,9 @@ beforeEach(() => {
   mkdirSync(projectDir);
   launched = 0;
   plannedPaths = [];
+  usageReads = 0;
+  usagePercent = 10;
+  clock = Date.parse('2026-11-04T10:00:00.000Z');
   plan = { steps: [{ label: 'Mở', execution: 'automatic' }], requiredConfirmations: [], blocker: null, action: { secret: 'command' } };
   launchResult = async () => outcome;
   fingerprints.clear();
@@ -311,6 +328,40 @@ describe('account names', () => {
     launching.addAccount({ provider: 'claude', source: 'separate' });
 
     expect(launching.listProfiles()).toHaveLength(2);
+  });
+});
+
+describe('usage limits', () => {
+  it('reads once a minute at most, unless asked to refresh', async () => {
+    const account = launching.addAccount({ provider: 'claude', source: 'machine' });
+    const first = await launching.profileUsage(account.id);
+    usagePercent = 40;
+    clock += 30_000;
+    expect((await launching.profileUsage(account.id)).windows[0]?.usedPercent).toBe(10);
+    expect(usageReads).toBe(1);
+
+    expect((await launching.profileUsage(account.id, { refresh: true })).windows[0]?.usedPercent).toBe(40);
+    clock += 61_000;
+    await launching.profileUsage(account.id);
+    expect(usageReads).toBe(3);
+    expect(first.checkedAt).toBe('2026-11-04T10:00:00.000Z');
+  });
+
+  it('shares one read between callers asking at the same time', async () => {
+    const account = launching.addAccount({ provider: 'claude', source: 'machine' });
+    await Promise.all([launching.profileUsage(account.id), launching.profileUsage(account.id), launching.profileUsage(account.id)]);
+    expect(usageReads).toBe(1);
+  });
+
+  it('forgets the figures when the account signs in again or is removed', async () => {
+    const account = launching.addAccount({ provider: 'claude', source: 'machine' });
+    await launching.profileUsage(account.id);
+    await launching.beginLogin(account.id);
+    await launching.profileUsage(account.id);
+    expect(usageReads).toBe(2);
+
+    launching.removeProfile(account.id);
+    expect(await codeOf(() => launching.profileUsage(account.id))).toBe('NOT_FOUND');
   });
 });
 

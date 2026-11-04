@@ -1,7 +1,7 @@
 # AgentHub — Technical Design Document (TDD)
 
 > **Project:** AgentHub — Cross-platform AI Agent Workspace & Context Manager  
-> **Version:** 0.1.13 (ADR-009, ADR-013–019: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP, login, context do agent duy trì; Phase 0 macOS exit review; Phase 1 và 2 trên macOS)  
+> **Version:** 0.1.14 (ADR-009, ADR-013–019: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP, login, context do agent duy trì; Phase 0 macOS exit review; Phase 1 và 2 trên macOS; FR-018 usage limit)  
 > **Updated:** 2026-11-04  
 > **Status:** Draft for implementation review  
 > **Platforms:** macOS and Windows  
@@ -143,6 +143,7 @@ AgentHub là desktop application chạy trên **macOS và Windows** để quản
 | FR-014 | Accurate status/provenance | Không ghi `synced`, `completed` nếu chỉ mở Desktop |
 | FR-015 | macOS + Windows builds | Mỗi OS chạy được smoke tests và launch adapters |
 | FR-016 | Project/profile access control | Cảnh báo và chặn profile không được phép |
+| FR-018 | Hiển thị usage limit của từng account (SPIKE-16) | Phần trăm đã dùng và giờ đặt lại của cửa sổ 5 giờ và tuần, lấy từ CLI chính thức của account (Claude `/usage`, Codex app-server); không đọc được thì ghi rõ lý do, không hiện 0%; chỉ giữ trong bộ nhớ; không tự đổi account khi chạm hạn mức |
 
 ### 2.2. Follow-up requirements (P1)
 
@@ -811,6 +812,7 @@ Một Task có thể có `worktreeId` và `workspacePath` riêng. Khi tạo/mở
 - Không copy auth files hoặc session tokens giữa profiles.
 - Thư mục dữ liệu của Desktop instance (ADR-013, ADR-014) và `auth.json` trong `CODEX_HOME` được xem như credential store: AgentHub chỉ tạo thư mục và truyền đường dẫn; không đọc, sao chép, backup, đồng bộ hay ghi log nội dung.
 - Không tự động tăng cường số lượng account để vượt rate/usage restrictions.
+- Usage limit chỉ đọc qua lệnh của CLI chính thức (FR-018, SPIKE-16): chỉ lấy phần trăm, cửa sổ và giờ đặt lại; bỏ account id, mã reset và phần mô tả usage đã dùng vào đâu; không làm gateway hay giữ token như OmniRoute ([đánh giá](research/2026-11-04-omniroute.md)).
 - Nếu phát hành cho công ty/người dùng khác, thực hiện legal/licensing review và kiểm tra IT/data-handling policy trước release.
 
 ---
