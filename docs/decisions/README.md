@@ -10,13 +10,13 @@ Giữ mã ADR ổn định; phân biệt quyết định đã chốt với lựa
 | ADR-002 | Hybrid Desktop/CLI parity | Accepted | TDD §15 |
 | ADR-003 | Không xây lại chat UI | Accepted | TDD §15 |
 | ADR-004 | SQLite + Markdown local-first | Accepted | TDD §15 |
-| ADR-005 | Rules-based Smart Switch | Accepted | TDD §15 |
+| ADR-005 | Rules-based Smart Switch | Accepted; sửa đổi bởi ADR-019 (không còn wizard) | TDD §15 |
 | ADR-006 | Manual fallback cho Desktop account switching | Accepted for MVP; sửa đổi bởi ADR-013 (Claude Desktop) và ADR-014 (Codex Desktop) | TDD §15 |
 | ADR-007 | Không direct inference API/SDK trong MVP | Accepted | TDD §15 |
 | ADR-008 | Git read-only observation trước | Accepted | TDD §15 |
 | ADR-009 | Terminal ngoài cho CLI; macOS dùng Terminal.app | Accepted for MVP | [009-external-terminal.md](009-external-terminal.md) |
 | ADR-010 | Minimum Windows version | Open; chuyển sang milestone Windows parity (ADR-015) | TDD §15 |
-| ADR-011 | Context export policy | Open | TDD §15 |
+| ADR-011 | Context export policy | Accepted 2026-11-04; nội dung ở ADR-019 mục 2 và 9 | TDD §15, [019-agent-maintained-context.md](019-agent-maintained-context.md) |
 | ADR-012 | Tách package ngay từ đầu | Accepted | [012-initial-package-boundaries.md](012-initial-package-boundaries.md) |
 | ADR-013 | Instance Claude Desktop riêng cho mỗi account phụ | Accepted for MVP (opt-in, conditional) | [013-claude-desktop-account-instances.md](013-claude-desktop-account-instances.md) |
 | ADR-014 | Nhiều profile Codex qua `CODEX_HOME`, CLI và Desktop | Accepted for MVP (opt-in, conditional) | [014-codex-profiles.md](014-codex-profiles.md) |
@@ -24,6 +24,7 @@ Giữ mã ADR ổn định; phân biệt quyết định đã chốt với lựa
 | ADR-016 | npm workspaces, electron-vite, electron-builder | Accepted; đã kiểm chứng trên macOS | [016-workspace-and-build-tooling.md](016-workspace-and-build-tooling.md) |
 | ADR-017 | Git observation tối thiểu trong MVP | Accepted | [017-mvp-git-observations.md](017-mvp-git-observations.md) |
 | ADR-018 | Đăng nhập qua cửa sổ riêng tư, tên account theo email | Accepted for MVP (conditional) | [018-account-login-and-identity.md](018-account-login-and-identity.md) |
+| ADR-019 | Context do agent duy trì qua tài liệu, skill và MCP của AgentHub | Accepted for MVP (conditional, chờ spike) | [019-agent-maintained-context.md](019-agent-maintained-context.md) |
 
 Kết quả capability cần evidence trong [feasibility.md](../feasibility.md), kể cả khi quyết định kiến trúc đã Accepted.
 

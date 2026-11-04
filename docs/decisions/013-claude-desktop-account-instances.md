@@ -19,7 +19,7 @@ Kết quả Phase 0 trên macOS:
 1. **Account instance là tùy chọn người dùng tự bật** cho Claude Desktop. Account mặc định vẫn dùng instance mặc định. Mỗi account phụ có một thư mục dữ liệu riêng và một config root, dùng chung với profile Claude CLI của cùng account.
 2. **Lệnh mở trên macOS:** `open -n -a Claude --env CLAUDE_CONFIG_DIR=<config root> --args --user-data-dir=<data dir>`, truyền bằng argument array. Bắt buộc có cả hai thư mục. Không bao giờ trỏ instance thứ hai vào thư mục dữ liệu mặc định.
 3. **Mức capability là `conditional`.** AgentHub kiểm tra version Desktop đã có evidence. Khi chưa có evidence, hoặc người dùng báo instance không giữ đúng account, AgentHub quay về manual flow của ADR-006.
-4. **Trạng thái account không phải `verified`.** Người dùng xác nhận account sau lần đăng nhập đầu, và AgentHub ghi đó là xác nhận của người dùng. Kết quả mở chỉ là "đã mở instance", không bao giờ là `switched` (TDD §8.4).
+4. **Trạng thái account không phải `verified`.** Người dùng xác nhận account sau lần đăng nhập đầu, và AgentHub ghi đó là xác nhận của người dùng. Kết quả mở chỉ là "đã mở instance", không bao giờ là `switched` (TDD §8.3).
 5. **Đăng nhập lần đầu cần tắt instance mặc định.** AgentHub phát hiện instance mặc định và yêu cầu người dùng tự tắt; AgentHub không tắt nó. AgentHub chỉ được tắt instance do chính nó mở, theo PID.
 6. **Ranh giới dữ liệu:** thư mục dữ liệu chứa phiên đăng nhập, nên được xem như credential store. AgentHub chỉ tạo thư mục và truyền đường dẫn. Không đọc, sao chép, backup, đồng bộ hay đưa nội dung vào log. Không sửa, clone, re-sign hay giải nén `Claude.app`.
 7. **Người dùng chọn account cho từng lần mở.** Không tự xoay account khi hết quota (TDD §1.4).

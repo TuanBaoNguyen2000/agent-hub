@@ -1,11 +1,42 @@
 # Project status
 
-**Updated:** 2026-11-02  
-**Stage:** Phase 2 đủ deliverables trên macOS, UX, đăng nhập và giao diện đã làm lại theo góp ý của người dùng (2026-11-02); E2E và native smoke đạt, chờ thử đăng nhập với account thật. Việc tiếp theo là duy trì context giữa các account (Phase 3). Windows hoãn theo ADR-015, vẫn `Not run`  
+**Updated:** 2026-11-04  
+**Stage:** Phase 2 đủ deliverables trên macOS; người dùng báo đăng nhập với account thật ổn (reported, 2026-11-03). Hướng Phase 3 đã chốt ở ADR-019 (context do agent duy trì qua tài liệu, skill và MCP), chưa triển khai; đang chạy các spike điều kiện (SPIKE-10 đạt; SPIKE-11 đạt ở CLI và TUI; SPIKE-12 đạt, Chat cần mỗi account một instance; SPIKE-13 đạt; SPIKE-14 đạt, tránh `~/.agents/skills` của Codex; SPIKE-15 đạt — đủ bảy điều kiện). Windows hoãn theo ADR-015, vẫn `Not run`  
 **Application:** Quản lý Project, Task, context, account; mở Claude/Codex bằng Desktop hoặc Terminal từ một task. Chưa có checkpoint, handoff, Smart Switch. `npm run package` tạo `.app` ký ad hoc
 
 ## Đã hoàn thành
 
+- **SPIKE-15 — Định vị session gần nhất theo folder (ADR-019 điều kiện 7), macOS Pass (observed, 2026-11-04):** [evidence](../spikes/15-session-locate/evidence/2026-11-04-macos.md). `locate.mjs` chỉ đọc metadata; profile B, session ngắn có từ mã.
+  - Claude: tên thư mục `projects/<cwd mã hoá>` có thể trùng giữa hai folder (`src dự án` và `src-dự-án`) và bị cắt ở 200 ký tự kèm hash, nên tìm theo tiền tố rồi kiểm tra `cwd` trong file. Session tab Code của Desktop nằm cùng chỗ (`entrypoint` `claude-desktop`).
+  - Codex: bảng `threads` của `state_5.sqlite` (better-sqlite3 `readonly`, chỉ cột định vị) khớp với file rollout; quét dòng `session_meta` làm fallback. Folder tên NFD: Codex ghi `cwd` dạng NFD, Claude ghi NFC, nên phải so sánh sau khi chuẩn hoá.
+  - Resume giữ nguyên file và id; sắp theo mtime hoặc `updated_at_ms` cho đúng session có hoạt động gần nhất. Codex sandbox read-only đọc được file của Claude; Claude cần `--add-dir=<thư mục chứa file>`.
+- **SPIKE-14 — Thư mục skill theo account và project (ADR-019 điều kiện 6), macOS Pass có điều kiện (observed, 2026-11-04):** [evidence](../spikes/14-skill-dirs/evidence/2026-11-04-macos.md). Skill đánh dấu ở từng thư mục ứng viên, HOME giả, profile B; đọc danh sách skill CLI thực sự nạp.
+  - Theo account: `$CLAUDE_CONFIG_DIR/skills` và `$CODEX_HOME/skills`, account khác không thấy; thư mục skill là symlink tới một bản chung vẫn được nạp.
+  - Cấp project: Claude đọc `.claude/skills`, Codex đọc `.agents/skills` (và `.codex/skills` ở cwd), cả hai từ cwd lên gốc repo. Claude nạp `.claude/skills` của thư mục `--add-dir`; Codex không nạp skill qua `--add-dir`.
+  - Codex đọc `~/.agents/skills` cho mọi account (`skip_host_skill_discovery` không tắt được), nên AgentHub không cài skill vào đó. Claude Desktop tự đồng bộ skill của account claude.ai vào `skills/synced/`; AgentHub không ghi vào thư mục này.
+- **SPIKE-13 — Prompt ban đầu và `--add-dir` (ADR-019 điều kiện 5), macOS Pass (observed, 2026-11-04):** [evidence](../spikes/13-cli-prompt-add-dir/evidence/2026-11-04-macos.md). Script theo khuôn `terminalScript`, chạy trong pty, profile B.
+  - Lời nhắc chứa nháy, `$(...)`, backtick, tiếng Việt, xuống dòng vào session của Claude và Codex khớp từng byte; không lệnh nào bị thực thi.
+  - Claude chặn lời nhắc bằng hộp thoại tin tưởng folder ở lần đầu (thêm hộp thoại import nếu workspace nằm dưới repo có `CLAUDE.md` import file ngoài); Codex không chặn. Thiếu `USER` trong env thì Claude báo chưa đăng nhập.
+  - `--add-dir` của cả hai cho ghi thư mục ngoài workspace. Claude phải dùng `--add-dir=<dir>`: dạng có khoảng trắng nuốt lời nhắc đứng sau.
+  - Claude CLI tự cập nhật bằng npm sau khi mở tương tác; trong khoảng 8 phút lệnh `claude` không có trên PATH.
+- **SPIKE-12 — MCP trên Claude Desktop (ADR-019 điều kiện 2, 3), macOS (2026-11-04):** [evidence](../spikes/12-claude-desktop-mcp/evidence/2026-11-04-macos.md). Dùng instance B của SPIKE-07, Desktop 4.16336.0.
+  - Tab Code (observed): Claude Code 2.1.317 nhúng trong instance chạy với `CLAUDE_CONFIG_DIR` của B và khởi chạy server trong user scope của nó. Desktop còn đưa server của `claude_desktop_config.json` vào mỗi session và ưu tiên bản đó khi trùng tên, nên agent đã gọi bản của Desktop. Chế độ auto không hỏi quyền.
+  - Instance B khởi chạy server từ `claude_desktop_config.json` riêng ngay khi mở, qua helper `disclaimer`; shim chạy được; instance chính không bị ảnh hưởng. Mỗi server có hai process (client `claude-ai` và `local-agent-mode-*`). Log của mọi instance ghi chung vào `~/Library/Logs/Claude`.
+  - Chat: lần đầu không thấy tool vì một instance khác cùng account đang giữ bridge tool local (`device_id held by a live connection`). Thử lại khi tắt instance đó: Chat gọi được tool và ghi được file (observed). Bridge chỉ cho một instance mỗi account trên một máy. Chưa biết Chat có hỏi quyền không.
+- **SPIKE-11 — MCP trên Codex (ADR-019 điều kiện 1), macOS CLI Pass (observed, 2026-11-04):** [evidence](../spikes/11-codex-mcp/evidence/2026-11-04-macos.md). Chạy `codex exec` 0.166.0 bằng profile B, bỏ qua `config.toml` của B, không lưu session.
+  - MCP server do Codex khởi chạy nằm ngoài seatbelt và ghi được thư mục tài liệu ngoài workspace, kể cả ở sandbox read-only. Đối chứng: cùng server chạy trong `codex sandbox` thì bị `EPERM`; shell `touch` ra ngoài workspace bị chặn.
+  - Phê duyệt: tool có `readOnlyHint` chạy luôn; `context_write` cần người duyệt (trong `exec` thì bị chặn) trừ khi có `[mcp_servers.agenthub.tools.context_write] approval_mode = "approve"`. `prompt` chặn cả tool đọc. Không nên dùng `approve` cho cả server.
+  - TUI (người dùng chạy, gửi ảnh chụp): hộp thoại hiện nguyên tham số, có Allow / Allow for this session / Always allow / Cancel; chọn Allow thì `config.toml` không đổi. Chưa thử: "Always allow" có lưu `approval_mode = "approve"` không, và Codex app.
+- **SPIKE-10 — MCP server chạy từ `.app` (ADR-019 điều kiện 4), macOS Pass (observed, 2026-11-04):** [evidence](../spikes/10-mcp-server-from-app/evidence/2026-11-04-macos.md).
+  - Binary của `AgentHub.app` với `ELECTRON_RUN_AS_NODE=1` chạy MCP stub đặt trong `app.asar`, không cần Node riêng; load được `better-sqlite3` của app; stdout sạch, không có Dock icon, khoảng 64 MB mỗi process; thoát khi client đóng stdin hoặc bị kill.
+  - Claude CLI 2.1.316 (`claude mcp list`: Connected) và Codex CLI 0.166.0 (`codex exec` khởi chạy và bắt tay) dùng được cả lệnh trực tiếp lẫn shim, với đường dẫn có dấu và khoảng trắng, trong config dir tạm, không dùng account thật. Hai client gửi protocol khác nhau (`2025-11-25`, `2025-06-18`).
+  - Ràng buộc: giữ fuse `RunAsNode`. Đề xuất đăng ký qua shim ở `<userData>/bin/`, AgentHub viết lại khi khởi động.
+- **Chốt hướng Phase 3 ([ADR-019](decisions/019-agent-maintained-context.md), 2026-11-04):** người dùng chốt sau khi thảo luận.
+  - **Context do agent viết** qua bốn skill (`context-init`, `context-resume`, `context-checkpoint`, `context-capture`) và MCP server của AgentHub; AgentHub không đọc nội dung chat, không tự soạn tóm tắt, chỉ có thao tác "Thêm handoff".
+  - **Tài liệu tuỳ chọn theo project**, khuôn theo bộ `AgentContext/` người dùng dùng ở dự án Unity trước; mặc định lưu trong dữ liệu AgentHub, chọn đường dẫn trong repo nghĩa là đưa vào repo. `CLAUDE.md`/`AGENTS.md` chỉ là con trỏ, chỉ sửa khi tài liệu nằm trong repo và qua diff được duyệt (đóng ADR-011).
+  - **AgentHub không quản lý task:** bỏ bảng `tasks` (chỉ có dữ liệu thử). Project quản lý folder, cài đặt tài liệu, quyền account, lịch sử mở, Git, skill đã cài.
+  - **Không có tài liệu** vẫn chuyển được bằng bản tóm tắt lưu thành lịch sử handoff; chat không thuộc project vào mục "Chat rời". Fallback transcript cho chat có folder khi phiên cũ hết quota, chỉ trỏ đường dẫn.
+  - **Tài liệu đã sửa:** TDD 0.1.13 (§0, §1, §2.1, §4.5, §6, §7, §8, §9, §13, §15–17), DEVELOPMENT, ROADMAP, ADR index. Bỏ checkpoint editor, wizard Smart Switch và scenario A–D; exit criteria mới là bảy scenario ở TDD §9.4.
 - **Giao diện theo phong cách Claude/Codex Desktop (2026-11-02):** theo góp ý của người dùng.
   - **Khung:** thanh tiêu đề ẩn trên macOS, sidebar sát đèn giao thông và kéo được cửa sổ; bảng màu trung tính ấm cho cả sáng và tối; tiêu đề trang dùng font serif; icon SVG nội bộ, không thêm dependency.
   - **Dropdown:** thay `<select>` và `<details>` bằng menu và disclosure tự viết (`renderer/src/ui.tsx`). Menu cách nút mở 6px, rộng ít nhất bằng nút, tự lật lên trên khi thiếu chỗ, có phím mũi tên, Escape trả focus về nút. Nội dung mở rộng thụt vào dưới chữ của tiêu đề.
@@ -109,16 +140,15 @@
 - Windows: toàn bộ `Not run`, hoãn theo ADR-015.
 - Chưa thử hot reload khi sửa code, máy không có toolchain build, và build trên Windows.
 - **Chưa chạy launcher với account và CLI thật:** native smoke dùng CLI giả và thư mục rỗng. Chưa xác nhận: `claude --desktop` từ app sản phẩm, instance đúng account B, `/status`.
-- **Chưa có một lượt đăng nhập trọn vẹn (ADR-018):** chưa mở Chrome thật ở chế độ riêng tư từ app, chưa thấy CLI nhận callback rồi thoát, chưa thử đăng nhập lại đè lên login cũ. Cần người dùng thao tác với account thật.
+- **Đăng nhập với account thật (ADR-018):** người dùng báo đã ổn (reported, 2026-11-03), chưa có evidence ghi lại; chưa xác nhận riêng việc đăng nhập lại đè lên login cũ.
 - Giới hạn của Phase 1: project đã gỡ chưa khôi phục được trong app; Context Editor chưa có preview và history (TDD §9.1); chưa có log có rotation (TDD §11.3).
 - Mở account không cần task chưa thử với app thật; lần mở này không có trong lịch sử.
 - Giới hạn của Phase 2: email chỉ nói về login của CLI, và chỉ cập nhật khi app đọc lại trạng thái; AgentHub không tắt được cửa sổ Desktop đã mở; đường dẫn account chưa tách theo thiết bị; chỉ hỗ trợ Terminal.app; đọc exit status của CLI để P1 (FR-105). Account Claude phụ cần đăng nhập hai lần nếu dùng cả Terminal và Desktop, vì hai bên giữ login riêng (SPIKE-04, SPIKE-07).
-- Chưa có checkpoint, handoff, Git observation và Smart Switch: thuộc Phase 3.
+- Chưa triển khai gì của Phase 3 (ADR-019): skill, MCP server, tài liệu context, mô hình Project mới, Git observation, fallback transcript. Điều kiện 4 của ADR-019 đạt (SPIKE-10), điều kiện 1 đạt ở CLI và TUI (SPIKE-11, Codex app chưa thử), điều kiện 2 đạt và điều kiện 3 đạt có điều kiện (SPIKE-12: Chat cần mỗi account một instance), điều kiện 5 đạt (SPIKE-13), điều kiện 6 đạt có điều kiện (SPIKE-14: tránh `~/.agents/skills`), điều kiện 7 đạt (SPIKE-15). SPIKE-10 chưa thử agent gọi tool thật, client GUI, app notarize hoặc hardened runtime.
 
 ## Quyết định còn mở
 
 - ADR-010: minimum Windows version; chuyển sang milestone Windows parity (ADR-015).
-- ADR-011: chi tiết context export policy. SPIKE-06 gợi ý ghi `AGENTS.md` và để `CLAUDE.md` import, giới hạn theo 32 KiB của Codex.
 - Đổi account nhanh trên Desktop (mục tiêu chính của người dùng): đã chốt trên macOS cho Claude Desktop (ADR-013) và Codex Desktop (ADR-014); Windows thuộc milestone Windows parity.
 - Đề xuất sửa ADR-013 và ADR-014 cho version Desktop chưa có evidence: cho người dùng tick xác nhận từng lần mở thay vì chỉ có manual flow. Đã triển khai, chờ người dùng chấp thuận.
 
@@ -126,9 +156,8 @@
 
 Chỉ macOS (ADR-015):
 
-1. **Xác nhận Phase 2 với account thật:** thêm account Claude và Codex qua cửa sổ riêng tư (ADR-018), kiểm tra email hiện đúng; mở bằng Desktop và Terminal theo từng account, kiểm tra account hiển thị và lịch sử.
-2. **Phase 3 — duy trì context, là ưu tiên của người dùng:** checkpoint, handoff, Git observation tối thiểu. Thiết kế đề xuất, chờ người dùng chốt: context ba cấp lưu trong AgentHub, không theo account; nút "Đổi account" dựng handoff rồi mở đúng account kèm context; CLI nhận prompt ban đầu và `--add-dir` tới thư mục artifact của task, Desktop dùng prompt đã copy. `--add-dir` và prompt ban đầu mới kiểm tra qua `--help`, cần spike nhỏ với CLI thật. Trước khi bắt đầu, xem các thay đổi chưa commit.
-3. **Kiểm tra lại rủi ro login của SPIKE-09:** khi token của profile A đã cũ (ít nhất một ngày sau lần đăng nhập 2026-11-01 12:54 UTC), chạy `spikes/09-electron-launcher-prototype/check-desktop-login.sh script` một lần; người dùng cần sẵn sàng đăng nhập lại. Việc này không chặn bootstrap, vì vẫn có fallback chọn folder thủ công, và launcher sản phẩm cần kiểm tra login trước và sau khi chạy `--desktop`. Ghi kết quả vào evidence của spike.
+1. **Triển khai Phase 3** (bảy điều kiện của ADR-019 đã có spike SPIKE-10 đến SPIKE-15; các mục "Chưa xác minh" trong evidence kiểm tra khi triển khai phần liên quan) theo thứ tự ở TDD §13: mô hình Project và migration bỏ `tasks` → skill và lời nhắc khi mở (thử trước với tài liệu trong repo của dự án Unity cũ) → MCP → hiển thị task và cảnh báo → không tài liệu và Chat rời → fallback transcript. Trước khi bắt đầu, xem các thay đổi chưa commit.
+2. **Kiểm tra lại rủi ro login của SPIKE-09:** khi token của profile A đã cũ (ít nhất một ngày sau lần đăng nhập 2026-11-01 12:54 UTC), chạy `spikes/09-electron-launcher-prototype/check-desktop-login.sh script` một lần; người dùng cần sẵn sàng đăng nhập lại. Việc này không chặn bootstrap, vì vẫn có fallback chọn folder thủ công, và launcher sản phẩm cần kiểm tra login trước và sau khi chạy `--desktop`. Ghi kết quả vào evidence của spike.
 4. Các profile và thư mục dữ liệu dùng cho spike vẫn được giữ; lệnh dọn dẹp nằm trong README của SPIKE-01, SPIKE-07, SPIKE-08 và SPIKE-09.
 
 ## Bàn giao cho phiên tiếp theo

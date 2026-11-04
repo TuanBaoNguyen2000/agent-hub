@@ -52,7 +52,8 @@ Thử bản đóng gói bằng double-click trong Finder. Nếu mở bằng `ope
 ## Phạm vi sản phẩm
 
 - Giữ Desktop và CLI ngang hàng trong UX; phân biệt mức tự động hóa thực tế.
-- Không thêm chat UI, direct model inference API/SDK, native history scraping hoặc credential ingestion vào MVP.
+- Không thêm chat UI, direct model inference API/SDK, native history scraping hoặc credential ingestion vào MVP. Ngoại lệ duy nhất là fallback transcript của [ADR-019](decisions/019-agent-maintained-context.md): chỉ đọc đủ để định vị file session theo folder, không đọc hay hiển thị nội dung.
+- Ngữ cảnh do agent viết qua skill hoặc MCP (ADR-019); AgentHub không tự soạn nội dung tài liệu và chỉ ghi qua thao tác "Thêm handoff".
 - Smart Switch dựa trên rules và capability đã kiểm chứng; không suy ra account/session ready từ việc mở app.
 - Dùng manual fallback khi tích hợp không hỗ trợ hoặc chưa kiểm chứng; ghi đúng `unknown`/`unverified`.
 - Git/Unity observations ban đầu chỉ đọc; không tự checkout/reset/clean/stash/merge hoặc sửa Unity assets.

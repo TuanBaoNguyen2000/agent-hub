@@ -21,7 +21,7 @@ Kết quả Phase 0 trên macOS:
 2. **CLI:** AgentHub truyền `CODEX_HOME` vào env của child process, dựng env từ allowlist, bằng argument array.
 3. **Desktop trên macOS:** profile mặc định dùng app chính. Profile phụ mở bằng `open -n -a ChatGPT --env CODEX_HOME=<home> --args --user-data-dir=<data dir>`; bắt buộc có cả hai thư mục. Không bao giờ trỏ instance phụ vào thư mục dữ liệu mặc định.
 4. **Đăng nhập:** người dùng tự chạy `codex login` chính thức trong terminal do AgentHub mở. AgentHub hướng dẫn dùng cửa sổ riêng tư, và yêu cầu người dùng kiểm tra `/status` sau khi đăng nhập. Không dựa vào `--device-auth`.
-5. **Trạng thái account không phải `verified`.** AgentHub chỉ biết profile đã đăng nhập (`codex login status`). Account là do người dùng xác nhận qua `/status`; kết quả mở không bao giờ là `switched` (TDD §8.4).
+5. **Trạng thái account không phải `verified`.** AgentHub chỉ biết profile đã đăng nhập (`codex login status`). Account là do người dùng xác nhận qua `/status`; kết quả mở không bao giờ là `switched` (TDD §8.3).
 6. **Ranh giới dữ liệu:** `auth.json` trong `CODEX_HOME` và thư mục dữ liệu của instance phụ được xem như credential store. AgentHub không mở, sao chép, backup, đồng bộ hay ghi log nội dung của chúng. Không sửa, giải nén hay re-sign `ChatGPT.app`.
 7. **Không tự sao chép config giữa các profile.** `CODEX_HOME` mới không có `config.toml`, MCP server, plugin hay `AGENTS.md` của profile mặc định; người dùng tự cấu hình. `config.toml` có thể chứa thông tin của MCP server nên không được sao chép tự động.
 8. **Người dùng chọn profile cho từng lần mở.** Không tự xoay profile khi hết quota (TDD §1.4). Allowlist project–profile (TDD §11) đặc biệt áp dụng để project công ty không mở bằng account cá nhân.
