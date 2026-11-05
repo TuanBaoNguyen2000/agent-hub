@@ -1,12 +1,11 @@
 import { z } from 'zod';
 
-import { ACCOUNT_SOURCES, CLIENT_MODES, IpcChannel, LOGIN_BROWSERS, PROVIDERS, TASK_STATUSES, THEMES } from './constants';
+import { ACCOUNT_SOURCES, CLIENT_MODES, IpcChannel, LOGIN_BROWSERS, CONTEXT_LANGUAGES, PROVIDERS, THEMES } from './constants';
 
-export { ACCOUNT_SOURCES, CLIENT_MODES, IpcChannel, LOGIN_BROWSERS, PROVIDERS, TASK_STATUSES, THEMES };
+export { ACCOUNT_SOURCES, CLIENT_MODES, IpcChannel, LOGIN_BROWSERS, CONTEXT_LANGUAGES, PROVIDERS, THEMES };
 
 const MAX_PATH_LENGTH = 4096;
 const MAX_LABEL_INPUT = 1000;
-const MAX_TEXT_LENGTH = 2_000_000;
 
 const idSchema = z.uuid();
 const pathSchema = z
@@ -15,8 +14,6 @@ const pathSchema = z
   .max(MAX_PATH_LENGTH)
   .refine((value) => !value.includes('\0'), 'Path contains a NUL byte');
 const labelSchema = z.string().max(MAX_LABEL_INPUT);
-const textSchema = z.string().max(MAX_TEXT_LENGTH);
-const statusSchema = z.enum(TASK_STATUSES);
 const noInput = z.undefined();
 
 const profileFieldsSchema = {
@@ -25,7 +22,7 @@ const profileFieldsSchema = {
   desktopDataDir: pathSchema.nullable(),
 };
 const launchRequestSchema = z.strictObject({
-  taskId: idSchema,
+  projectId: idSchema,
   profileId: idSchema,
   mode: z.enum(CLIENT_MODES),
 });
@@ -35,11 +32,6 @@ const accountLaunchSchema = z.strictObject({
   mode: z.enum(CLIENT_MODES),
 });
 
-const contextReferenceSchema = z.discriminatedUnion('scope', [
-  z.strictObject({ scope: z.literal('project'), projectId: idSchema }),
-  z.strictObject({ scope: z.literal('task'), taskId: idSchema, document: z.enum(['task', 'decisions']) }),
-]);
-
 // Main validates every payload against these before it reaches a use case.
 export const ipcInput = {
   [IpcChannel.systemStatus]: noInput,
@@ -48,21 +40,13 @@ export const ipcInput = {
   [IpcChannel.projectsAdd]: z.strictObject({ path: pathSchema, name: labelSchema.optional() }),
   [IpcChannel.projectsUpdate]: z.strictObject({ id: idSchema, name: labelSchema.optional(), path: pathSchema.optional() }),
   [IpcChannel.projectsRemove]: z.strictObject({ id: idSchema }),
-  [IpcChannel.tasksList]: z.strictObject({ projectId: idSchema }),
-  [IpcChannel.tasksCreate]: z.strictObject({ projectId: idSchema, title: labelSchema, objective: textSchema.optional() }),
-  [IpcChannel.tasksUpdate]: z.strictObject({
+  [IpcChannel.projectsUpdateContext]: z.strictObject({
     id: idSchema,
-    title: labelSchema.optional(),
-    objective: textSchema.optional(),
-    acceptanceCriteria: textSchema.optional(),
-    status: statusSchema.optional(),
+    enabled: z.boolean().optional(),
+    language: z.enum(CONTEXT_LANGUAGES).optional(),
+    customPath: pathSchema.nullable().optional(),
   }),
-  [IpcChannel.contextGet]: z.strictObject({ reference: contextReferenceSchema }),
-  [IpcChannel.contextSave]: z.strictObject({
-    reference: contextReferenceSchema,
-    content: textSchema,
-    expectedRevision: z.string().max(128).nullable(),
-  }),
+  [IpcChannel.projectsOpenContextFolder]: z.strictObject({ id: idSchema }),
   [IpcChannel.settingsGet]: noInput,
   [IpcChannel.settingsUpdate]: z.strictObject({
     theme: z.enum(THEMES).optional(),
@@ -88,7 +72,7 @@ export const ipcInput = {
     request: launchRequestSchema,
     confirmations: z.array(z.string().max(100)).max(20),
   }),
-  [IpcChannel.launchHistory]: z.strictObject({ taskId: idSchema }),
+  [IpcChannel.launchHistory]: z.strictObject({ projectId: idSchema }),
   [IpcChannel.launchConfirmAccount]: z.strictObject({ attemptId: idSchema }),
   [IpcChannel.launchAccountPlan]: accountLaunchSchema,
   [IpcChannel.launchAccountExecute]: z.strictObject({
@@ -99,11 +83,10 @@ export const ipcInput = {
 
 export type IpcInput<C extends keyof typeof ipcInput> = z.infer<(typeof ipcInput)[C]>;
 
-export type TaskStatusDto = (typeof TASK_STATUSES)[number];
+export type ContextLanguageDto = (typeof CONTEXT_LANGUAGES)[number];
 export type ThemeDto = (typeof THEMES)[number];
 export type ProviderDto = (typeof PROVIDERS)[number];
 export type ClientModeDto = (typeof CLIENT_MODES)[number];
-export type ContextReferenceDto = z.infer<typeof contextReferenceSchema>;
 
 export interface SystemStatusDto {
   appVersion: string;
@@ -113,30 +96,22 @@ export interface SystemStatusDto {
   };
 }
 
+type PathStatusDto = 'directory' | 'not_directory' | 'missing' | 'not_absolute';
+
 export interface ProjectDto {
   id: string;
   name: string;
   path: string | null;
-  pathStatus: 'directory' | 'not_directory' | 'missing' | 'not_absolute' | 'unset';
+  pathStatus: PathStatusDto | 'unset';
+  context: {
+    enabled: boolean;
+    language: ContextLanguageDto;
+    path: string;
+    custom: boolean;
+    pathStatus: PathStatusDto;
+  };
   createdAt: string;
   updatedAt: string;
-}
-
-export interface TaskDto {
-  id: string;
-  projectId: string;
-  title: string;
-  objective: string;
-  acceptanceCriteria: string;
-  status: TaskStatusDto;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ContextDocumentDto {
-  content: string;
-  revision: string | null;
-  modifiedAt: string | null;
 }
 
 export interface SettingsDto {
@@ -216,7 +191,7 @@ export interface LaunchPreviewDto {
   profileAlias: string;
 }
 
-// Opening an account without a task has no project to ask permission for.
+// Opening an account on its own has no project to ask permission for.
 export type AccountLaunchPreviewDto = Pick<LaunchPreviewDto, 'steps' | 'requiredConfirmations' | 'blocker'>;
 
 export interface LaunchOutcomeDto {
@@ -229,7 +204,8 @@ export interface LaunchOutcomeDto {
 
 export interface LaunchAttemptDto {
   id: string;
-  taskId: string;
+  projectId: string;
+  taskRef: string | null;
   profileId: string;
   profileAlias: string;
   mode: ClientModeDto;
@@ -247,11 +223,8 @@ export interface IpcOutput {
   [IpcChannel.projectsAdd]: ProjectDto;
   [IpcChannel.projectsUpdate]: ProjectDto;
   [IpcChannel.projectsRemove]: null;
-  [IpcChannel.tasksList]: TaskDto[];
-  [IpcChannel.tasksCreate]: TaskDto;
-  [IpcChannel.tasksUpdate]: TaskDto;
-  [IpcChannel.contextGet]: ContextDocumentDto;
-  [IpcChannel.contextSave]: ContextDocumentDto;
+  [IpcChannel.projectsUpdateContext]: ProjectDto;
+  [IpcChannel.projectsOpenContextFolder]: null;
   [IpcChannel.settingsGet]: SettingsDto;
   [IpcChannel.settingsUpdate]: SettingsDto;
   [IpcChannel.settingsOpenDataFolder]: null;
@@ -292,11 +265,8 @@ export interface AgentHubApi {
   addProject(input: IpcInput<typeof IpcChannel.projectsAdd>): Reply<typeof IpcChannel.projectsAdd>;
   updateProject(input: IpcInput<typeof IpcChannel.projectsUpdate>): Reply<typeof IpcChannel.projectsUpdate>;
   removeProject(input: IpcInput<typeof IpcChannel.projectsRemove>): Reply<typeof IpcChannel.projectsRemove>;
-  listTasks(input: IpcInput<typeof IpcChannel.tasksList>): Reply<typeof IpcChannel.tasksList>;
-  createTask(input: IpcInput<typeof IpcChannel.tasksCreate>): Reply<typeof IpcChannel.tasksCreate>;
-  updateTask(input: IpcInput<typeof IpcChannel.tasksUpdate>): Reply<typeof IpcChannel.tasksUpdate>;
-  getContext(input: IpcInput<typeof IpcChannel.contextGet>): Reply<typeof IpcChannel.contextGet>;
-  saveContext(input: IpcInput<typeof IpcChannel.contextSave>): Reply<typeof IpcChannel.contextSave>;
+  updateProjectContext(input: IpcInput<typeof IpcChannel.projectsUpdateContext>): Reply<typeof IpcChannel.projectsUpdateContext>;
+  openContextFolder(input: IpcInput<typeof IpcChannel.projectsOpenContextFolder>): Reply<typeof IpcChannel.projectsOpenContextFolder>;
   getSettings(): Reply<typeof IpcChannel.settingsGet>;
   updateSettings(input: IpcInput<typeof IpcChannel.settingsUpdate>): Reply<typeof IpcChannel.settingsUpdate>;
   openDataFolder(): Reply<typeof IpcChannel.settingsOpenDataFolder>;

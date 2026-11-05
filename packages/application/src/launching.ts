@@ -188,12 +188,12 @@ export interface LaunchServiceDependencies {
 }
 
 export interface LaunchRequest {
-  taskId: string;
+  projectId: string;
   profileId: string;
   mode: ClientMode;
 }
 
-// Opens an account without a task, the way clicking the app would.
+// Opens an account without a project, the way clicking the app would.
 export interface AccountLaunchRequest {
   profileId: string;
   mode: ClientMode;
@@ -313,14 +313,12 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
   }
 
   function requestContext(request: LaunchRequest) {
-    const task = store.tasks.get(request.taskId);
-    if (!task) throw new DomainError('NOT_FOUND', 'Không tìm thấy task.');
-    const project = store.projects.get(task.projectId, deviceId());
+    const project = store.projects.get(request.projectId, deviceId());
     if (!project) throw new DomainError('NOT_FOUND', 'Không tìm thấy project.');
     if (project.path === null || paths.inspect(project.path) !== 'directory') {
       throw new DomainError('PROJECT_PATH_MISSING', 'Không tìm thấy folder của project. Hãy chọn lại folder trước.');
     }
-    return { task, project: { ...project, path: project.path }, profile: requireProfile(request.profileId) };
+    return { project: { ...project, path: project.path }, profile: requireProfile(request.profileId) };
   }
 
   function permissionOf(projectId: string, profileId: string): PermissionState {
@@ -509,7 +507,7 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
     preview,
 
     async execute(request: LaunchRequest, confirmations: string[]): Promise<LaunchHistoryEntry> {
-      const { task, project, profile } = requestContext(request);
+      const { project, profile } = requestContext(request);
       const { plan, permission } = await preview(request);
 
       if (permission !== 'allowed') {
@@ -521,7 +519,8 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
 
       const attempt = {
         id: newId(),
-        taskId: task.id,
+        projectId: project.id,
+        taskRef: null,
         profileId: profile.id,
         mode: request.mode,
         status: 'planned' as const,
@@ -545,7 +544,7 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
     previewAccount,
 
     // No project means no source code to grant, so no permission check. History belongs to
-    // tasks, so this launch leaves none.
+    // projects, so this launch leaves none.
     async openAccount(request: AccountLaunchRequest, confirmations: string[]): Promise<LaunchOutcome> {
       const plan = await previewAccount(request);
       if (plan.blocker) throw new DomainError(plan.blocker.code, plan.blocker.message);
@@ -555,10 +554,10 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
       return { ...outcome, workspace: 'none' };
     },
 
-    listLaunches(taskId: string): LaunchHistoryEntry[] {
+    listLaunches(projectId: string): LaunchHistoryEntry[] {
       // Removed profiles keep their history, so aliases come from all rows the store can still name.
       const aliases = new Map(store.profiles.list().map((profile) => [profile.id, accountName(profile)]));
-      return store.launches.list(taskId).map((attempt) => ({
+      return store.launches.list(projectId).map((attempt) => ({
         ...attempt,
         profileAlias: aliases.get(attempt.profileId) ?? 'Account đã gỡ',
       }));

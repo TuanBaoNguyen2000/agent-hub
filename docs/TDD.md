@@ -1,7 +1,7 @@
 # AgentHub — Technical Design Document (TDD)
 
 > **Project:** AgentHub — Cross-platform AI Agent Workspace & Context Manager  
-> **Version:** 0.1.14 (ADR-009, ADR-013–019: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP, login, context do agent duy trì; Phase 0 macOS exit review; Phase 1 và 2 trên macOS; FR-018 usage limit)  
+> **Version:** 0.1.15 (ADR-009, ADR-013–019: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP, login, context do agent duy trì; Phase 0 macOS exit review; Phase 1 và 2 trên macOS; FR-018 usage limit; Phase 3 bước 1: mô hình Project)  
 > **Updated:** 2026-11-04  
 > **Status:** Draft for implementation review  
 > **Platforms:** macOS and Windows  
@@ -554,7 +554,7 @@ CREATE TABLE launch_attempts (
 
 **Đã triển khai (Phase 1):** `projects`, `project_locations`, `tasks` ở migration 1. Khác với draft: `projects` có thêm `removed_at`, vì gỡ project chỉ ẩn nó, không xoá task và artifact (§6.4); thêm bảng `settings(key, value)` cho per-device settings (§6.1). Migration 2 thêm `account_profiles`, `project_profile_permissions`, `launch_attempts`. Khác với draft: `account_profiles` có thêm `desktop_data_dir` (ADR-013, ADR-014); `launch_attempts` có thêm `outcome` (JSON) và `account_confirmed_at` (chỉ ghi khi người dùng xác nhận), chưa có `external_session_ref` vì chưa có native ref nào đã xác minh, và status `planned` được ghi trước khi launch. Migration 3 thêm `account_profiles.account_email` và bỏ các alias do AgentHub tự đặt (ADR-018).
 
-**Phase 3 (ADR-019):** không thêm `checkpoints`, `handoffs` như draft. Migration kế tiếp bỏ bảng `tasks` (chỉ có dữ liệu thử, có backup trước migration), cho `launch_attempts` gắn `project_id` với tham chiếu task tuỳ chọn, và thêm cài đặt tài liệu theo project (bật/tắt, nơi lưu). Chi tiết schema chốt khi triển khai.
+**Phase 3 (ADR-019):** không thêm `checkpoints`, `handoffs` như draft. **Đã triển khai ở migration 4 (2026-11-05):** bỏ bảng `tasks` (backup tự động trước khi nâng schema); `launch_attempts` tạo lại với `project_id` thay `task_id`, thêm `task_ref` (đường dẫn task trong tài liệu, nullable, chưa dùng), giữ các lần mở cũ qua project của task; `projects` thêm `context_enabled` (mặc định 0) và `context_language` (`en` hoặc `vi`, mặc định `en`); `project_locations` thêm `context_path`, vì folder tài liệu tự chọn là đường dẫn trên từng máy, null nghĩa là thư mục mặc định (§6.3). Index `launch_attempts(project_id, created_at)`.
 
 ### 6.3. Local artifact layout
 
@@ -572,7 +572,7 @@ Theo ADR-019 (thay layout theo task của bản trước):
 └── logs/
 ```
 
-Khi người dùng chọn nơi lưu tài liệu khác, `context/` nằm ở đường dẫn đó; AgentHub chỉ lưu đường dẫn. Artifact theo task của Phase 1 (`artifacts/<project-id>/<task-id>/`) chỉ có dữ liệu thử và bị bỏ cùng bảng `tasks`.
+Khi người dùng chọn nơi lưu tài liệu khác, `context/` nằm ở đường dẫn đó; AgentHub chỉ lưu đường dẫn. Artifact theo task của Phase 1 (`artifacts/<project-id>/<task-id>/`) chỉ có dữ liệu thử và bị bỏ cùng bảng `tasks`; migration không xoá thư mục `artifacts/` cũ, người dùng tự xoá nếu muốn. AgentHub tạo thư mục `context/` mặc định khi bật tài liệu và không ghi gì vào đó.
 
 ### 6.4. Migrations, backup, conflict behavior
 
@@ -717,6 +717,8 @@ CLI nhận lời nhắc làm prompt ban đầu. Desktop được copy sẵn mộ
 **Đã triển khai trên macOS (2026-11-02, theo góp ý của người dùng):** cột trái là cây project và task; task mở ra có các tab Context, Quyết định, Chi tiết, Lịch sử. Thêm account chỉ cần chọn loại rồi đăng nhập; UI gọi profile là "account" và giấu đường dẫn. Một account có hai nút mở, Desktop và Terminal, không chọn sẵn. Kế hoạch chỉ hiện trước khi mở nếu có điều cần quyết định.
 
 **Phase 3 (ADR-019):** không còn tạo task, tab Context và Quyết định theo task, hay Context Editor. Project hiển thị cài đặt tài liệu, task và handoff gần nhất đọc từ tài liệu, cảnh báo, lịch sử mở và trạng thái Git; tài liệu mở trong editor của người dùng. Thêm mục "Chat rời" và thao tác "Thêm handoff".
+
+**Đã triển khai (2026-11-05):** cột trái chỉ còn danh sách project; trang project có thanh mở account, phần "Tài liệu context" (bật/tắt, nơi lưu mặc định hoặc folder tự chọn, ngôn ngữ, nút mở folder trong Finder) và lịch sử mở theo project. Đã bỏ tạo task, tab Context, Quyết định, Chi tiết và Context Editor. Chưa có hiển thị task, handoff, cảnh báo, "Chat rời".
 
 ### 9.2. Primary flow
 
@@ -1079,4 +1081,4 @@ account switching tự động. Báo lại những giả định cần xác minh
 
 ---
 
-**End of TDD v0.1.13.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3; revision 0.1.4 thêm ADR-015 (macOS trước, Windows thành milestone riêng); revision 0.1.5 ghi kết quả exit review Phase 0 trên macOS, thêm SPIKE-09 và điều kiện launcher ở §5.2, cho §3.1 khớp với ADR-013 và ADR-014; revision 0.1.6 ghi ADR-009, ADR-016, ADR-017, tách §10.1 theo MVP và P1, trả lời §16 câu 1 và câu 3; revision 0.1.7 ghi kết quả technical bootstrap; revision 0.1.8 ghi kết quả Phase 1, khác biệt schema ở §6.2 và mã lỗi mới ở §12.2; revision 0.1.9 ghi kết quả Phase 2 và khác biệt schema tương ứng; revision 0.1.10 ghi thay đổi UX ở §9.1; revision 0.1.11 thêm ADR-018 và §11.4 về đăng nhập, tên account theo email; revision 0.1.12 ghi quy tắc macOS chọn instance khởi động sớm nhất ở §5.2; revision 0.1.13 thêm ADR-019: context do agent duy trì qua tài liệu, skill và MCP, viết lại §6.3, §7, §8, §9.4 và Phase 3, đóng ADR-011, trả lời §16 câu 5–7. ADR-013 và ADR-014 chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.
+**End of TDD v0.1.15.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3; revision 0.1.4 thêm ADR-015 (macOS trước, Windows thành milestone riêng); revision 0.1.5 ghi kết quả exit review Phase 0 trên macOS, thêm SPIKE-09 và điều kiện launcher ở §5.2, cho §3.1 khớp với ADR-013 và ADR-014; revision 0.1.6 ghi ADR-009, ADR-016, ADR-017, tách §10.1 theo MVP và P1, trả lời §16 câu 1 và câu 3; revision 0.1.7 ghi kết quả technical bootstrap; revision 0.1.8 ghi kết quả Phase 1, khác biệt schema ở §6.2 và mã lỗi mới ở §12.2; revision 0.1.9 ghi kết quả Phase 2 và khác biệt schema tương ứng; revision 0.1.10 ghi thay đổi UX ở §9.1; revision 0.1.11 thêm ADR-018 và §11.4 về đăng nhập, tên account theo email; revision 0.1.12 ghi quy tắc macOS chọn instance khởi động sớm nhất ở §5.2; revision 0.1.13 thêm ADR-019: context do agent duy trì qua tài liệu, skill và MCP, viết lại §6.3, §7, §8, §9.4 và Phase 3, đóng ADR-011, trả lời §16 câu 5–7; revision 0.1.14 thêm FR-018 (usage limit theo account); revision 0.1.15 ghi bước 1 của Phase 3 ở §6.2, §6.3 và §9.1: migration 4 bỏ `tasks`, lịch sử mở theo project, cài đặt tài liệu context. ADR-013 và ADR-014 chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.

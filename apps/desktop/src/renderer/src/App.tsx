@@ -1,13 +1,11 @@
-import type { ProfileDto, ProjectDto, TaskDto, UsageDto } from '@agenthub/contracts';
+import type { ProfileDto, ProjectDto, UsageDto } from '@agenthub/contracts';
 import { useCallback, useEffect, useState } from 'react';
 import { AccountAvatar, PROVIDER_LABELS, useAccountLauncher, windowLabel } from './accounts';
 import { api, unwrap } from './api';
-import { ChevronRight, Folder, Gear, Monitor, Plus, Terminal } from './icons';
+import { Folder, Gear, Monitor, Plus, Terminal } from './icons';
 import { ProjectPane } from './ProjectPane';
 import { SettingsView } from './SettingsView';
-import { TaskPane } from './TaskPane';
 import { Menu, MenuItem, MenuSeparator } from './ui';
-import { confirmDiscard } from './unsaved';
 import { highestUsage, resetText, usageTone, windowTitle } from './usage';
 
 // Each read starts the account's CLI, so the sidebar only checks now and then.
@@ -19,34 +17,12 @@ function usageSummary(usage: UsageDto): string {
     .join('\n');
 }
 
-type Screen = { kind: 'project'; id: string } | { kind: 'task'; id: string; projectId: string } | { kind: 'settings' } | { kind: 'none' };
+type Screen = { kind: 'project'; id: string } | { kind: 'settings' } | { kind: 'none' };
 
 const byName = (a: ProjectDto, b: ProjectDto): number => a.name.localeCompare(b.name, 'vi');
 
-const STATUS_DOT: Partial<Record<TaskDto['status'], string>> = { active: 'active', blocked: 'blocked', done: 'done', archived: 'done' };
-
-function NewTask({ onCreate }: { onCreate: (title: string) => Promise<void> }) {
-  const [title, setTitle] = useState('');
-  return (
-    <form
-      className="new-task"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (title.trim().length > 0) void onCreate(title).then(() => setTitle(''));
-      }}
-    >
-      <span className="new-task-icon" aria-hidden="true">
-        <Plus />
-      </span>
-      <input aria-label="Task mới" placeholder="Task mới" value={title} onChange={(event) => setTitle(event.target.value)} />
-    </form>
-  );
-}
-
 export function App() {
   const [projects, setProjects] = useState<ProjectDto[]>();
-  const [tasksByProject, setTasksByProject] = useState<Record<string, TaskDto[]>>({});
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [accounts, setAccounts] = useState<ProfileDto[]>();
   const [usages, setUsages] = useState<Record<string, UsageDto>>({});
   const [screen, setScreen] = useState<Screen>({ kind: 'none' });
@@ -54,18 +30,6 @@ export function App() {
 
   const showError = useCallback((message: string | undefined) => setError(message), []);
   const launcher = useAccountLauncher(showError);
-
-  const loadTasks = useCallback(
-    async (projectId: string) => {
-      try {
-        const tasks = await unwrap(api.listTasks({ projectId }));
-        setTasksByProject((current) => ({ ...current, [projectId]: tasks }));
-      } catch (reason) {
-        showError((reason as Error).message);
-      }
-    },
-    [showError],
-  );
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -97,21 +61,12 @@ export function App() {
     return () => clearInterval(timer);
   }, [accountIds]);
 
-  function expand(projectId: string): void {
-    setExpanded((current) => new Set(current).add(projectId));
-    if (!tasksByProject[projectId]) void loadTasks(projectId);
-  }
-
   useEffect(() => {
     unwrap(api.listProjects()).then(
       (loaded) => {
         setProjects(loaded);
         const first = loaded[0];
-        if (first) {
-          setScreen({ kind: 'project', id: first.id });
-          setExpanded(new Set([first.id]));
-          void loadTasks(first.id);
-        }
+        if (first) setScreen({ kind: 'project', id: first.id });
       },
       (reason: unknown) => showError((reason as Error).message),
     );
@@ -122,60 +77,27 @@ export function App() {
         void Promise.all(unnamed.map((item) => api.getProfileStatus({ id: item.id }))).then(() => loadAccounts());
       }
     });
-  }, [showError, loadTasks, loadAccounts]);
+  }, [showError, loadAccounts]);
 
   function navigate(next: Screen): void {
-    if (confirmDiscard()) {
-      setError(undefined);
-      setScreen(next);
-    }
-  }
-
-  function toggleProject(project: ProjectDto): void {
-    const isOpenProject = screen.kind === 'project' && screen.id === project.id;
-    if (isOpenProject && expanded.has(project.id)) {
-      setExpanded((current) => {
-        const next = new Set(current);
-        next.delete(project.id);
-        return next;
-      });
-      return;
-    }
-    expand(project.id);
-    navigate({ kind: 'project', id: project.id });
+    setError(undefined);
+    setScreen(next);
   }
 
   async function addProject(): Promise<void> {
-    if (!confirmDiscard()) return;
     setError(undefined);
     try {
       const path = await unwrap(api.pickProjectFolder());
       if (!path) return;
       const project = await unwrap(api.addProject({ path }));
       setProjects((current) => [...(current ?? []), project].sort(byName));
-      setTasksByProject((current) => ({ ...current, [project.id]: [] }));
-      setExpanded((current) => new Set(current).add(project.id));
       setScreen({ kind: 'project', id: project.id });
     } catch (reason) {
       setError((reason as Error).message);
     }
   }
 
-  async function createTask(projectId: string, title: string): Promise<void> {
-    if (!confirmDiscard()) return;
-    setError(undefined);
-    try {
-      const task = await unwrap(api.createTask({ projectId, title }));
-      setTasksByProject((current) => ({ ...current, [projectId]: [task, ...(current[projectId] ?? [])] }));
-      setScreen({ kind: 'task', id: task.id, projectId });
-    } catch (reason) {
-      setError((reason as Error).message);
-    }
-  }
-
-  const activeProjectId = screen.kind === 'project' ? screen.id : screen.kind === 'task' ? screen.projectId : undefined;
-  const selectedProject = projects?.find((project) => project.id === activeProjectId);
-  const selectedTask = screen.kind === 'task' ? tasksByProject[screen.projectId]?.find((task) => task.id === screen.id) : undefined;
+  const selectedProject = screen.kind === 'project' ? projects?.find((project) => project.id === screen.id) : undefined;
 
   return (
     <div className="layout">
@@ -192,50 +114,26 @@ export function App() {
         <div className="sidebar-scroll">
           <p className="sidebar-label">Projects</p>
           <ul className="list">
-            {projects?.map((project) => {
-              const isOpen = expanded.has(project.id);
-              return (
-                <li key={project.id} className="tree-project">
-                  <button
-                    type="button"
-                    className="nav-item"
-                    aria-expanded={isOpen}
-                    aria-current={screen.kind === 'project' && screen.id === project.id ? 'true' : undefined}
-                    onClick={() => toggleProject(project)}
-                  >
-                    <span className="nav-icon chevron" data-open={isOpen}>
-                      <ChevronRight />
+            {projects?.map((project) => (
+              <li key={project.id}>
+                <button
+                  type="button"
+                  className="nav-item"
+                  aria-current={screen.kind === 'project' && screen.id === project.id ? 'true' : undefined}
+                  onClick={() => navigate({ kind: 'project', id: project.id })}
+                >
+                  <span className="nav-icon">
+                    <Folder />
+                  </span>
+                  <span className="grow truncate">{project.name}</span>
+                  {project.pathStatus !== 'directory' && (
+                    <span className="badge warning" title="Không tìm thấy folder">
+                      !
                     </span>
-                    <span className="grow truncate">{project.name}</span>
-                    {project.pathStatus !== 'directory' && (
-                      <span className="badge warning" title="Không tìm thấy folder">
-                        !
-                      </span>
-                    )}
-                  </button>
-                  {isOpen && (
-                    <ul className="tree-tasks">
-                      {tasksByProject[project.id]?.map((task) => (
-                        <li key={task.id}>
-                          <button
-                            type="button"
-                            className="nav-item task-title"
-                            aria-current={screen.kind === 'task' && screen.id === task.id ? 'true' : undefined}
-                            onClick={() => navigate({ kind: 'task', id: task.id, projectId: project.id })}
-                          >
-                            <span className={`dot ${STATUS_DOT[task.status] ?? ''}`} aria-hidden="true" />
-                            <span className="grow truncate">{task.title}</span>
-                          </button>
-                        </li>
-                      ))}
-                      <li>
-                        <NewTask onCreate={(title) => createTask(project.id, title)} />
-                      </li>
-                    </ul>
                   )}
-                </li>
-              );
-            })}
+                </button>
+              </li>
+            ))}
           </ul>
         </div>
         <div className="sidebar-footer">
@@ -303,6 +201,8 @@ export function App() {
             <ProjectPane
               key={selectedProject.id}
               project={selectedProject}
+              accounts={accounts}
+              onOpenSettings={() => navigate({ kind: 'settings' })}
               onError={showError}
               onChanged={(updated) =>
                 setProjects((current) => current?.map((project) => (project.id === updated.id ? updated : project)).sort(byName))
@@ -312,21 +212,6 @@ export function App() {
                 setProjects(remaining);
                 setScreen(remaining[0] ? { kind: 'project', id: remaining[0].id } : { kind: 'none' });
               }}
-            />
-          )}
-          {screen.kind === 'task' && selectedTask && selectedProject && (
-            <TaskPane
-              key={selectedTask.id}
-              task={selectedTask}
-              project={selectedProject}
-              accounts={accounts}
-              onChanged={(updated) =>
-                setTasksByProject((current) => ({
-                  ...current,
-                  [updated.projectId]: (current[updated.projectId] ?? []).map((task) => (task.id === updated.id ? updated : task)),
-                }))
-              }
-              onOpenSettings={() => navigate({ kind: 'settings' })}
             />
           )}
           {screen.kind === 'none' && projects !== undefined && (

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type MetadataStore, type Workspace, createWorkspace } from '@agenthub/application';
 import { DomainError } from '@agenthub/domain';
-import { createContextStore, openMetadataStore } from '@agenthub/persistence';
+import { openMetadataStore } from '@agenthub/persistence';
 import { createPathInspector } from '@agenthub/platform';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -18,8 +18,9 @@ function open(): void {
   store = openMetadataStore(join(root, 'agenthub.sqlite'), { backupDirectory: join(root, 'backups') });
   workspace = createWorkspace({
     store,
-    context: createContextStore(join(root, 'artifacts')),
     paths: createPathInspector(),
+    defaultContextDirectory: (projectId) => join(root, 'projects', projectId, 'context'),
+    ensureDirectory: (path) => mkdirSync(path, { recursive: true }),
     newId: randomUUID,
     now: () => new Date().toISOString(),
   });
@@ -53,21 +54,19 @@ afterEach(() => {
 });
 
 describe('Phase 1 exit criteria', () => {
-  it('keeps project, task and context across a restart, with a Unicode path', () => {
+  it('keeps a project and its context settings across a restart, with a Unicode path', () => {
     const project = workspace.addProject({ path: projectDir });
-    const task = workspace.createTask({ projectId: project.id, title: 'QA-024', objective: 'Sửa lỗi' });
-    workspace.updateTask({ id: task.id, status: 'active', acceptanceCriteria: 'Không crash' });
-    const reference = { scope: 'task', taskId: task.id, document: 'task' } as const;
-    workspace.saveContext(reference, '# Bối cảnh\nGhi chú tiếng Việt', null);
+    workspace.updateProjectContext({ id: project.id, enabled: true, language: 'vi' });
 
     restart();
 
     const [reopened] = workspace.listProjects();
-    expect(reopened).toMatchObject({ id: project.id, path: projectDir, pathStatus: 'directory' });
-    expect(workspace.listTasks(project.id)).toEqual([
-      expect.objectContaining({ id: task.id, status: 'active', objective: 'Sửa lỗi', acceptanceCriteria: 'Không crash' }),
-    ]);
-    expect(workspace.readContext(reference).content).toBe('# Bối cảnh\nGhi chú tiếng Việt');
+    expect(reopened).toMatchObject({
+      id: project.id,
+      path: projectDir,
+      pathStatus: 'directory',
+      context: { enabled: true, language: 'vi', custom: false, pathStatus: 'directory' },
+    });
   });
 });
 
@@ -105,16 +104,16 @@ describe('projects', () => {
     expect(codeOf(() => workspace.updateProject({ id: project.id, name: '   ' }))).toBe('VALIDATION_FAILED');
   });
 
-  it('reports a moved folder and relinks it without losing tasks', () => {
+  it('reports a moved folder and relinks it without losing context settings', () => {
     const project = workspace.addProject({ path: projectDir });
-    const task = workspace.createTask({ projectId: project.id, title: 'QA-024' });
+    workspace.updateProjectContext({ id: project.id, enabled: true });
     const moved = join(root, 'đã chuyển');
     renameSync(projectDir, moved);
 
     expect(workspace.listProjects()[0]?.pathStatus).toBe('missing');
 
     expect(workspace.updateProject({ id: project.id, path: moved })).toMatchObject({ path: moved, pathStatus: 'directory' });
-    expect(workspace.listTasks(project.id).map((item) => item.id)).toEqual([task.id]);
+    expect(workspace.listProjects()[0]?.context.enabled).toBe(true);
   });
 
   it('refuses to relink onto the folder of another project', () => {
@@ -126,73 +125,85 @@ describe('projects', () => {
     expect(codeOf(() => workspace.updateProject({ id: project.id, path: other }))).toBe('PROJECT_PATH_DUPLICATE');
   });
 
-  it('removes a project from the list without deleting its folder or artifacts', () => {
+  it('removes a project from the list without deleting its folder or documents', () => {
     const project = workspace.addProject({ path: projectDir });
-    const reference = { scope: 'project', projectId: project.id } as const;
-    workspace.saveContext(reference, 'ghi chú', null);
+    const documents = workspace.contextFolder(workspace.updateProjectContext({ id: project.id, enabled: true }).id);
+    writeFileSync(join(documents, 'STATUS.md'), 'ghi chú');
 
     workspace.removeProject(project.id);
 
     expect(workspace.listProjects()).toEqual([]);
     expect(existsSync(projectDir)).toBe(true);
-    expect(existsSync(join(root, 'artifacts', project.id, 'project.md'))).toBe(true);
-    expect(codeOf(() => workspace.listTasks(project.id))).toBe('NOT_FOUND');
+    expect(existsSync(join(documents, 'STATUS.md'))).toBe(true);
+    expect(codeOf(() => workspace.contextFolder(project.id))).toBe('NOT_FOUND');
     expect(workspace.addProject({ path: projectDir }).id).not.toBe(project.id);
   });
 });
 
-describe('tasks', () => {
-  it('starts in backlog and requires a title', () => {
+describe('context documents', () => {
+  it('starts off, in English, in the default folder inside AgentHub', () => {
     const project = workspace.addProject({ path: projectDir });
 
-    expect(workspace.createTask({ projectId: project.id, title: 'QA' }).status).toBe('backlog');
-    expect(codeOf(() => workspace.createTask({ projectId: project.id, title: '  ' }))).toBe('VALIDATION_FAILED');
+    expect(project.context).toEqual({
+      enabled: false,
+      language: 'en',
+      path: join(root, 'projects', project.id, 'context'),
+      custom: false,
+      pathStatus: 'missing',
+    });
+    expect(codeOf(() => workspace.contextFolder(project.id))).toBe('VALIDATION_FAILED');
   });
 
-  it('keeps fields that an update leaves out', () => {
+  it('creates the default folder when turned on, and never writes into the project folder', () => {
     const project = workspace.addProject({ path: projectDir });
-    const task = workspace.createTask({ projectId: project.id, title: 'QA', objective: 'Mục tiêu' });
 
-    const updated = workspace.updateTask({ id: task.id, status: 'blocked' });
+    const updated = workspace.updateProjectContext({ id: project.id, enabled: true });
 
-    expect(updated).toMatchObject({ title: 'QA', objective: 'Mục tiêu', status: 'blocked' });
+    expect(updated.context).toMatchObject({ enabled: true, pathStatus: 'directory' });
+    expect(readdirSync(updated.context.path)).toEqual([]);
+    expect(readdirSync(projectDir)).toEqual([]);
   });
 
-  it('rejects unknown ids', () => {
-    const missing = randomUUID();
-
-    expect(codeOf(() => workspace.updateTask({ id: missing, title: 'x' }))).toBe('NOT_FOUND');
-    expect(codeOf(() => workspace.createTask({ projectId: missing, title: 'x' }))).toBe('NOT_FOUND');
-  });
-});
-
-describe('context', () => {
-  it('keeps project, task and decision documents apart', () => {
+  it('uses a folder the user chose, and goes back to the default', () => {
     const project = workspace.addProject({ path: projectDir });
-    const task = workspace.createTask({ projectId: project.id, title: 'QA' });
+    const chosen = join(projectDir, 'AgentContext');
+    mkdirSync(chosen);
 
-    workspace.saveContext({ scope: 'project', projectId: project.id }, 'project', null);
-    workspace.saveContext({ scope: 'task', taskId: task.id, document: 'task' }, 'task', null);
-    workspace.saveContext({ scope: 'task', taskId: task.id, document: 'decisions' }, 'decisions', null);
+    const custom = workspace.updateProjectContext({ id: project.id, enabled: true, customPath: chosen });
+    expect(custom.context).toMatchObject({ path: chosen, custom: true, pathStatus: 'directory' });
+    expect(workspace.contextFolder(project.id)).toBe(chosen);
 
-    expect(workspace.readContext({ scope: 'project', projectId: project.id }).content).toBe('project');
-    expect(workspace.readContext({ scope: 'task', taskId: task.id, document: 'task' }).content).toBe('task');
-    expect(workspace.readContext({ scope: 'task', taskId: task.id, document: 'decisions' }).content).toBe('decisions');
+    const reset = workspace.updateProjectContext({ id: project.id, customPath: null });
+    expect(reset.context).toMatchObject({ path: join(root, 'projects', project.id, 'context'), custom: false });
   });
 
-  it('reports a conflict instead of overwriting', () => {
+  it('keeps settings an update leaves out', () => {
     const project = workspace.addProject({ path: projectDir });
-    const reference = { scope: 'project', projectId: project.id } as const;
-    const opened = workspace.saveContext(reference, 'một', null);
-    workspace.saveContext(reference, 'hai', opened.revision);
+    workspace.updateProjectContext({ id: project.id, enabled: true, language: 'vi' });
 
-    expect(codeOf(() => workspace.saveContext(reference, 'ba', opened.revision))).toBe('CONTEXT_CONFLICT');
-    expect(workspace.readContext(reference).content).toBe('hai');
+    expect(workspace.updateProjectContext({ id: project.id, enabled: false }).context).toMatchObject({ enabled: false, language: 'vi' });
   });
 
-  it('rejects context for an unknown task', () => {
-    const reference = { scope: 'task', taskId: randomUUID(), document: 'task' } as const;
-    expect(codeOf(() => workspace.readContext(reference))).toBe('NOT_FOUND');
+  it('rejects a chosen folder that is missing or a file, and an unknown project', () => {
+    const project = workspace.addProject({ path: projectDir });
+    const file = join(root, 'file.txt');
+    writeFileSync(file, '');
+
+    expect(codeOf(() => workspace.updateProjectContext({ id: project.id, customPath: join(root, 'không có') }))).toBe('PROJECT_PATH_MISSING');
+    expect(codeOf(() => workspace.updateProjectContext({ id: project.id, customPath: file }))).toBe('PROJECT_PATH_INVALID');
+    expect(codeOf(() => workspace.updateProjectContext({ id: randomUUID(), enabled: true }))).toBe('NOT_FOUND');
+    expect(workspace.listProjects()[0]?.context.custom).toBe(false);
+  });
+
+  it('reports a chosen folder that has since disappeared', () => {
+    const project = workspace.addProject({ path: projectDir });
+    const chosen = join(root, 'docs');
+    mkdirSync(chosen);
+    workspace.updateProjectContext({ id: project.id, enabled: true, customPath: chosen });
+    rmSync(chosen, { recursive: true });
+
+    expect(workspace.listProjects()[0]?.context.pathStatus).toBe('missing');
+    expect(codeOf(() => workspace.contextFolder(project.id))).toBe('PROJECT_PATH_MISSING');
   });
 });
 

@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { type LaunchService, type MetadataStore, createLaunchService, createWorkspace } from '@agenthub/application';
 import { createLauncher } from '@agenthub/integrations';
-import { createContextStore, openMetadataStore } from '@agenthub/persistence';
+import { openMetadataStore } from '@agenthub/persistence';
 import { createMacPlatform, createPathInspector } from '@agenthub/platform';
 import { BrowserWindow, app, dialog, nativeTheme, session } from 'electron';
 import { registerIpcHandlers } from './ipc';
@@ -82,8 +83,9 @@ function start(): void {
   const now = (): string => new Date().toISOString();
   const workspace = createWorkspace({
     store: openedStore,
-    context: createContextStore(join(dataDirectory, 'artifacts')),
     paths,
+    defaultContextDirectory: (projectId) => join(dataDirectory, 'projects', projectId, 'context'),
+    ensureDirectory: (path) => mkdirSync(path, { recursive: true, mode: 0o700 }),
     newId,
     now,
   });

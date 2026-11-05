@@ -34,18 +34,20 @@ describe('ipcInput', () => {
     expect(ipcInput[IpcChannel.projectsAdd].safeParse(payload).success).toBe(false);
   });
 
-  it.each(['../../etc', 'not-a-uuid', ''])('rejects the id %j, which could reach an artifact path', (badId) => {
-    const reference = { scope: 'task', taskId: badId, document: 'task' };
-    expect(ipcInput[IpcChannel.contextGet].safeParse({ reference }).success).toBe(false);
+  it.each(['../../etc', 'not-a-uuid', ''])('rejects the project id %j, which could reach a folder path', (badId) => {
+    expect(ipcInput[IpcChannel.projectsOpenContextFolder].safeParse({ id: badId }).success).toBe(false);
+    expect(ipcInput[IpcChannel.launchHistory].safeParse({ projectId: badId }).success).toBe(false);
   });
 
-  it('rejects a context document outside the allowed names', () => {
-    const reference = { scope: 'task', taskId: id, document: '../secret' };
-    expect(ipcInput[IpcChannel.contextGet].safeParse({ reference }).success).toBe(false);
+  it('rejects an unknown context language and a NUL byte in a context folder', () => {
+    expect(ipcInput[IpcChannel.projectsUpdateContext].safeParse({ id, language: 'fr' }).success).toBe(false);
+    expect(ipcInput[IpcChannel.projectsUpdateContext].safeParse({ id, customPath: '/a\0b' }).success).toBe(false);
+    expect(ipcInput[IpcChannel.projectsUpdateContext].safeParse({ id, customPath: null, enabled: true }).success).toBe(true);
   });
 
-  it('rejects an unknown task status', () => {
-    expect(ipcInput[IpcChannel.tasksUpdate].safeParse({ id, status: 'synced' }).success).toBe(false);
+  it('rejects a launch that still names a task', () => {
+    const request = { taskId: id, profileId: id, mode: 'cli' };
+    expect(ipcInput[IpcChannel.launchPlan].safeParse(request).success).toBe(false);
   });
 
   it('rejects any payload on a channel that takes none', () => {

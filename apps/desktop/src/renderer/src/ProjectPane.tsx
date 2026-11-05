@@ -1,19 +1,21 @@
-import type { ProjectDto } from '@agenthub/contracts';
+import type { ProfileDto, ProjectDto } from '@agenthub/contracts';
 import { useState } from 'react';
 import { api, unwrap } from './api';
-import { ContextEditor } from './ContextEditor';
 import { Folder, More } from './icons';
+import { ProjectContext } from './ProjectContext';
+import { ProjectLaunch } from './ProjectLaunch';
 import { Menu, MenuItem } from './ui';
-import { confirmDiscard } from './unsaved';
 
 interface Props {
   project: ProjectDto;
+  accounts: ProfileDto[] | undefined;
+  onOpenSettings: () => void;
   onChanged: (project: ProjectDto) => void;
   onRemoved: (id: string) => void;
   onError: (message: string | undefined) => void;
 }
 
-export function ProjectPane({ project, onChanged, onRemoved, onError }: Props) {
+export function ProjectPane({ project, accounts, onOpenSettings, onChanged, onRemoved, onError }: Props) {
   const [name, setName] = useState(project.name);
 
   async function attempt<T>(action: () => Promise<T>): Promise<T | undefined> {
@@ -48,9 +50,8 @@ export function ProjectPane({ project, onChanged, onRemoved, onError }: Props) {
   }
 
   async function remove(): Promise<void> {
-    if (!confirmDiscard()) return;
     const accepted = window.confirm(
-      `Gỡ "${project.name}" khỏi AgentHub?\n\nFolder của project không bị xoá. Task và context vẫn được giữ trong dữ liệu của AgentHub, nhưng hiện chưa có cách khôi phục trong app.`,
+      `Gỡ "${project.name}" khỏi AgentHub?\n\nFolder của project và tài liệu context không bị xoá, nhưng hiện chưa có cách khôi phục project trong app.`,
     );
     if (!accepted) return;
     const done = await attempt(async () => {
@@ -91,19 +92,16 @@ export function ProjectPane({ project, onChanged, onRemoved, onError }: Props) {
         />
         {project.pathStatus !== 'directory' && (
           <div className="banner warning" role="alert">
-            <p>Không tìm thấy folder của project. Task và context vẫn còn nguyên.</p>
+            <p>Không tìm thấy folder của project. Tài liệu context và lịch sử vẫn còn nguyên.</p>
             <button type="button" onClick={() => void relink()}>
               Chọn lại folder
             </button>
           </div>
         )}
       </header>
-      <ContextEditor
-        key={project.id}
-        reference={{ scope: 'project', projectId: project.id }}
-        label="Project context"
-        hint="Kiến trúc, quy ước và ràng buộc chung. Mọi task của project này đều dùng."
-      />
+      <ProjectLaunch project={project} accounts={accounts} onOpenSettings={onOpenSettings}>
+        <ProjectContext project={project} onChanged={onChanged} onError={onError} />
+      </ProjectLaunch>
     </div>
   );
 }

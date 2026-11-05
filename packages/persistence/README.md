@@ -1,6 +1,6 @@
 # Persistence
 
-**Status:** Có SQLite (better-sqlite3), migration 1 và 2, backup trước khi nâng schema, context store ghi atomic và tests. Chưa có bảng checkpoint, handoff.
+**Status:** Có SQLite (better-sqlite3), migration 1–4, backup trước khi nâng schema và tests. Migration 4 bỏ bảng `tasks` (ADR-019). Context store của Phase 1 đã bỏ cùng Context Editor; ghi tài liệu có checksum sẽ quay lại cùng thao tác "Thêm handoff" và MCP.
 
 ## Trách nhiệm
 

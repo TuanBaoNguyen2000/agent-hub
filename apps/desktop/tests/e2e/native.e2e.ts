@@ -29,16 +29,14 @@ test.afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-// Sets up a task and a second account, which gets its own folders under the test's data folder.
-async function prepareTask(projectPath: string, cliPath: string): Promise<void> {
+// Sets up a project and a second account, which gets its own folders under the test's data folder.
+async function prepareProject(projectPath: string, cliPath: string): Promise<void> {
   mkdirSync(projectPath);
   await app?.evaluate(({ dialog }, chosen) => {
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [chosen] })) as typeof dialog.showOpenDialog;
   }, projectPath);
   await page.getByRole('button', { name: 'Thêm project' }).click();
-  const newTask = page.getByLabel('Task mới');
-  await newTask.fill('Native');
-  await newTask.press('Enter');
+  await expect(page.locator('#project-path')).toHaveText(projectPath);
 
   await page.getByRole('button', { name: 'Cài đặt' }).click();
   await page.getByText('Nâng cao').click();
@@ -49,12 +47,12 @@ async function prepareTask(projectPath: string, cliPath: string): Promise<void> 
   await accounts.getByRole('button', { name: 'Thêm account' }).click();
   await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
   await accounts.getByRole('button', { name: 'Dùng account này' }).click();
-  await expect(accounts.getByRole('listitem')).toHaveCount(1);
+  await expect(accounts.locator('.settings-list > li')).toHaveCount(1);
   await accounts.getByRole('button', { name: 'Thêm account' }).click();
   await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
-  await expect(accounts.getByRole('listitem')).toHaveCount(2);
+  await expect(accounts.locator('.settings-list > li')).toHaveCount(2);
 
-  await page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: 'Native' }).click();
+  await page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: /Dự án/ }).click();
   await page.getByRole('button', { name: 'Account', exact: true }).click();
   await page.getByRole('menuitemradio').nth(1).click();
 }
@@ -72,7 +70,7 @@ if [ "$1" = "--version" ]; then echo 1; exit 0; fi
 `,
     { mode: 0o755 },
   );
-  await prepareTask(project, cli);
+  await prepareProject(project, cli);
 
   await page.getByRole('button', { name: 'Mở trong Terminal' }).click();
   await page.getByRole('group', { name: 'Cần bạn quyết định' }).getByRole('button', { name: 'Cho phép', exact: true }).click();
@@ -101,7 +99,7 @@ test('a second account opens its own Claude Desktop window beside the main app',
   const project = join(root, 'Dự án thử');
   const cli = join(root, 'fake-claude');
   writeFileSync(cli, `#!/bin/sh\necho '{"loggedIn":true}'\n`, { mode: 0o755 });
-  await prepareTask(project, cli);
+  await prepareProject(project, cli);
   const executable = '/Applications/Claude.app/Contents/MacOS/Claude';
   // Without a UTF-8 locale, ps escapes non-ASCII characters in the path.
   const psEnv = { ...process.env, LANG: 'en_US.UTF-8' };

@@ -1,12 +1,12 @@
 import {
   type AccountProfile,
+  CONTEXT_LANGUAGES,
+  type ContextLanguage,
   DomainError,
   type LaunchAttempt,
   type LaunchOutcome,
   type LaunchStatus,
   type Project,
-  type Task,
-  type TaskStatus,
   folderNameOf,
   isSamePath,
   requireLabel,
@@ -21,7 +21,8 @@ export interface StorageStatus {
   schemaVersion: number;
 }
 
-export type StoredProject = Project & { path: string | null };
+// path and contextPath belong to this device; contextPath null means the default folder.
+export type StoredProject = Project & { path: string | null; contextPath: string | null };
 
 export interface ProjectRepository {
   listActive(deviceId: string): StoredProject[];
@@ -29,14 +30,8 @@ export interface ProjectRepository {
   insert(project: Project, location: { id: string; deviceId: string; path: string }): void;
   rename(id: string, name: string, updatedAt: string): void;
   setLocation(projectId: string, location: { id: string; deviceId: string; path: string }, updatedAt: string): void;
+  setContext(id: string, deviceId: string, context: Project['context'], contextPath: string | null, updatedAt: string): void;
   markRemoved(id: string, removedAt: string): void;
-}
-
-export interface TaskRepository {
-  list(projectId: string): Task[];
-  get(id: string): Task | undefined;
-  insert(task: Task): void;
-  update(task: Task): void;
 }
 
 export interface SettingsRepository {
@@ -58,16 +53,15 @@ export interface PermissionRepository {
 }
 
 export interface LaunchRepository {
-  list(taskId: string): LaunchAttempt[];
+  list(projectId: string): LaunchAttempt[];
   get(id: string): LaunchAttempt | undefined;
-  insert(attempt: Pick<LaunchAttempt, 'id' | 'taskId' | 'profileId' | 'mode' | 'status' | 'createdAt'>): void;
+  insert(attempt: Pick<LaunchAttempt, 'id' | 'projectId' | 'taskRef' | 'profileId' | 'mode' | 'status' | 'createdAt'>): void;
   finish(id: string, status: LaunchStatus, errorCode: string | null, outcome: LaunchOutcome | null): void;
   confirmAccount(id: string, at: string): void;
 }
 
 export interface MetadataStore {
   readonly projects: ProjectRepository;
-  readonly tasks: TaskRepository;
   readonly settings: SettingsRepository;
   readonly profiles: ProfileRepository;
   readonly permissions: PermissionRepository;
@@ -76,33 +70,25 @@ export interface MetadataStore {
   close(): void;
 }
 
-export type ContextDocumentName = 'project' | 'task' | 'decisions';
-
-export interface ContextAddress {
-  projectId: string;
-  taskId?: string;
-  document: ContextDocumentName;
-}
-
-export interface ContextDocument {
-  content: string;
-  // Content checksum; null while the document has never been saved.
-  revision: string | null;
-  modifiedAt: string | null;
-}
-
-export interface ContextStore {
-  read(address: ContextAddress): ContextDocument;
-  write(address: ContextAddress, content: string, expectedRevision: string | null): ContextDocument;
-}
-
 export type PathStatus = 'directory' | 'not_directory' | 'missing' | 'not_absolute';
 
 export interface PathInspector {
   inspect(path: string): PathStatus;
 }
 
-export type ProjectView = StoredProject & { pathStatus: PathStatus | 'unset' };
+export interface ProjectContextView {
+  enabled: boolean;
+  language: ContextLanguage;
+  // Where the documents live on this device, resolved from the default when none was chosen.
+  path: string;
+  custom: boolean;
+  pathStatus: PathStatus;
+}
+
+export type ProjectView = Omit<StoredProject, 'context' | 'contextPath'> & {
+  pathStatus: PathStatus | 'unset';
+  context: ProjectContextView;
+};
 
 export const THEMES = ['system', 'light', 'dark'] as const;
 export type Theme = (typeof THEMES)[number];
@@ -116,22 +102,21 @@ export interface Settings {
 
 export interface WorkspaceDependencies {
   store: MetadataStore;
-  context: ContextStore;
   paths: PathInspector;
+  // <userData>/projects/<project-id>/context (TDD §6.3).
+  defaultContextDirectory: (projectId: string) => string;
+  // Creates a folder AgentHub owns; it never writes documents into it (ADR-019).
+  ensureDirectory: (path: string) => void;
   newId: () => string;
   now: () => string;
 }
-
-export type ContextReference =
-  | { scope: 'project'; projectId: string }
-  | { scope: 'task'; taskId: string; document: 'task' | 'decisions' };
 
 const DEVICE_ID_KEY = 'device_id';
 const THEME_KEY = 'theme';
 
 export type Workspace = ReturnType<typeof createWorkspace>;
 
-export function createWorkspace({ store, context, paths, newId, now }: WorkspaceDependencies) {
+export function createWorkspace({ store, paths, defaultContextDirectory, ensureDirectory, newId, now }: WorkspaceDependencies) {
   function deviceId(): string {
     const existing = store.settings.get(DEVICE_ID_KEY);
     if (existing) return existing;
@@ -159,22 +144,13 @@ export function createWorkspace({ store, context, paths, newId, now }: Workspace
     return project;
   }
 
-  function requireTask(id: string): Task {
-    const task = store.tasks.get(id);
-    if (!task) throw new DomainError('NOT_FOUND', 'Không tìm thấy task.');
-    return task;
-  }
-
-  function toView(project: StoredProject): ProjectView {
-    return { ...project, pathStatus: project.path === null ? 'unset' : paths.inspect(project.path) };
-  }
-
-  function addressOf(reference: ContextReference): ContextAddress {
-    if (reference.scope === 'project') {
-      return { projectId: requireProject(reference.projectId).id, document: 'project' };
-    }
-    const task = requireTask(reference.taskId);
-    return { projectId: task.projectId, taskId: task.id, document: reference.document };
+  function toView({ context, contextPath, ...project }: StoredProject): ProjectView {
+    const path = contextPath ?? defaultContextDirectory(project.id);
+    return {
+      ...project,
+      pathStatus: project.path === null ? 'unset' : paths.inspect(project.path),
+      context: { ...context, path, custom: contextPath !== null, pathStatus: paths.inspect(path) },
+    };
   }
 
   function getSettings(): Settings {
@@ -199,6 +175,7 @@ export function createWorkspace({ store, context, paths, newId, now }: Workspace
       const project: Project = {
         id: newId(),
         name: requireLabel(input.name ?? folderNameOf(input.path), 'Tên project'),
+        context: { enabled: false, language: 'en' },
         createdAt: timestamp,
         updatedAt: timestamp,
       };
@@ -219,60 +196,43 @@ export function createWorkspace({ store, context, paths, newId, now }: Workspace
       return toView(requireProject(input.id));
     },
 
-    // Only hides the project: its tasks and artifacts stay, and its folder is never touched.
+    // Only hides the project: its documents stay, and its folder is never touched.
     removeProject(id: string): void {
       requireProject(id);
       store.projects.markRemoved(id, now());
     },
 
-    listTasks(projectId: string): Task[] {
-      requireProject(projectId);
-      return store.tasks.list(projectId);
-    },
-
-    createTask(input: { projectId: string; title: string; objective?: string | undefined }): Task {
-      requireProject(input.projectId);
-      const timestamp = now();
-      const task: Task = {
-        id: newId(),
-        projectId: input.projectId,
-        title: requireLabel(input.title, 'Tiêu đề task'),
-        objective: input.objective ?? '',
-        acceptanceCriteria: '',
-        status: 'backlog',
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
-      store.tasks.insert(task);
-      return task;
-    },
-
-    updateTask(input: {
+    // customPath: a folder the user chose, or null for the default inside AgentHub's data.
+    updateProjectContext(input: {
       id: string;
-      title?: string | undefined;
-      objective?: string | undefined;
-      acceptanceCriteria?: string | undefined;
-      status?: TaskStatus | undefined;
-    }): Task {
-      const current = requireTask(input.id);
-      const updated: Task = {
-        ...current,
-        title: input.title === undefined ? current.title : requireLabel(input.title, 'Tiêu đề task'),
-        objective: input.objective ?? current.objective,
-        acceptanceCriteria: input.acceptanceCriteria ?? current.acceptanceCriteria,
-        status: input.status ?? current.status,
-        updatedAt: now(),
-      };
-      store.tasks.update(updated);
-      return updated;
+      enabled?: boolean | undefined;
+      language?: ContextLanguage | undefined;
+      customPath?: string | null | undefined;
+    }): ProjectView {
+      const project = requireProject(input.id);
+      if (project.path === null) {
+        throw new DomainError('PROJECT_PATH_MISSING', 'Hãy chọn folder của project trên máy này trước.');
+      }
+      if (input.language !== undefined && !CONTEXT_LANGUAGES.includes(input.language)) {
+        throw new DomainError('VALIDATION_FAILED', 'Ngôn ngữ không hợp lệ.');
+      }
+      const contextPath = input.customPath === undefined ? project.contextPath : input.customPath;
+      if (contextPath !== null && input.customPath !== undefined) requireDirectory(contextPath);
+      const context = { enabled: input.enabled ?? project.context.enabled, language: input.language ?? project.context.language };
+      if (context.enabled && contextPath === null) ensureDirectory(defaultContextDirectory(project.id));
+      store.projects.setContext(project.id, deviceId(), context, contextPath, now());
+      return toView(requireProject(project.id));
     },
 
-    readContext(reference: ContextReference): ContextDocument {
-      return context.read(addressOf(reference));
-    },
-
-    saveContext(reference: ContextReference, content: string, expectedRevision: string | null): ContextDocument {
-      return context.write(addressOf(reference), content, expectedRevision);
+    // The folder the user opens in their own editor; AgentHub has no document editor (TDD §9.1).
+    contextFolder(id: string): string {
+      const view = toView(requireProject(id));
+      if (!view.context.enabled) throw new DomainError('VALIDATION_FAILED', 'Project này chưa bật tài liệu context.');
+      if (!view.context.custom) ensureDirectory(view.context.path);
+      else if (view.context.pathStatus !== 'directory') {
+        throw new DomainError('PROJECT_PATH_MISSING', 'Không tìm thấy folder tài liệu. Hãy chọn lại nơi lưu.');
+      }
+      return view.context.path;
     },
 
     getSettings,

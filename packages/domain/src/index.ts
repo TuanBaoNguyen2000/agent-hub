@@ -26,23 +26,20 @@ export class DomainError extends Error {
   }
 }
 
-export const TASK_STATUSES = ['backlog', 'active', 'blocked', 'in_review', 'done', 'archived'] as const;
-export type TaskStatus = (typeof TASK_STATUSES)[number];
+export const CONTEXT_LANGUAGES = ['en', 'vi'] as const;
+export type ContextLanguage = (typeof CONTEXT_LANGUAGES)[number];
+
+// Context documents are optional per project (ADR-019). AgentHub only keeps where they live;
+// agents write them through skills or MCP.
+export interface ProjectContextSettings {
+  enabled: boolean;
+  language: ContextLanguage;
+}
 
 export interface Project {
   id: string;
   name: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface Task {
-  id: string;
-  projectId: string;
-  title: string;
-  objective: string;
-  acceptanceCriteria: string;
-  status: TaskStatus;
+  context: ProjectContextSettings;
   createdAt: string;
   updatedAt: string;
 }
@@ -92,7 +89,9 @@ export interface LaunchOutcome {
 
 export interface LaunchAttempt {
   id: string;
-  taskId: string;
+  projectId: string;
+  // A task inside the project's documents, by its path there; AgentHub keeps no tasks itself.
+  taskRef: string | null;
   profileId: string;
   mode: ClientMode;
   status: LaunchStatus;

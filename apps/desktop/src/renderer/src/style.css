@@ -795,100 +795,12 @@ button.link:hover:not(:disabled) {
   color: var(--fg-muted);
 }
 
-.chevron svg {
-  width: 13px;
-  height: 13px;
-  transition: transform 0.15s;
-}
-
-.chevron[data-open='true'] svg {
-  transform: rotate(90deg);
-}
-
-.tree-project {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.tree-tasks {
-  list-style: none;
-  margin: 0 0 4px 15px;
-  padding: 0 0 0 8px;
-  border-left: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.task-title {
-  min-height: 28px;
-}
-
-.new-task {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 0 0 8px;
-  border-radius: var(--radius);
-  color: var(--fg-faint);
-}
-
-.new-task:hover,
-.new-task:focus-within {
-  background: var(--bg-hover);
-}
-
-.new-task-icon {
-  display: inline-flex;
-}
-
-.new-task-icon svg {
-  width: 13px;
-  height: 13px;
-}
-
-.new-task input {
-  width: 100%;
-  min-width: 0;
-  border: none;
-  background: transparent;
-  box-shadow: none;
-  padding: 5px 8px 5px 2px;
-  font-size: 13px;
-}
-
-.new-task input:focus {
-  box-shadow: none;
-}
-
 .account-item {
   font-weight: 450;
 }
 
 .account-item[aria-expanded='true'] {
   background: var(--bg-hover);
-}
-
-.dot {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--fg-faint);
-}
-
-.dot.active {
-  background: var(--accent);
-}
-
-.dot.blocked {
-  background: var(--error-fg);
-}
-
-.dot.done {
-  background: transparent;
-  box-shadow: inset 0 0 0 1.25px var(--fg-faint);
 }
 
 .badge {
@@ -1126,53 +1038,6 @@ button.link:hover:not(:disabled) {
 .banner.error {
   background: var(--error-bg);
   color: var(--error-fg);
-}
-
-.editor {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.editor textarea {
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  min-height: 220px;
-  padding: 12px 14px;
-  border-radius: var(--radius-lg);
-}
-
-.tabs {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  align-self: flex-start;
-  border-radius: var(--radius);
-  background: var(--bg-active);
-}
-
-.tab {
-  min-height: 26px;
-  padding: 2px 12px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  box-shadow: none;
-  color: var(--fg-muted);
-}
-
-.tab:hover:not(:disabled) {
-  background: transparent;
-  color: var(--fg);
-}
-
-.tab[aria-selected='true'],
-.tab[aria-selected='true']:hover:not(:disabled) {
-  background: var(--surface);
-  color: var(--fg);
-  box-shadow:
-    0 0 0 0.5px var(--border-strong),
-    var(--shadow-card);
 }
 
 .history-item {

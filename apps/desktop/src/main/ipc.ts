@@ -58,13 +58,12 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
     workspace.removeProject(id);
     return null;
   });
-  handle(IpcChannel.tasksList, ({ projectId }) => workspace.listTasks(projectId));
-  handle(IpcChannel.tasksCreate, (input) => workspace.createTask(input));
-  handle(IpcChannel.tasksUpdate, (input) => workspace.updateTask(input));
-  handle(IpcChannel.contextGet, ({ reference }) => workspace.readContext(reference));
-  handle(IpcChannel.contextSave, ({ reference, content, expectedRevision }) =>
-    workspace.saveContext(reference, content, expectedRevision),
-  );
+  handle(IpcChannel.projectsUpdateContext, (input) => workspace.updateProjectContext(input));
+  handle(IpcChannel.projectsOpenContextFolder, async ({ id }) => {
+    const failure = await shell.openPath(workspace.contextFolder(id));
+    if (failure) throw new DomainError('UNEXPECTED', `Không mở được folder tài liệu: ${failure}`);
+    return null;
+  });
   handle(IpcChannel.settingsGet, () => settingsDto(workspace.getSettings()));
   handle(IpcChannel.settingsUpdate, (input) => {
     const settings = workspace.updateSettings(input);
@@ -139,7 +138,7 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
     };
   });
   handle(IpcChannel.launchExecute, ({ request, confirmations }) => launching.execute(request, confirmations));
-  handle(IpcChannel.launchHistory, ({ taskId }) => launching.listLaunches(taskId));
+  handle(IpcChannel.launchHistory, ({ projectId }) => launching.listLaunches(projectId));
   handle(IpcChannel.launchConfirmAccount, ({ attemptId }) => {
     launching.confirmAccount(attemptId);
     return null;

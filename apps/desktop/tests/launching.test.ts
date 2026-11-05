@@ -13,7 +13,7 @@ import {
   createWorkspace,
 } from '@agenthub/application';
 import { DomainError, type LaunchOutcome, accountName } from '@agenthub/domain';
-import { createContextStore, openMetadataStore } from '@agenthub/persistence';
+import { openMetadataStore } from '@agenthub/persistence';
 import { createMacPlatform, createPathInspector } from '@agenthub/platform';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -99,7 +99,14 @@ function open(): void {
   store = openMetadataStore(join(root, 'agenthub.sqlite'));
   const paths = createPathInspector();
   const now = (): string => new Date().toISOString();
-  workspace = createWorkspace({ store, context: createContextStore(join(root, 'artifacts')), paths, newId: randomUUID, now });
+  workspace = createWorkspace({
+    store,
+    paths,
+    defaultContextDirectory: (projectId) => join(root, 'projects', projectId, 'context'),
+    ensureDirectory: (path) => mkdirSync(path, { recursive: true }),
+    newId: randomUUID,
+    now,
+  });
   const platform: PlatformPort = {
     ...createMacPlatform(),
     openPrivateWindow: async (url) => {
@@ -137,9 +144,7 @@ const claudeProfile = (alias = 'A', cliConfigRoot: string | null = null, desktop
   launching.createProfile({ provider: 'claude', alias, cliConfigRoot, desktopDataDir });
 
 function context() {
-  const project = workspace.addProject({ path: projectDir });
-  const task = workspace.createTask({ projectId: project.id, title: 'QA' });
-  return { project, task };
+  return { project: workspace.addProject({ path: projectDir }) };
 }
 
 beforeEach(() => {
@@ -464,9 +469,9 @@ describe('signing in', () => {
 
 describe('launch rules', () => {
   it('refuses until the project and profile pair is allowed', async () => {
-    const { task, project } = context();
+    const { project } = context();
     const profile = claudeProfile();
-    const request = { taskId: task.id, profileId: profile.id, mode: 'cli' } as const;
+    const request = { projectId: project.id, profileId: profile.id, mode: 'cli' } as const;
 
     expect((await launching.preview(request)).permission).toBe('unset');
     expect(await codeOf(() => launching.execute(request, []))).toBe('PROFILE_NOT_ALLOWED');
@@ -476,57 +481,56 @@ describe('launch rules', () => {
     expect(await codeOf(() => launching.execute(request, []))).toBe('PROFILE_NOT_ALLOWED');
 
     expect(launched).toBe(0);
-    expect(launching.listLaunches(task.id)).toEqual([]);
+    expect(launching.listLaunches(project.id)).toEqual([]);
   });
 
   it('keeps a permission per project', async () => {
-    const { project, task } = context();
+    const { project } = context();
     const profile = claudeProfile();
     launching.setPermission({ projectId: project.id, profileId: profile.id, allowed: true });
 
     const otherDir = join(root, 'other');
     mkdirSync(otherDir);
     const other = workspace.addProject({ path: otherDir });
-    const otherTask = workspace.createTask({ projectId: other.id, title: 'x' });
 
-    expect((await launching.preview({ taskId: task.id, profileId: profile.id, mode: 'cli' })).permission).toBe('allowed');
-    expect((await launching.preview({ taskId: otherTask.id, profileId: profile.id, mode: 'cli' })).permission).toBe('unset');
+    expect((await launching.preview({ projectId: project.id, profileId: profile.id, mode: 'cli' })).permission).toBe('allowed');
+    expect((await launching.preview({ projectId: other.id, profileId: profile.id, mode: 'cli' })).permission).toBe('unset');
   });
 
   it('aborts when the project folder is gone', async () => {
-    const { project, task } = context();
+    const { project } = context();
     const profile = claudeProfile();
     launching.setPermission({ projectId: project.id, profileId: profile.id, allowed: true });
     renameSync(projectDir, join(root, 'moved'));
 
-    expect(await codeOf(() => launching.execute({ taskId: task.id, profileId: profile.id, mode: 'cli' }, []))).toBe('PROJECT_PATH_MISSING');
+    expect(await codeOf(() => launching.execute({ projectId: project.id, profileId: profile.id, mode: 'cli' }, []))).toBe('PROJECT_PATH_MISSING');
   });
 
   it('refuses when the plan is blocked', async () => {
-    const { project, task } = context();
+    const { project } = context();
     const profile = claudeProfile();
     launching.setPermission({ projectId: project.id, profileId: profile.id, allowed: true });
     plan = { ...plan, blocker: { code: 'BIN_NOT_FOUND', message: 'x' } };
 
-    expect(await codeOf(() => launching.execute({ taskId: task.id, profileId: profile.id, mode: 'cli' }, []))).toBe('BIN_NOT_FOUND');
+    expect(await codeOf(() => launching.execute({ projectId: project.id, profileId: profile.id, mode: 'cli' }, []))).toBe('BIN_NOT_FOUND');
     expect(launched).toBe(0);
   });
 
   it('requires every confirmation the plan asks for', async () => {
-    const { project, task } = context();
+    const { project } = context();
     const profile = claudeProfile();
     launching.setPermission({ projectId: project.id, profileId: profile.id, allowed: true });
     plan = { ...plan, requiredConfirmations: [{ id: 'risky', label: 'Vẫn thử?' }] };
-    const request = { taskId: task.id, profileId: profile.id, mode: 'desktop' } as const;
+    const request = { projectId: project.id, profileId: profile.id, mode: 'desktop' } as const;
 
     expect(await codeOf(() => launching.execute(request, ['other']))).toBe('CONFIRMATION_REQUIRED');
     expect((await launching.execute(request, ['risky'])).status).toBe('launched');
   });
 });
 
-describe('opening an account without a task', () => {
+describe('opening an account without a project', () => {
   it('opens with no project and no permission, leaving no history', async () => {
-    const { task } = context();
+    const { project } = context();
     const profile = claudeProfile();
 
     const opened = await launching.openAccount({ profileId: profile.id, mode: 'desktop' }, []);
@@ -534,7 +538,7 @@ describe('opening an account without a task', () => {
     expect(plannedPaths).toEqual([null]);
     expect(launched).toBe(1);
     expect(opened.workspace).toBe('none');
-    expect(launching.listLaunches(task.id)).toEqual([]);
+    expect(launching.listLaunches(project.id)).toEqual([]);
   });
 
   it('still needs every confirmation and stops at a blocker', async () => {
@@ -549,21 +553,21 @@ describe('opening an account without a task', () => {
 
 describe('launch history', () => {
   function allowed() {
-    const { project, task } = context();
+    const { project } = context();
     const profile = claudeProfile('Cá nhân');
     launching.setPermission({ projectId: project.id, profileId: profile.id, allowed: true });
-    return { task, profile, request: { taskId: task.id, profileId: profile.id, mode: 'desktop' } as const };
+    return { project, profile, request: { projectId: project.id, profileId: profile.id, mode: 'desktop' } as const };
   }
 
   it('records an attempt, unconfirmed, and keeps it across a restart', async () => {
-    const { task, request } = allowed();
+    const { project, request } = allowed();
 
     const attempt = await launching.execute(request, []);
 
     expect(attempt).toMatchObject({ status: 'launched', accountConfirmedAt: null, profileAlias: 'Claude (chưa rõ account)', outcome });
     store.close();
     open();
-    expect(launching.listLaunches(task.id).map((item) => item.id)).toEqual([attempt.id]);
+    expect(launching.listLaunches(project.id).map((item) => item.id)).toEqual([attempt.id]);
   });
 
   it('marks an attempt with manual steps as manual_step, not launched', async () => {
@@ -574,32 +578,32 @@ describe('launch history', () => {
   });
 
   it('records a failed launch with its code', async () => {
-    const { task, request } = allowed();
+    const { project, request } = allowed();
     launchResult = async () => {
       throw new DomainError('LAUNCH_FAILED', 'Không mở được.');
     };
 
     expect(await codeOf(() => launching.execute(request, []))).toBe('LAUNCH_FAILED');
 
-    expect(launching.listLaunches(task.id)[0]).toMatchObject({ status: 'failed', errorCode: 'LAUNCH_FAILED', outcome: null });
+    expect(launching.listLaunches(project.id)[0]).toMatchObject({ status: 'failed', errorCode: 'LAUNCH_FAILED', outcome: null });
   });
 
   it('records an account confirmation only when the user gives one', async () => {
-    const { task, request } = allowed();
+    const { project, request } = allowed();
     const attempt = await launching.execute(request, []);
 
     launching.confirmAccount(attempt.id);
 
-    expect(launching.listLaunches(task.id)[0]?.accountConfirmedAt).not.toBeNull();
+    expect(launching.listLaunches(project.id)[0]?.accountConfirmedAt).not.toBeNull();
   });
 
   it('keeps history after its profile is removed', async () => {
-    const { task, profile, request } = allowed();
+    const { project, profile, request } = allowed();
     await launching.execute(request, []);
 
     launching.removeProfile(profile.id);
 
     expect(launching.listProfiles()).toEqual([]);
-    expect(launching.listLaunches(task.id)[0]?.profileAlias).toBe('Account đã gỡ');
+    expect(launching.listLaunches(project.id)[0]?.profileAlias).toBe('Account đã gỡ');
   });
 });

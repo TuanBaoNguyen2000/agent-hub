@@ -6,11 +6,8 @@ export const IpcChannel = {
   projectsAdd: 'projects:add',
   projectsUpdate: 'projects:update',
   projectsRemove: 'projects:remove',
-  tasksList: 'tasks:list',
-  tasksCreate: 'tasks:create',
-  tasksUpdate: 'tasks:update',
-  contextGet: 'context:get',
-  contextSave: 'context:save',
+  projectsUpdateContext: 'projects:update-context',
+  projectsOpenContextFolder: 'projects:open-context-folder',
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
   settingsOpenDataFolder: 'settings:open-data-folder',
@@ -35,7 +32,7 @@ export const IpcChannel = {
   launchAccountExecute: 'launch:account-execute',
 } as const;
 
-export const TASK_STATUSES = ['backlog', 'active', 'blocked', 'in_review', 'done', 'archived'] as const;
+export const CONTEXT_LANGUAGES = ['en', 'vi'] as const;
 export const THEMES = ['system', 'light', 'dark'] as const;
 export const PROVIDERS = ['claude', 'codex'] as const;
 export const CLIENT_MODES = ['desktop', 'cli'] as const;

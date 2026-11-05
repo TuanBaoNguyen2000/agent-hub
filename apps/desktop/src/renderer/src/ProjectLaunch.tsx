@@ -1,21 +1,9 @@
-import type { ClientModeDto, LaunchAttemptDto, LaunchPreviewDto, ProfileDto, ProjectDto, TaskDto, TaskStatusDto } from '@agenthub/contracts';
-import { TASK_STATUSES } from '@agenthub/contracts/constants';
-import { useCallback, useEffect, useState } from 'react';
+import type { ClientModeDto, LaunchAttemptDto, LaunchPreviewDto, ProfileDto, ProjectDto } from '@agenthub/contracts';
+import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import { AccountAvatar, PROVIDER_LABELS, needsDecision, windowLabel } from './accounts';
 import { api, unwrap } from './api';
-import { ContextEditor } from './ContextEditor';
-import { ChevronUpDown, Folder, Gear, Monitor, Terminal } from './icons';
-import { Menu, MenuItem, MenuSeparator, Select } from './ui';
-import { useDirtyForm } from './unsaved';
-
-const STATUS_LABELS: Record<TaskStatusDto, string> = {
-  backlog: 'Backlog',
-  active: 'Đang làm',
-  blocked: 'Bị chặn',
-  in_review: 'Đang review',
-  done: 'Xong',
-  archived: 'Lưu trữ',
-};
+import { ChevronUpDown, Gear, Monitor, Terminal } from './icons';
+import { Menu, MenuItem, MenuSeparator } from './ui';
 
 const LAUNCH_LABELS = {
   planned: 'Đang mở',
@@ -31,35 +19,17 @@ const WORKSPACE_LABELS = {
   none: '',
 } as const;
 
-type Tab = 'context' | 'decisions' | 'details' | 'history';
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'context', label: 'Context' },
-  { id: 'decisions', label: 'Quyết định' },
-  { id: 'details', label: 'Chi tiết' },
-  { id: 'history', label: 'Lịch sử' },
-];
-
 interface Props {
-  task: TaskDto;
   project: ProjectDto;
   accounts: ProfileDto[] | undefined;
-  onChanged: (task: TaskDto) => void;
   onOpenSettings: () => void;
+  // Shown between the launch result and the history, which grows over time.
+  children?: ReactNode;
 }
 
-const STATUS_OPTIONS = TASK_STATUSES.map((value) => ({
-  value,
-  label: STATUS_LABELS[value],
-  icon: <span className={`dot ${value === 'active' ? 'active' : value === 'blocked' ? 'blocked' : value === 'done' || value === 'archived' ? 'done' : ''}`} />,
-}));
-
-export function TaskPane({ task, project, accounts, onChanged, onOpenSettings }: Props) {
-  const [title, setTitle] = useState(task.title);
-  const [objective, setObjective] = useState(task.objective);
-  const [acceptanceCriteria, setAcceptanceCriteria] = useState(task.acceptanceCriteria);
-  const [editing, setEditing] = useState(false);
+// Opens an account at the project's folder, and lists the project's earlier launches.
+export function ProjectLaunch({ project, accounts, onOpenSettings, children }: Props) {
   const [error, setError] = useState<string>();
-  const [tab, setTab] = useState<Tab>('context');
 
   const [accountId, setAccountId] = useState('');
   const [pending, setPending] = useState<{ mode: ClientModeDto; preview: LaunchPreviewDto }>();
@@ -68,49 +38,29 @@ export function TaskPane({ task, project, accounts, onChanged, onOpenSettings }:
   const [last, setLast] = useState<LaunchAttemptDto>();
   const [busy, setBusy] = useState(false);
 
-  useDirtyForm(editing);
-
   const refreshHistory = useCallback(async () => {
-    const loaded = await unwrap(api.listLaunches({ taskId: task.id }));
+    const loaded = await unwrap(api.listLaunches({ projectId: project.id }));
     setHistory(loaded);
     return loaded;
-  }, [task.id]);
+  }, [project.id]);
 
   useEffect(() => {
     refreshHistory().catch((reason: unknown) => setError((reason as Error).message));
   }, [refreshHistory]);
 
-  // The account last used for this task, until the user picks another one.
+  // The account last used for this project, until the user picks another one.
   useEffect(() => {
     if (!accounts || accounts.some((item) => item.id === accountId)) return;
     const recent = history.find((attempt) => accounts.some((item) => item.id === attempt.profileId));
     setAccountId(recent?.profileId ?? accounts[0]?.id ?? '');
   }, [accounts, history, accountId]);
 
-  async function saveFields(fields: { title?: string; objective?: string; acceptanceCriteria?: string; status?: TaskStatusDto }): Promise<void> {
-    setError(undefined);
-    try {
-      const updated = await unwrap(api.updateTask({ id: task.id, ...fields }));
-      onChanged(updated);
-      setTitle(updated.title);
-    } catch (reason) {
-      setError((reason as Error).message);
-      setTitle(task.title);
-    }
-  }
-
-  function commit(fields: { title?: string; objective?: string; acceptanceCriteria?: string }): void {
-    setEditing(false);
-    const changed = Object.entries(fields).some(([key, value]) => task[key as keyof TaskDto] !== value);
-    if (changed) void saveFields(fields);
-  }
-
   async function execute(mode: ClientModeDto, confirmations: string[]): Promise<void> {
     setBusy(true);
     setPending(undefined);
     setConfirmed([]);
     try {
-      setLast(await unwrap(api.executeLaunch({ request: { taskId: task.id, profileId: accountId, mode }, confirmations })));
+      setLast(await unwrap(api.executeLaunch({ request: { projectId: project.id, profileId: accountId, mode }, confirmations })));
     } catch (reason) {
       setError((reason as Error).message);
     } finally {
@@ -123,7 +73,7 @@ export function TaskPane({ task, project, accounts, onChanged, onOpenSettings }:
     setError(undefined);
     setLast(undefined);
     try {
-      const preview = await unwrap(api.planLaunch({ taskId: task.id, profileId: accountId, mode }));
+      const preview = await unwrap(api.planLaunch({ projectId: project.id, profileId: accountId, mode }));
       if (needsDecision(preview) || preview.permission !== 'allowed') {
         setConfirmed([]);
         setPending({ mode, preview });
@@ -160,48 +110,16 @@ export function TaskPane({ task, project, accounts, onChanged, onOpenSettings }:
   const account = accounts?.find((item) => item.id === accountId);
 
   return (
-    <div className="stack page">
-      <header className="page-header">
-        <div className="header-row">
-          <p className="breadcrumb grow" id="project-path" title={project.path ?? undefined}>
-            <Folder />
-            <span className="truncate">
-              {project.name} — {project.path}
-            </span>
-          </p>
-          <Select
-            label="Trạng thái"
-            className="pill"
-            align="end"
-            value={task.status}
-            options={STATUS_OPTIONS}
-            onChange={(status) => void saveFields({ status })}
-          />
-        </div>
-        <input
-          className="bare-input page-title"
-          aria-label="Tiêu đề task"
-          value={title}
-          onChange={(event) => {
-            setTitle(event.target.value);
-            setEditing(true);
-          }}
-          onBlur={() => commit({ title })}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') event.currentTarget.blur();
-          }}
-        />
-      </header>
-
+    <>
       {accounts?.length === 0 ? (
         <div className="launch-bar empty-launch">
-          <p className="hint grow">Chưa có account nào để mở task này.</p>
+          <p className="hint grow">Chưa có account nào để mở project này.</p>
           <button type="button" className="primary" onClick={onOpenSettings}>
             Thêm account
           </button>
         </div>
       ) : (
-        <div className="launch-bar" role="group" aria-label="Mở task">
+        <div className="launch-bar" role="group" aria-label="Mở project">
           <Menu
             label="Account"
             value={accountId}
@@ -345,66 +263,11 @@ export function TaskPane({ task, project, accounts, onChanged, onOpenSettings }:
         </div>
       )}
 
-      <div className="tabs" role="tablist" aria-label="Nội dung task">
-        {TABS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            role="tab"
-            className="tab"
-            aria-selected={tab === item.id}
-            onClick={() => setTab(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
+      {children}
 
-      {/* Kept mounted while hidden, so switching tabs never loses unsaved text. */}
-      <div hidden={tab !== 'context'}>
-        <ContextEditor
-          key={`${task.id}:task`}
-          reference={{ scope: 'task', taskId: task.id, document: 'task' }}
-          label="Task context"
-          hint="Bối cảnh và trọng tâm hiện tại. Nội dung này không phụ thuộc account nào."
-        />
-      </div>
-      <div hidden={tab !== 'decisions'}>
-        <ContextEditor
-          key={`${task.id}:decisions`}
-          reference={{ scope: 'task', taskId: task.id, document: 'decisions' }}
-          label="Quyết định"
-          hint="Các quyết định đã chốt và lý do."
-        />
-      </div>
-      <div className="stack" hidden={tab !== 'details'}>
-        <label className="field">
-          <span className="field-label">Mục tiêu</span>
-          <textarea
-            rows={3}
-            value={objective}
-            onChange={(event) => {
-              setObjective(event.target.value);
-              setEditing(true);
-            }}
-            onBlur={() => commit({ objective })}
-          />
-        </label>
-        <label className="field">
-          <span className="field-label">Tiêu chí hoàn thành</span>
-          <textarea
-            rows={3}
-            value={acceptanceCriteria}
-            onChange={(event) => {
-              setAcceptanceCriteria(event.target.value);
-              setEditing(true);
-            }}
-            onBlur={() => commit({ acceptanceCriteria })}
-          />
-        </label>
-      </div>
-      <div className="stack" hidden={tab !== 'history'}>
-        {history.length === 0 && <p className="hint">Task này chưa được mở lần nào.</p>}
+      <section className="stack" aria-label="Lịch sử mở">
+        <h2>Lịch sử mở</h2>
+        {history.length === 0 && <p className="hint">Project này chưa được mở lần nào.</p>}
         <ul className="list">
           {history.map((attempt) => (
             <li key={attempt.id} className="history-item">
@@ -427,7 +290,7 @@ export function TaskPane({ task, project, accounts, onChanged, onOpenSettings }:
             </li>
           ))}
         </ul>
-      </div>
-    </div>
+      </section>
+    </>
   );
 }

@@ -6,77 +6,74 @@ import type {
   ProjectRepository,
   SettingsRepository,
   StoredProject,
-  TaskRepository,
 } from '@agenthub/application';
-import type { AccountProfile, ClientMode, LaunchAttempt, LaunchOutcome, LaunchStatus, Project, Provider, Task, TaskStatus } from '@agenthub/domain';
+import type { AccountProfile, ClientMode, ContextLanguage, LaunchAttempt, LaunchOutcome, LaunchStatus, Project, Provider } from '@agenthub/domain';
 import { type SqliteDatabase, openDatabase, schemaVersion } from './database';
 import { MIGRATIONS } from './migrations';
-
-export { createContextStore } from './context-store';
-
-interface TaskRow {
-  id: string;
-  project_id: string;
-  title: string;
-  objective: string;
-  acceptance_criteria: string;
-  status: TaskStatus;
-  created_at: string;
-  updated_at: string;
-}
 
 interface ProjectRow {
   id: string;
   name: string;
   created_at: string;
   updated_at: string;
+  context_enabled: number;
+  context_language: ContextLanguage;
   absolute_path: string | null;
+  context_path: string | null;
 }
 
 type Location = { id: string; deviceId: string; path: string };
 
-const toTask = (row: TaskRow): Task => ({
-  id: row.id,
-  projectId: row.project_id,
-  title: row.title,
-  objective: row.objective,
-  acceptanceCriteria: row.acceptance_criteria,
-  status: row.status,
-  createdAt: row.created_at,
-  updatedAt: row.updated_at,
-});
-
 const toProject = (row: ProjectRow): StoredProject => ({
   id: row.id,
   name: row.name,
+  context: { enabled: row.context_enabled === 1, language: row.context_language },
   path: row.absolute_path,
+  contextPath: row.context_path,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
 
 function projectRepository(db: SqliteDatabase): ProjectRepository {
   const select = `
-    SELECT p.id, p.name, p.created_at, p.updated_at, l.absolute_path
+    SELECT p.id, p.name, p.created_at, p.updated_at, p.context_enabled, p.context_language, l.absolute_path, l.context_path
     FROM projects p
     LEFT JOIN project_locations l ON l.project_id = p.id AND l.device_id = @deviceId
     WHERE p.removed_at IS NULL`;
   const listActive = db.prepare(`${select} ORDER BY p.name COLLATE NOCASE`);
   const getOne = db.prepare(`${select} AND p.id = @id`);
-  const insertProject = db.prepare(
-    'INSERT INTO projects (id, name, created_at, updated_at) VALUES (@id, @name, @createdAt, @updatedAt)',
-  );
+  const insertProject = db.prepare(`
+    INSERT INTO projects (id, name, context_enabled, context_language, created_at, updated_at)
+    VALUES (@id, @name, @contextEnabled, @contextLanguage, @createdAt, @updatedAt)`);
   const upsertLocation = db.prepare(`
     INSERT INTO project_locations (id, project_id, device_id, absolute_path)
     VALUES (@id, @projectId, @deviceId, @path)
     ON CONFLICT(project_id, device_id) DO UPDATE SET absolute_path = excluded.absolute_path`);
   const touch = db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?');
   const rename = db.prepare('UPDATE projects SET name = ?, updated_at = ? WHERE id = ?');
+  const updateContext = db.prepare(
+    'UPDATE projects SET context_enabled = @enabled, context_language = @language, updated_at = @updatedAt WHERE id = @id',
+  );
+  const updateContextPath = db.prepare('UPDATE project_locations SET context_path = ? WHERE project_id = ? AND device_id = ?');
   const markRemoved = db.prepare('UPDATE projects SET removed_at = ?, updated_at = ? WHERE id = ?');
 
   const insert = db.transaction((project: Project, location: Location) => {
-    insertProject.run(project);
+    insertProject.run({
+      id: project.id,
+      name: project.name,
+      contextEnabled: project.context.enabled ? 1 : 0,
+      contextLanguage: project.context.language,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+    });
     upsertLocation.run({ ...location, projectId: project.id });
   });
+  const setContext = db.transaction(
+    (id: string, deviceId: string, context: Project['context'], contextPath: string | null, updatedAt: string) => {
+      updateContext.run({ id, enabled: context.enabled ? 1 : 0, language: context.language, updatedAt });
+      updateContextPath.run(contextPath, id, deviceId);
+    },
+  );
   const setLocation = db.transaction((projectId: string, location: Location, updatedAt: string) => {
     upsertLocation.run({ ...location, projectId });
     touch.run(updatedAt, projectId);
@@ -97,35 +94,11 @@ function projectRepository(db: SqliteDatabase): ProjectRepository {
     setLocation: (projectId, location, updatedAt) => {
       setLocation(projectId, location, updatedAt);
     },
+    setContext: (id, deviceId, context, contextPath, updatedAt) => {
+      setContext(id, deviceId, context, contextPath, updatedAt);
+    },
     markRemoved: (id, removedAt) => {
       markRemoved.run(removedAt, removedAt, id);
-    },
-  };
-}
-
-function taskRepository(db: SqliteDatabase): TaskRepository {
-  const list = db.prepare('SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at DESC, id');
-  const get = db.prepare('SELECT * FROM tasks WHERE id = ?');
-  const insert = db.prepare(`
-    INSERT INTO tasks (id, project_id, title, objective, acceptance_criteria, status, created_at, updated_at)
-    VALUES (@id, @projectId, @title, @objective, @acceptanceCriteria, @status, @createdAt, @updatedAt)`);
-  const update = db.prepare(`
-    UPDATE tasks
-    SET title = @title, objective = @objective, acceptance_criteria = @acceptanceCriteria,
-        status = @status, updated_at = @updatedAt
-    WHERE id = @id`);
-
-  return {
-    list: (projectId) => (list.all(projectId) as TaskRow[]).map(toTask),
-    get: (id) => {
-      const row = get.get(id) as TaskRow | undefined;
-      return row && toTask(row);
-    },
-    insert: (task) => {
-      insert.run(task);
-    },
-    update: (task) => {
-      update.run(task);
     },
   };
 }
@@ -212,7 +185,8 @@ function permissionRepository(db: SqliteDatabase): PermissionRepository {
 
 interface LaunchRow {
   id: string;
-  task_id: string;
+  project_id: string;
+  task_ref: string | null;
   profile_id: string;
   mode: ClientMode;
   status: LaunchStatus;
@@ -224,7 +198,8 @@ interface LaunchRow {
 
 const toLaunch = (row: LaunchRow): LaunchAttempt => ({
   id: row.id,
-  taskId: row.task_id,
+  projectId: row.project_id,
+  taskRef: row.task_ref,
   profileId: row.profile_id,
   mode: row.mode,
   status: row.status,
@@ -235,16 +210,16 @@ const toLaunch = (row: LaunchRow): LaunchAttempt => ({
 });
 
 function launchRepository(db: SqliteDatabase): LaunchRepository {
-  const list = db.prepare('SELECT * FROM launch_attempts WHERE task_id = ? ORDER BY created_at DESC, id LIMIT 50');
+  const list = db.prepare('SELECT * FROM launch_attempts WHERE project_id = ? ORDER BY created_at DESC, id LIMIT 50');
   const get = db.prepare('SELECT * FROM launch_attempts WHERE id = ?');
   const insert = db.prepare(`
-    INSERT INTO launch_attempts (id, task_id, profile_id, mode, status, created_at)
-    VALUES (@id, @taskId, @profileId, @mode, @status, @createdAt)`);
+    INSERT INTO launch_attempts (id, project_id, task_ref, profile_id, mode, status, created_at)
+    VALUES (@id, @projectId, @taskRef, @profileId, @mode, @status, @createdAt)`);
   const finish = db.prepare('UPDATE launch_attempts SET status = ?, error_code = ?, outcome = ? WHERE id = ?');
   const confirm = db.prepare('UPDATE launch_attempts SET account_confirmed_at = ? WHERE id = ?');
 
   return {
-    list: (taskId) => (list.all(taskId) as LaunchRow[]).map(toLaunch),
+    list: (projectId) => (list.all(projectId) as LaunchRow[]).map(toLaunch),
     get: (id) => {
       const row = get.get(id) as LaunchRow | undefined;
       return row && toLaunch(row);
@@ -266,7 +241,6 @@ export function openMetadataStore(databasePath: string, options: { backupDirecto
   const engineVersion = (db.prepare('SELECT sqlite_version() AS version').get() as { version: string }).version;
   return {
     projects: projectRepository(db),
-    tasks: taskRepository(db),
     settings: settingsRepository(db),
     profiles: profileRepository(db),
     permissions: permissionRepository(db),

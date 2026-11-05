@@ -1,10 +1,10 @@
 # Domain
 
-**Status:** Có Project, Task, AccountProfile, LaunchAttempt, mã lỗi và quy tắc nhãn, path. Chưa có Checkpoint, Handoff.
+**Status:** Có Project (kèm cài đặt tài liệu context), AccountProfile, LaunchAttempt, mã lỗi và quy tắc nhãn, path. Không có Task: task nằm trong tài liệu do agent viết (ADR-019).
 
 ## Trách nhiệm
 
-Entities, value objects và business rules cho Project, Task, AccountProfile, Checkpoint, Handoff và LaunchAttempt. Giữ các invariant và domain validation ở đây; không suy ra trạng thái account/session khi thiếu bằng chứng.
+Entities, value objects và business rules cho Project, AccountProfile và LaunchAttempt. Giữ các invariant và domain validation ở đây; không suy ra trạng thái account/session khi thiếu bằng chứng.
 
 ## Boundary
 

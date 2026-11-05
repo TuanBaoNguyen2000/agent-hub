@@ -1,6 +1,6 @@
 # Application
 
-**Status:** Có ports, `createWorkspace` và `createLaunchService` cho Project, Task, context, settings, profile, quyền và launch. Chưa có Smart Switch, handoff.
+**Status:** Có ports, `createWorkspace` và `createLaunchService` cho Project, cài đặt tài liệu context, settings, profile, quyền và launch. Chưa có skill, MCP, lời nhắc khi mở, handoff.
 
 ## Trách nhiệm
 
