@@ -125,4 +125,12 @@ export const MIGRATIONS: readonly Migration[] = [
       DROP TABLE tasks;
     `,
   },
+  {
+    // ADR-020 item 4: when this device last searched the project folder for documents it
+    // already has. Existing projects start unsearched, so each is searched once.
+    version: 5,
+    up: `
+      ALTER TABLE project_locations ADD COLUMN context_detected_at TEXT;
+    `,
+  },
 ];

@@ -47,6 +47,11 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
   });
 
   handle(IpcChannel.systemStatus, () => ({ appVersion: app.getVersion(), storage: engineStatus() }));
+  // The permission handler refuses the renderer's own clipboard, so text goes through Main.
+  handle(IpcChannel.systemCopyText, ({ text }) => {
+    clipboard.writeText(text);
+    return null;
+  });
   handle(IpcChannel.projectsList, () => workspace.listProjects());
   handle(IpcChannel.projectsPickFolder, async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
@@ -59,6 +64,29 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
     return null;
   });
   handle(IpcChannel.projectsUpdateContext, (input) => workspace.updateProjectContext(input));
+  handle(IpcChannel.projectsContext, async ({ id }) => {
+    // Explicit fields: the Git root stays in Main.
+    const { overview, git, warnings, handoffs, checkpointPrompt } = await workspace.projectContext(id);
+    return {
+      overview,
+      git: { state: git.state, branch: git.branch, head: git.head, headAt: git.headAt, dirty: git.dirty },
+      warnings,
+      handoffs,
+      checkpointPrompt,
+    };
+  });
+  handle(IpcChannel.projectsDetectContext, (input) => workspace.detectContext(input));
+  handle(IpcChannel.projectsMoveContext, (input) => workspace.changeContextFolder(input));
+  handle(IpcChannel.projectsAddHandoff, ({ id, taskRef, entry }) => workspace.addHandoff({ id, taskRef, entry }));
+  handle(IpcChannel.projectsReadHandoff, (input) => workspace.readProjectHandoff(input));
+  handle(IpcChannel.projectsSaveHandoff, (input) => workspace.saveProjectHandoff(input));
+  handle(IpcChannel.looseChatsList, () => workspace.listLooseChats());
+  handle(IpcChannel.looseChatsRead, ({ id }) => workspace.readLooseChat(id));
+  handle(IpcChannel.looseChatsSave, (input) => workspace.saveLooseChat(input));
+  handle(IpcChannel.looseChatsMove, (input) => {
+    workspace.moveLooseChat(input);
+    return null;
+  });
   handle(IpcChannel.projectsOpenContextFolder, async ({ id }) => {
     const failure = await shell.openPath(workspace.contextFolder(id));
     if (failure) throw new DomainError('UNEXPECTED', `Không mở được folder tài liệu: ${failure}`);
@@ -127,7 +155,7 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
   });
   handle(IpcChannel.launchPlan, async (request) => {
     // Explicit fields: the plan's internal action holds commands and stays in Main.
-    const { plan, permission, projectName, profileAlias } = await launching.preview(request);
+    const { plan, permission, projectName, profileAlias, prompt, transcript } = await launching.preview(request);
     return {
       steps: plan.steps,
       requiredConfirmations: plan.requiredConfirmations,
@@ -135,9 +163,26 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
       permission,
       projectName,
       profileAlias,
+      prompt,
+      // Explicit fields: the source profile id stays in Main.
+      transcript: transcript && {
+        path: transcript.path,
+        updatedAt: transcript.updatedAt,
+        sourceAccount: transcript.sourceAccount,
+        provider: transcript.provider,
+        otherAccount: transcript.otherAccount,
+        otherProvider: transcript.otherProvider,
+        checkpointAt: transcript.checkpointAt,
+      },
     };
   });
-  handle(IpcChannel.launchExecute, ({ request, confirmations }) => launching.execute(request, confirmations));
+  handle(IpcChannel.launchExecute, async ({ request, confirmations }) => {
+    const result = await launching.execute(request, confirmations);
+    // A Desktop app takes no first prompt (TDD §8.2), so the line waits on the clipboard.
+    const copied = request.mode === 'desktop' && result.prompt !== null && result.status !== 'failed';
+    if (copied) clipboard.writeText(result.prompt as string);
+    return { ...result, copied };
+  });
   handle(IpcChannel.launchHistory, ({ projectId }) => launching.listLaunches(projectId));
   handle(IpcChannel.launchConfirmAccount, ({ attemptId }) => {
     launching.confirmAccount(attemptId);

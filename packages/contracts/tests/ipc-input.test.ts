@@ -18,6 +18,18 @@ describe('ipcInput', () => {
     expect(ipcInput[IpcChannel.profilesLoginReopen].safeParse({ id, browser: 'https://evil.example' }).success).toBe(false);
   });
 
+  it.each([
+    ['Workstreams/combo/Tasks/TASK-001-a.md', true],
+    ['Playables/playable005/Tasks/TASK-016-intro.md', true],
+    ['../x/Tasks/TASK-1.md', false],
+    ['Workstreams/../Tasks/TASK-1.md', false],
+    ['.git/x/Tasks/TASK-1.md', false],
+    ['Workstreams/combo/STATUS.md', false],
+    ['a/b/c/Tasks/TASK-1.md', false],
+  ])('takes %j as a task document: %s', (taskRef, ok) => {
+    expect(ipcInput[IpcChannel.projectsAddHandoff].safeParse({ id, taskRef, entry: 'x' }).success).toBe(ok);
+  });
+
   it('accepts a path with Unicode, spaces and quotes', () => {
     const path = "/Users/a/Dự án 'nháy' $(x)";
     expect(ipcInput[IpcChannel.projectsAdd].parse({ path })).toEqual({ path });

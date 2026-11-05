@@ -1,18 +1,21 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type MetadataStore, type Workspace, createWorkspace } from '@agenthub/application';
 import { DomainError } from '@agenthub/domain';
-import { openMetadataStore } from '@agenthub/persistence';
-import { createPathInspector } from '@agenthub/platform';
+import { appendHandoff, conflictingFiles, contextFiles, copyContextFiles, detectContext, openMetadataStore, readContextOverview, listNotes, moveNote, readNote, saveNote } from '@agenthub/persistence';
+import { createGitObserver, createMacPlatform, createPathInspector } from '@agenthub/platform';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+const documentPorts = { overview: readContextOverview, detect: (path: string) => detectContext(path), files: contextFiles, conflicts: conflictingFiles, copy: copyContextFiles };
 
 // Real persistence and platform adapters on temporary folders; only Electron is absent.
 let root: string;
 let projectDir: string;
 let store: MetadataStore;
 let workspace: Workspace;
+let trashed: string[] = [];
 
 function open(): void {
   store = openMetadataStore(join(root, 'agenthub.sqlite'), { backupDirectory: join(root, 'backups') });
@@ -21,6 +24,15 @@ function open(): void {
     paths: createPathInspector(),
     defaultContextDirectory: (projectId) => join(root, 'projects', projectId, 'context'),
     ensureDirectory: (path) => mkdirSync(path, { recursive: true }),
+    trash: async (path) => {
+      trashed.push(path);
+      renameSync(path, join(root, `trash-${trashed.length}`));
+    },
+    documents: { ...documentPorts, appendHandoff: (folder, ref, entry) => void appendHandoff(folder, ref, entry) },
+    git: createGitObserver(createMacPlatform()),
+    notes: { list: (folder) => listNotes(folder), read: readNote, save: saveNote, move: moveNote },
+    handoffDirectory: (projectId) => join(root, 'projects', projectId, 'handoffs'),
+    looseChatDirectory: join(root, 'loose-chats'),
     newId: randomUUID,
     now: () => new Date().toISOString(),
   });
@@ -45,6 +57,7 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'agenthub-workspace-'));
   projectDir = join(root, "Dự án 'nháy' $(touch x)");
   mkdirSync(projectDir);
+  trashed = [];
   open();
 });
 
@@ -150,6 +163,7 @@ describe('context documents', () => {
       path: join(root, 'projects', project.id, 'context'),
       custom: false,
       pathStatus: 'missing',
+      detected: false,
     });
     expect(codeOf(() => workspace.contextFolder(project.id))).toBe('VALIDATION_FAILED');
   });
@@ -204,6 +218,223 @@ describe('context documents', () => {
 
     expect(workspace.listProjects()[0]?.context.pathStatus).toBe('missing');
     expect(codeOf(() => workspace.contextFolder(project.id))).toBe('PROJECT_PATH_MISSING');
+  });
+});
+
+describe('tasks read from the documents (ADR-019, ADR-017)', () => {
+  function documentsFor(projectId: string): string {
+    const folder = workspace.updateProjectContext({ id: projectId, enabled: true }).context.path;
+    mkdirSync(join(folder, 'Workstreams', 'combo', 'Tasks'), { recursive: true });
+    writeFileSync(join(folder, 'README.md'), '# Context');
+    writeFileSync(join(folder, 'PROJECT_CONTEXT.md'), '# Project');
+    writeFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), '# Combo\nBranch: feature/combo\n\n| Task | State |\n|---|---|\n| TASK-001 | in progress |\n');
+    writeFileSync(join(folder, 'Workstreams', 'combo', 'Tasks', 'TASK-001-counter.md'), '# TASK-001 Counter\n\n## Handoff log\n');
+    return folder;
+  }
+
+  it('shows tasks, Git and warnings, and reads nothing when the documents are off', async () => {
+    const project = workspace.addProject({ path: projectDir });
+    expect(await workspace.projectContext(project.id)).toMatchObject({ overview: { workstreams: [] }, warnings: [] });
+
+    documentsFor(project.id);
+    const state = await workspace.projectContext(project.id);
+
+    expect(state.git.state).toBe('not_repo');
+    expect(state.overview.workstreams[0]?.tasks.map((task) => task.id)).toEqual(['TASK-001']);
+    expect(state.warnings.map((warning) => warning.kind)).toEqual(['no_handoff']);
+  });
+
+  it('adds a pasted handoff to the top of the task\'s log, and nothing else', async () => {
+    const project = workspace.addProject({ path: projectDir });
+    const folder = documentsFor(project.id);
+    const ref = 'Workstreams/combo/Tasks/TASK-001-counter.md';
+
+    workspace.addHandoff({ id: project.id, taskRef: ref, entry: '### 2026-11-05 10:00 — Chat / Claude\n- **Done:** x' });
+    const overview = workspace.addHandoff({ id: project.id, taskRef: ref, entry: '### 2026-11-05 11:00 — Chat / Claude\n- **Done:** y' });
+
+    expect(overview.workstreams[0]?.tasks[0]?.lastHandoff?.heading).toBe('2026-11-05 11:00 — Chat / Claude');
+    expect(readFileSync(join(folder, ref), 'utf8').indexOf('11:00')).toBeLessThan(readFileSync(join(folder, ref), 'utf8').indexOf('10:00'));
+    expect(codeOf(() => workspace.addHandoff({ id: project.id, taskRef: 'Workstreams/combo/Tasks/TASK-404.md', entry: 'x' }))).toBe('NOT_FOUND');
+    expect(readdirSync(projectDir)).toEqual([]);
+  });
+
+  it('adds a handoff to a task under a workstream folder with another name (ADR-020 item 4)', () => {
+    const project = workspace.addProject({ path: projectDir });
+    const folder = documentsFor(project.id);
+    const ref = 'Playables/playable005/Tasks/TASK-016-intro.md';
+    mkdirSync(join(folder, 'Playables', 'playable005', 'Tasks'), { recursive: true });
+    writeFileSync(join(folder, 'Playables', 'playable005', 'STATUS.md'), '# Playable 005\n');
+    writeFileSync(join(folder, ref), '# TASK-016 Intro\n');
+
+    const overview = workspace.addHandoff({ id: project.id, taskRef: ref, entry: '### 2026-11-05 10:00 — A\n- **Done:** x' });
+
+    expect(overview.workstreams.map((workstream) => workstream.slug)).toEqual(['Playables/playable005', 'Workstreams/combo']);
+    expect(readFileSync(join(folder, ref), 'utf8')).toBe('# TASK-016 Intro\n\n## Handoff log\n\n### 2026-11-05 10:00 — A\n- **Done:** x\n');
+  });
+});
+
+describe('handoffs without documents, and loose chats (TDD §7.5)', () => {
+  it('keeps pasted handoffs of a project without documents and offers the summary prompt', async () => {
+    const project = workspace.addProject({ path: projectDir });
+
+    const handoffs = workspace.saveProjectHandoff({ id: project.id, content: '- **Done:** x' });
+    const state = await workspace.projectContext(project.id);
+
+    expect(state.handoffs.map((note) => note.id)).toEqual(handoffs.map((note) => note.id));
+    expect(state.handoffs[0]?.source).toBe('AgentHub (dán)');
+    expect(state.checkpointPrompt).toContain('context_save_handoff');
+    expect(workspace.readProjectHandoff({ id: project.id, noteId: handoffs[0]?.id ?? '' }).content).toContain('- **Done:** x');
+    expect(existsSync(join(root, 'projects', project.id, 'handoffs'))).toBe(true);
+    expect(readdirSync(projectDir)).toEqual([]);
+  });
+
+  it('sends a project with documents to its tasks instead', async () => {
+    const project = workspace.addProject({ path: projectDir });
+    workspace.updateProjectContext({ id: project.id, enabled: true });
+
+    expect(codeOf(() => workspace.saveProjectHandoff({ id: project.id, content: 'x' }))).toBe('VALIDATION_FAILED');
+    expect((await workspace.projectContext(project.id)).checkpointPrompt).toContain('context-checkpoint');
+  });
+
+  it('moves a loose chat into a project: to Inbox/ with documents, to handoffs without', () => {
+    const withDocs = workspace.addProject({ path: projectDir });
+    const folder = workspace.updateProjectContext({ id: withDocs.id, enabled: true }).context.path;
+    const otherDir = join(root, 'khác');
+    mkdirSync(otherDir);
+    const plain = workspace.addProject({ path: otherDir });
+
+    const first = workspace.saveLooseChat({ title: 'Ý tưởng', content: 'a' });
+    const second = workspace.saveLooseChat({ title: 'Lỗi build', content: 'b' });
+    expect(workspace.listLooseChats().map((note) => note.title).sort()).toEqual(['Lỗi build', 'Ý tưởng']);
+
+    workspace.moveLooseChat({ id: first.id, projectId: withDocs.id });
+    workspace.moveLooseChat({ id: second.id, projectId: plain.id });
+
+    expect(workspace.listLooseChats()).toEqual([]);
+    expect(existsSync(join(folder, 'Inbox', `${first.id}.md`))).toBe(true);
+    expect(workspace.readProjectHandoff({ id: plain.id, noteId: second.id }).content).toContain('b');
+    expect(codeOf(() => workspace.moveLooseChat({ id: first.id, projectId: plain.id }))).toBe('NOT_FOUND');
+  });
+});
+
+describe('documents the project already has (ADR-020 item 4)', () => {
+  function write(path: string, content = '# x\n'): void {
+    mkdirSync(join(projectDir, path, '..'), { recursive: true });
+    writeFileSync(join(projectDir, path), content);
+  }
+
+  it('starts using the one set in AgentHub\'s layout, under a workstream folder of its own name, once', async () => {
+    write('AgentContext/README.md');
+    write('AgentContext/Playables/playable005/STATUS.md', '# Playable 005\n');
+    write('AgentContext/Playables/playable005/Tasks/TASK-016-intro.md', '# TASK-016\n\n## Handoff log\n');
+    const project = workspace.addProject({ path: projectDir });
+    expect(project.context.detected).toBe(false);
+
+    const result = workspace.detectContext({ id: project.id, apply: true });
+
+    expect(result.applied).toBe(join(projectDir, 'AgentContext'));
+    expect(result.project.context).toMatchObject({ enabled: true, custom: true, path: join(projectDir, 'AgentContext'), detected: true });
+    const state = await workspace.projectContext(project.id);
+    expect(state.overview.workstreams[0]?.tasks[0]?.ref).toBe('Playables/playable005/Tasks/TASK-016-intro.md');
+
+    restart();
+    expect(workspace.listProjects()[0]?.context.detected).toBe(true);
+  });
+
+  it('lists several sets for the user to pick, and changes nothing', () => {
+    write('Docs/A/PROJECT_CONTEXT.md');
+    write('Tools/B/PROJECT_CONTEXT.md');
+    const project = workspace.addProject({ path: projectDir });
+
+    const result = workspace.detectContext({ id: project.id, apply: true });
+
+    expect(result.found).toEqual([join(projectDir, 'Docs', 'A'), join(projectDir, 'Tools', 'B')]);
+    expect(result.applied).toBeNull();
+    expect(result.project.context.enabled).toBe(false);
+  });
+
+  it('only lists notes in another shape, and searches again after the folder moves', () => {
+    write('Docs/Continuity.md');
+    write('Docs/Design/STATUS-combo.md');
+    write('Docs/Design/spec.md');
+    write('AGENTS.md');
+    const project = workspace.addProject({ path: projectDir });
+
+    const result = workspace.detectContext({ id: project.id, apply: true });
+
+    expect(result).toMatchObject({ found: [], applied: null, others: ['AGENTS.md', 'Docs/Continuity.md', 'Docs/Design/STATUS-combo.md'] });
+    const moved = join(root, 'moved');
+    renameSync(projectDir, moved);
+    expect(workspace.updateProject({ id: project.id, path: moved }).context.detected).toBe(false);
+  });
+});
+
+describe('moving the documents to another folder (ADR-020 item 5)', () => {
+  function withDocuments(): { id: string; from: string } {
+    const project = workspace.addProject({ path: projectDir });
+    const from = workspace.updateProjectContext({ id: project.id, enabled: true }).context.path;
+    mkdirSync(join(from, 'Workstreams', 'combo'), { recursive: true });
+    writeFileSync(join(from, 'README.md'), '# Context');
+    writeFileSync(join(from, 'Workstreams', 'combo', 'STATUS.md'), '# Combo');
+    return { id: project.id, from };
+  }
+
+  it('asks first, then copies every file and puts AgentHub\'s own folder in the Trash', async () => {
+    const { id, from } = withDocuments();
+    const to = join(root, 'Tài liệu chung');
+    mkdirSync(to);
+
+    expect(await workspace.changeContextFolder({ id, customPath: to, move: 'ask' })).toMatchObject({ status: 'needs_decision', files: 2 });
+    expect(workspace.listProjects()[0]?.context.custom).toBe(false);
+
+    const result = await workspace.changeContextFolder({ id, customPath: to, move: 'move' });
+
+    expect(result).toMatchObject({ status: 'done', moved: 2, kept: null });
+    expect(readFileSync(join(to, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toBe('# Combo');
+    expect(trashed).toEqual([from]);
+    expect(existsSync(from)).toBe(false);
+    expect(workspace.listProjects()[0]?.context.path).toBe(to);
+  });
+
+  it('stops on files already in the new folder, and overwrites nothing', async () => {
+    const { id, from } = withDocuments();
+    const to = join(root, 'đích');
+    mkdirSync(to);
+    writeFileSync(join(to, 'README.md'), 'của người dùng');
+
+    const result = await workspace.changeContextFolder({ id, customPath: to, move: 'move' });
+
+    expect(result).toMatchObject({ status: 'conflict', conflicts: ['README.md'] });
+    expect(readFileSync(join(to, 'README.md'), 'utf8')).toBe('của người dùng');
+    expect(existsSync(join(to, 'Workstreams'))).toBe(false);
+    expect(existsSync(join(from, 'README.md'))).toBe(true);
+    expect(workspace.listProjects()[0]?.context.custom).toBe(false);
+  });
+
+  it('leaves a folder the user chose where it is, and refuses folders inside each other', async () => {
+    const { id } = withDocuments();
+    const chosen = join(projectDir, 'AgentContext');
+    mkdirSync(chosen);
+    await workspace.changeContextFolder({ id, customPath: chosen, move: 'move' });
+
+    const back = await workspace.changeContextFolder({ id, customPath: null, move: 'move' });
+
+    expect(back).toMatchObject({ status: 'done', moved: 2, kept: chosen });
+    expect(existsSync(join(chosen, 'README.md'))).toBe(true);
+    const inside = join(workspace.listProjects()[0]?.context.path ?? '', 'sub');
+    mkdirSync(inside);
+    expect(await workspace.changeContextFolder({ id, customPath: inside, move: 'move' }).catch((error: DomainError) => error.code)).toBe('VALIDATION_FAILED');
+  });
+
+  it('switches without moving when asked to leave the files', async () => {
+    const { id, from } = withDocuments();
+    const to = join(root, 'khác');
+    mkdirSync(to);
+
+    expect(await workspace.changeContextFolder({ id, customPath: to, move: 'leave' })).toMatchObject({ status: 'done', moved: 0, kept: null });
+    expect(readdirSync(to)).toEqual([]);
+    expect(existsSync(join(from, 'README.md'))).toBe(true);
+    expect(trashed).toEqual([]);
   });
 });
 

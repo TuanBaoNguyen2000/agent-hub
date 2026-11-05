@@ -1,8 +1,9 @@
-import type { ProfileDto, ProjectDto, UsageDto } from '@agenthub/contracts';
+import type { NoteDto, ProfileDto, ProjectDto, UsageDto } from '@agenthub/contracts';
 import { useCallback, useEffect, useState } from 'react';
 import { AccountAvatar, PROVIDER_LABELS, useAccountLauncher, windowLabel } from './accounts';
 import { api, unwrap } from './api';
-import { Folder, Gear, Monitor, Plus, Terminal } from './icons';
+import { Chat, Folder, Gear, Monitor, Plus, Terminal } from './icons';
+import { LooseChatView, NewLooseChat } from './LooseChats';
 import { ProjectPane } from './ProjectPane';
 import { SettingsView } from './SettingsView';
 import { Menu, MenuItem, MenuSeparator } from './ui';
@@ -17,7 +18,12 @@ function usageSummary(usage: UsageDto): string {
     .join('\n');
 }
 
-type Screen = { kind: 'project'; id: string } | { kind: 'settings' } | { kind: 'none' };
+type Screen =
+  | { kind: 'project'; id: string }
+  | { kind: 'loose-chat'; id: string }
+  | { kind: 'new-loose-chat' }
+  | { kind: 'settings' }
+  | { kind: 'none' };
 
 const byName = (a: ProjectDto, b: ProjectDto): number => a.name.localeCompare(b.name, 'vi');
 
@@ -25,6 +31,7 @@ export function App() {
   const [projects, setProjects] = useState<ProjectDto[]>();
   const [accounts, setAccounts] = useState<ProfileDto[]>();
   const [usages, setUsages] = useState<Record<string, UsageDto>>({});
+  const [looseChats, setLooseChats] = useState<NoteDto[]>();
   const [screen, setScreen] = useState<Screen>({ kind: 'none' });
   const [error, setError] = useState<string>();
 
@@ -43,6 +50,22 @@ export function App() {
   }, [showError]);
 
   const reloadAccounts = useCallback(() => void loadAccounts(), [loadAccounts]);
+
+  // Agents add loose chats through MCP, so the list is read again when the window regains focus.
+  const loadLooseChats = useCallback(async () => {
+    try {
+      setLooseChats(await unwrap(api.listLooseChats()));
+    } catch (reason) {
+      showError((reason as Error).message);
+    }
+  }, [showError]);
+
+  useEffect(() => {
+    void loadLooseChats();
+    const reload = (): void => void loadLooseChats();
+    window.addEventListener('focus', reload);
+    return () => window.removeEventListener('focus', reload);
+  }, [loadLooseChats]);
 
   const accountIds = accounts?.map((account) => account.id).join(',') ?? '';
   useEffect(() => {
@@ -101,40 +124,80 @@ export function App() {
 
   return (
     <div className="layout">
-      <nav className="sidebar" aria-label="Projects">
+      <nav className="sidebar" aria-label="Điều hướng">
         <div className="sidebar-header">
           <span className="brand">AgentHub</span>
         </div>
-        <button type="button" className="nav-item" onClick={() => void addProject()}>
-          <span className="nav-icon">
-            <Plus />
-          </span>
-          Thêm project
-        </button>
         <div className="sidebar-scroll">
-          <p className="sidebar-label">Projects</p>
-          <ul className="list">
-            {projects?.map((project) => (
-              <li key={project.id}>
-                <button
-                  type="button"
-                  className="nav-item"
-                  aria-current={screen.kind === 'project' && screen.id === project.id ? 'true' : undefined}
-                  onClick={() => navigate({ kind: 'project', id: project.id })}
-                >
-                  <span className="nav-icon">
-                    <Folder />
-                  </span>
-                  <span className="grow truncate">{project.name}</span>
-                  {project.pathStatus !== 'directory' && (
-                    <span className="badge warning" title="Không tìm thấy folder">
-                      !
+          <section className="sidebar-section" aria-labelledby="sidebar-projects">
+            <div className="sidebar-section-header">
+              <p className="sidebar-label grow" id="sidebar-projects">
+                Project
+              </p>
+              <button type="button" className="icon-button sidebar-add" aria-label="Thêm project" title="Thêm project" onClick={() => void addProject()}>
+                <Plus />
+              </button>
+            </div>
+            <ul className="list">
+              {projects?.map((project) => (
+                <li key={project.id}>
+                  <button
+                    type="button"
+                    className="nav-item"
+                    aria-current={screen.kind === 'project' && screen.id === project.id ? 'true' : undefined}
+                    onClick={() => navigate({ kind: 'project', id: project.id })}
+                  >
+                    <span className="nav-icon">
+                      <Folder />
                     </span>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
+                    <span className="grow truncate">{project.name}</span>
+                    {project.pathStatus !== 'directory' && (
+                      <span className="badge warning" title="Không tìm thấy folder">
+                        !
+                      </span>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {projects?.length === 0 && <p className="sidebar-empty">Chưa có project nào.</p>}
+          </section>
+          <section className="sidebar-section" aria-labelledby="sidebar-loose-chats">
+            <div className="sidebar-section-header">
+              <p className="sidebar-label grow" id="sidebar-loose-chats">
+                Chat rời
+              </p>
+              <button
+                type="button"
+                className="icon-button sidebar-add"
+                aria-label="Thêm chat rời"
+                title="Thêm chat rời"
+                aria-current={screen.kind === 'new-loose-chat' ? 'true' : undefined}
+                onClick={() => navigate({ kind: 'new-loose-chat' })}
+              >
+                <Plus />
+              </button>
+            </div>
+            <ul className="list">
+              {looseChats?.map((note) => (
+                <li key={note.id}>
+                  <button
+                    type="button"
+                    className="nav-item"
+                    data-testid="loose-chat"
+                    aria-current={screen.kind === 'loose-chat' && screen.id === note.id ? 'true' : undefined}
+                    onClick={() => navigate({ kind: 'loose-chat', id: note.id })}
+                  >
+                    <span className="nav-icon">
+                      <Chat />
+                    </span>
+                    <span className="grow truncate">{note.title}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {looseChats?.length === 0 && <p className="sidebar-empty">Chưa có chat rời nào.</p>}
+          </section>
         </div>
         <div className="sidebar-footer">
           <p className="sidebar-label">Accounts</p>
@@ -195,6 +258,27 @@ export function App() {
             <p className="banner error" role="alert">
               {error}
             </p>
+          )}
+          {screen.kind === 'loose-chat' && (
+            <LooseChatView
+              key={screen.id}
+              id={screen.id}
+              projects={projects ?? []}
+              onMoved={(projectId) => {
+                void loadLooseChats();
+                navigate({ kind: 'project', id: projectId });
+              }}
+              onError={showError}
+            />
+          )}
+          {screen.kind === 'new-loose-chat' && (
+            <NewLooseChat
+              onSaved={(note) => {
+                void loadLooseChats();
+                navigate({ kind: 'loose-chat', id: note.id });
+              }}
+              onError={showError}
+            />
           )}
           {screen.kind === 'settings' && <SettingsView onError={showError} onAccountsChanged={reloadAccounts} />}
           {screen.kind === 'project' && selectedProject && (

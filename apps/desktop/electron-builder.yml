@@ -7,6 +7,10 @@ directories:
 files:
   - out/**
   - package.json
+# Outside app.asar, so AgentHub can copy them for the accounts it links (ADR-019).
+extraResources:
+  - from: skills
+    to: skills
 mac:
   target: dir
   # Ad hoc signature for this machine; distribution is out of scope (TDD §16).

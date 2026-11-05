@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import type { AppInstance, BrowserCapture, InstalledApp, PathInspector, PathStatus, PlatformPort, RunOptions, RunResult, ToolProcess } from '@agenthub/application';
 
 export function createPathInspector(): PathInspector {
@@ -361,6 +361,27 @@ export function createMacPlatform({
       mkdirSync(path, { recursive: true, mode: 0o700 });
     },
 
+    readTextFile(path) {
+      try {
+        return readFileSync(path, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw error;
+      }
+    },
+
+    writeTextFile(path, content) {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      const temporary = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
+      try {
+        writeFileSync(temporary, content, { mode: 0o600 });
+        renameSync(temporary, path);
+      } catch (error) {
+        rmSync(temporary, { force: true });
+        throw error;
+      }
+    },
+
     // Only counts names: these folders are treated as credential stores (ADR-013).
     isEmptyDirectory(path) {
       return readdirSync(path).length === 0;
@@ -378,3 +399,5 @@ export function createMacPlatform({
     homeDirectory: () => home,
   };
 }
+export { createSkillInstaller } from './skills';
+export { createGitObserver } from './git';

@@ -1,6 +1,6 @@
 # Platform
 
-**Status:** Có adapter macOS cho env allowlist, tìm CLI, process, pty, Terminal.app, mở app và instance, kèm tests. Chưa có adapter Windows, Git observer.
+**Status:** Có adapter macOS cho env allowlist, tìm CLI, process, pty, Terminal.app, mở app và instance, bộ cài skill (symlink tới bản chung, không thay skill của người dùng), Git observer chỉ-đọc (ADR-017), kèm tests. Chưa có adapter Windows.
 
 ## Trách nhiệm
 

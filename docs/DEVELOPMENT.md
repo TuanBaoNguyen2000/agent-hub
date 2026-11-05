@@ -21,6 +21,7 @@ Tài liệu này chứa quy tắc dùng chung cho người phát triển, Codex 
 | `packages/integrations` | Claude/Codex launchers và capability mapping | application, domain |
 | `packages/platform` | macOS/Windows process, app/folder, terminal và read-only Git/Unity observation adapters | application, domain |
 | `apps/desktop/src/main` | Electron lifecycle, IPC handlers, mapping DTOs và composition root | Các package cần để kết nối implementation |
+| `apps/desktop/src/mcp` | MCP server của AgentHub, chạy bằng binary của app ở chế độ Node, không có Electron API (ADR-019) | application, domain, persistence |
 | `apps/desktop/src/preload` | API contextBridge giới hạn, typed theo contracts | contracts |
 | `apps/desktop/src/renderer` | React UI, state và tương tác qua Preload API | contracts |
 
@@ -45,7 +46,7 @@ Cần Node 24 (`.nvmrc`) và npm 11. Chạy từ thư mục gốc; tooling và v
 
 `AGENTHUB_E2E_NATIVE=1 npx playwright test native` mở Terminal.app và một cửa sổ Claude Desktop thật, với CLI giả và thư mục rỗng; không đăng nhập gì. Mặc định E2E bỏ qua hai bài này.
 
-Dữ liệu nằm ngoài repo: bản đóng gói dùng `~/Library/Application Support/AgentHub/`, `npm run dev` dùng `AgentHub Dev` trong cùng thư mục cha, để migration chưa phát hành không đụng dữ liệu thật. Thư mục của account phụ nằm trong `~/.agenthub/accounts/` ở bản đóng gói, và trong thư mục dữ liệu riêng khi chạy dev hoặc E2E, để thử nghiệm không đụng login thật. E2E luôn dùng thư mục tạm, và `AGENTHUB_E2E_BROWSER_DIR` thay trình duyệt bằng script giả để không mở cửa sổ thật; biến này chỉ có tác dụng khi app dùng dữ liệu riêng. Chạy E2E trên bản đóng gói bằng cách đặt `AGENTHUB_E2E_EXECUTABLE` trỏ tới binary trong `.app`.
+Dữ liệu nằm ngoài repo: bản đóng gói dùng `~/Library/Application Support/AgentHub/`, `npm run dev` dùng `AgentHub Dev` trong cùng thư mục cha, để migration chưa phát hành không đụng dữ liệu thật. Thư mục của account phụ nằm trong `~/.agenthub/accounts/` ở bản đóng gói, và trong thư mục dữ liệu riêng khi chạy dev hoặc E2E, để thử nghiệm không đụng login thật. E2E luôn dùng thư mục tạm, `AGENTHUB_E2E_BROWSER_DIR` thay trình duyệt bằng script giả để không mở cửa sổ thật, và `AGENTHUB_E2E_TRASH_DIR` thay Thùng rác của macOS bằng một thư mục tạm; hai biến này chỉ có tác dụng khi app dùng dữ liệu riêng. Chạy E2E trên bản đóng gói bằng cách đặt `AGENTHUB_E2E_EXECUTABLE` trỏ tới binary trong `.app`.
 
 Thử bản đóng gói bằng double-click trong Finder. Nếu mở bằng `open`, phải xoá env trước (`env -i`), vì `open` chuyển env của process gọi sang app ([SPIKE-09](../spikes/09-electron-launcher-prototype/evidence/2026-11-01-macos.md)).
 

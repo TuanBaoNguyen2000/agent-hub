@@ -12,8 +12,10 @@ import {
   requireLabel,
 } from '@agenthub/domain';
 
-import { CLI_PATH_KEYS } from './launching';
+import { type ContextWarning, contextWarnings, findTask } from './context-view';
+import { CLI_PATH_KEYS, isInside } from './launching';
 
+export * from './context-view';
 export * from './launching';
 
 export interface StorageStatus {
@@ -22,7 +24,9 @@ export interface StorageStatus {
 }
 
 // path and contextPath belong to this device; contextPath null means the default folder.
-export type StoredProject = Project & { path: string | null; contextPath: string | null };
+// contextDetectedAt: when the project folder on this device was last searched for documents it
+// already has (ADR-020 item 4); null until then, and again after the folder changes.
+export type StoredProject = Project & { path: string | null; contextPath: string | null; contextDetectedAt: string | null };
 
 export interface ProjectRepository {
   listActive(deviceId: string): StoredProject[];
@@ -31,6 +35,7 @@ export interface ProjectRepository {
   rename(id: string, name: string, updatedAt: string): void;
   setLocation(projectId: string, location: { id: string; deviceId: string; path: string }, updatedAt: string): void;
   setContext(id: string, deviceId: string, context: Project['context'], contextPath: string | null, updatedAt: string): void;
+  markContextDetected(id: string, deviceId: string, at: string): void;
   markRemoved(id: string, removedAt: string): void;
 }
 
@@ -70,6 +75,101 @@ export interface MetadataStore {
   close(): void;
 }
 
+// --- What AgentHub reads back from the agents' documents (ADR-019, TDD §7.2). Read-only. ---
+
+export interface ContextHandoff {
+  heading: string;
+  // From the heading's date, as local time; a bare date counts as the end of that day.
+  at: string | null;
+}
+
+export interface ContextTask {
+  // Path inside the context folder; this is what launches record as task_ref.
+  ref: string;
+  id: string;
+  title: string;
+  // As the workstream's STATUS table says, in the documents' own words.
+  state: string | null;
+  lastHandoff: ContextHandoff | null;
+}
+
+export interface ContextWorkstream {
+  // Its folder relative to the documents, such as Workstreams/combo or Playables/playable005.
+  slug: string;
+  title: string;
+  // The "Branch:" that STATUS.md names, if any.
+  branch: string | null;
+  tasks: ContextTask[];
+}
+
+// What "Kiểm tra tài liệu" finds missing from the layout of TDD §7.2 (ADR-020 item 3).
+export type ContextIssueKind = 'no_project_context' | 'no_workstream' | 'no_status' | 'no_tasks' | 'no_handoff_log';
+
+export interface ContextIssue {
+  kind: ContextIssueKind;
+  // The workstream's slug, or null for the whole set of documents.
+  workstream: string | null;
+  taskRef: string | null;
+}
+
+export interface ContextOverview {
+  initialized: boolean;
+  workstreams: ContextWorkstream[];
+  // Empty until README.md exists: before that the documents are not set up yet, not broken.
+  issues: ContextIssue[];
+}
+
+// What a project folder already holds (ADR-020 item 4). found: folders in the layout of §7.2;
+// others: notes in another shape, relative to the project folder, for context-init to link.
+export interface DetectedContext {
+  found: string[];
+  others: string[];
+  // false when the scan stopped at its limit on folders.
+  complete: boolean;
+}
+
+export interface ContextDocuments {
+  overview(folder: string): ContextOverview;
+  detect(projectPath: string): DetectedContext;
+  // For moving the documents (ADR-020 item 5): every file, relative to the folder.
+  files(folder: string): string[];
+  conflicts(folder: string, files: readonly string[]): string[];
+  copy(from: string, to: string, files: readonly string[]): void;
+  appendHandoff(folder: string, taskRef: string, entry: string): void;
+}
+
+// Handoffs of a project without documents, and loose chats (TDD §7.5). One file per note.
+export interface Note {
+  id: string;
+  title: string;
+  createdAt: string;
+  source: string;
+}
+
+export type NoteWithContent = Note & { content: string };
+
+export interface NoteStore {
+  list(folder: string): Note[];
+  read(folder: string, id: string): NoteWithContent;
+  save(folder: string, input: { title: string; content: string; source: string; now: Date }): Note;
+  move(from: string, id: string, to: string): void;
+}
+
+// ADR-017: only root, branch, HEAD and dirty, read without changing anything.
+export interface GitObservation {
+  state: 'repo' | 'not_repo' | 'unknown';
+  root: string | null;
+  // null on a detached HEAD.
+  branch: string | null;
+  head: string | null;
+  headAt: string | null;
+  dirty: boolean | null;
+}
+
+export interface GitObserver {
+  observe(path: string): Promise<GitObservation>;
+}
+
 export type PathStatus = 'directory' | 'not_directory' | 'missing' | 'not_absolute';
 
 export interface PathInspector {
@@ -83,12 +183,35 @@ export interface ProjectContextView {
   path: string;
   custom: boolean;
   pathStatus: PathStatus;
+  // Whether the project folder was already searched for documents on this device.
+  detected: boolean;
 }
 
-export type ProjectView = Omit<StoredProject, 'context' | 'contextPath'> & {
+export type ProjectView = Omit<StoredProject, 'context' | 'contextPath' | 'contextDetectedAt'> & {
   pathStatus: PathStatus | 'unset';
   context: ProjectContextView;
 };
+
+export type ContextFolderChange =
+  | { status: 'done'; project: ProjectView; moved: number; kept: string | null }
+  | { status: 'needs_decision'; project: ProjectView; files: number }
+  | { status: 'conflict'; project: ProjectView; conflicts: string[] };
+
+export interface ProjectContextState {
+  overview: ContextOverview;
+  git: GitObservation;
+  warnings: ContextWarning[];
+  // Newest first; only for a project without documents.
+  handoffs: Note[];
+  // What to paste into the session that is ending, so it saves its context (§7.5).
+  checkpointPrompt: string;
+}
+
+export function checkpointPrompt(project: { name: string; context: { enabled: boolean } }): string {
+  return project.context.enabled
+    ? `Use the context-checkpoint skill now, so another account can continue this work on "${project.name}".`
+    : `Write a handoff for this session so another account can continue: goal, what is done (verified, observed or reported), what remains, gotchas, how to verify, and the Git branch and last commit. Save it with the agenthub MCP tool context_save_handoff for project "${project.name}". If that tool is not available, print the handoff as one Markdown block so I can paste it into AgentHub.`;
+}
 
 export const THEMES = ['system', 'light', 'dark'] as const;
 export type Theme = (typeof THEMES)[number];
@@ -107,6 +230,13 @@ export interface WorkspaceDependencies {
   defaultContextDirectory: (projectId: string) => string;
   // Creates a folder AgentHub owns; it never writes documents into it (ADR-019).
   ensureDirectory: (path: string) => void;
+  // Into the system Trash, never deleted for good (ADR-020 item 5).
+  trash: (path: string) => Promise<void>;
+  documents: ContextDocuments;
+  git: GitObserver;
+  notes: NoteStore;
+  handoffDirectory: (projectId: string) => string;
+  looseChatDirectory: string;
   newId: () => string;
   now: () => string;
 }
@@ -116,7 +246,20 @@ const THEME_KEY = 'theme';
 
 export type Workspace = ReturnType<typeof createWorkspace>;
 
-export function createWorkspace({ store, paths, defaultContextDirectory, ensureDirectory, newId, now }: WorkspaceDependencies) {
+export function createWorkspace({
+  store,
+  paths,
+  defaultContextDirectory,
+  ensureDirectory,
+  trash,
+  documents,
+  git,
+  notes,
+  handoffDirectory,
+  looseChatDirectory,
+  newId,
+  now,
+}: WorkspaceDependencies) {
   function deviceId(): string {
     const existing = store.settings.get(DEVICE_ID_KEY);
     if (existing) return existing;
@@ -144,13 +287,23 @@ export function createWorkspace({ store, paths, defaultContextDirectory, ensureD
     return project;
   }
 
-  function toView({ context, contextPath, ...project }: StoredProject): ProjectView {
+  function toView({ context, contextPath, contextDetectedAt, ...project }: StoredProject): ProjectView {
     const path = contextPath ?? defaultContextDirectory(project.id);
     return {
       ...project,
       pathStatus: project.path === null ? 'unset' : paths.inspect(project.path),
-      context: { ...context, path, custom: contextPath !== null, pathStatus: paths.inspect(path) },
+      context: { ...context, path, custom: contextPath !== null, pathStatus: paths.inspect(path), detected: contextDetectedAt !== null },
     };
+  }
+
+  function contextFolder(id: string): string {
+    const view = toView(requireProject(id));
+    if (!view.context.enabled) throw new DomainError('VALIDATION_FAILED', 'Project này chưa bật tài liệu context.');
+    if (!view.context.custom) ensureDirectory(view.context.path);
+    else if (view.context.pathStatus !== 'directory') {
+      throw new DomainError('PROJECT_PATH_MISSING', 'Không tìm thấy folder tài liệu. Hãy chọn lại nơi lưu.');
+    }
+    return view.context.path;
   }
 
   function getSettings(): Settings {
@@ -225,14 +378,118 @@ export function createWorkspace({ store, paths, defaultContextDirectory, ensureD
     },
 
     // The folder the user opens in their own editor; AgentHub has no document editor (TDD §9.1).
-    contextFolder(id: string): string {
-      const view = toView(requireProject(id));
-      if (!view.context.enabled) throw new DomainError('VALIDATION_FAILED', 'Project này chưa bật tài liệu context.');
-      if (!view.context.custom) ensureDirectory(view.context.path);
-      else if (view.context.pathStatus !== 'directory') {
-        throw new DomainError('PROJECT_PATH_MISSING', 'Không tìm thấy folder tài liệu. Hãy chọn lại nơi lưu.');
+    contextFolder,
+
+    // ADR-020 item 5: another place for the documents. When the old folder has files, the user
+    // decides first (move "ask"): move copies them without overwriting anything, then puts the old
+    // folder in the Trash if it was AgentHub's own; a folder the user chose is left where it is.
+    async changeContextFolder(input: { id: string; customPath: string | null; move: 'ask' | 'move' | 'leave' }): Promise<ContextFolderChange> {
+      const project = requireProject(input.id);
+      const view = toView(project);
+      const from = view.context.path;
+      const to = input.customPath ?? defaultContextDirectory(project.id);
+      if (input.customPath !== null) requireDirectory(input.customPath);
+      if (isSamePath(from, to)) return { status: 'done', project: view, moved: 0, kept: null };
+      if (isInside(to, from) || isInside(from, to)) {
+        throw new DomainError('VALIDATION_FAILED', 'Folder mới và folder cũ nằm trong nhau. Hãy chọn một folder khác.');
       }
-      return view.context.path;
+      const files = paths.inspect(from) === 'directory' ? documents.files(from) : [];
+      if (files.length > 0 && input.move === 'ask') return { status: 'needs_decision', project: view, files: files.length };
+      const moving = files.length > 0 && input.move === 'move';
+      if (moving) {
+        const conflicts = documents.conflicts(to, files);
+        if (conflicts.length > 0) return { status: 'conflict', project: view, conflicts };
+        if (input.customPath === null) ensureDirectory(to);
+        documents.copy(from, to, files);
+      }
+      const timestamp = now();
+      store.projects.setContext(project.id, deviceId(), project.context, input.customPath, timestamp);
+      if (input.customPath === null && project.context.enabled) ensureDirectory(to);
+      let kept: string | null = null;
+      if (moving) {
+        if (view.context.custom) kept = from;
+        else await trash(from);
+      }
+      return { status: 'done', project: toView(requireProject(project.id)), moved: moving ? files.length : 0, kept };
+    },
+
+    // ADR-020 item 4: searches the project folder for documents it already has. With apply, a
+    // project without documents that holds exactly one set in AgentHub's layout starts using it,
+    // and the page only tells the user; several sets are listed for the user to pick.
+    detectContext(input: { id: string; apply: boolean }): { project: ProjectView; found: string[]; others: string[]; applied: string | null } {
+      const project = requireProject(input.id);
+      if (project.path === null || paths.inspect(project.path) !== 'directory') {
+        return { project: toView(project), found: [], others: [], applied: null };
+      }
+      const detected = documents.detect(project.path);
+      const timestamp = now();
+      store.projects.markContextDetected(project.id, deviceId(), timestamp);
+      const only = detected.found.length === 1 ? (detected.found[0] as string) : null;
+      const applied = input.apply && !project.context.enabled && only !== null ? only : null;
+      if (applied) store.projects.setContext(project.id, deviceId(), { ...project.context, enabled: true }, applied, timestamp);
+      return { project: toView(requireProject(project.id)), found: detected.found, others: detected.others, applied };
+    },
+
+    // What the project page shows: tasks and handoffs read from the documents, Git, warnings.
+    async projectContext(id: string): Promise<ProjectContextState> {
+      const view = toView(requireProject(id));
+      const observation: GitObservation =
+        view.path !== null && view.pathStatus === 'directory'
+          ? await git.observe(view.path)
+          : { state: 'unknown', root: null, branch: null, head: null, headAt: null, dirty: null };
+      const readable = view.context.enabled && view.context.pathStatus === 'directory';
+      const overview = readable ? documents.overview(view.context.path) : { initialized: false, workstreams: [], issues: [] };
+      return {
+        overview,
+        git: observation,
+        warnings: readable ? contextWarnings(overview, observation, new Date(now())) : [],
+        handoffs: view.context.enabled ? [] : notes.list(handoffDirectory(view.id)),
+        checkpointPrompt: checkpointPrompt(view),
+      };
+    },
+
+    readProjectHandoff(input: { id: string; noteId: string }): NoteWithContent {
+      return notes.read(handoffDirectory(requireProject(input.id).id), input.noteId);
+    },
+
+    // A summary written in a chat that could not save it, pasted by the user (§7.5).
+    saveProjectHandoff(input: { id: string; title?: string | undefined; content: string }): Note[] {
+      const project = requireProject(input.id);
+      if (project.context.enabled) throw new DomainError('VALIDATION_FAILED', 'Project này có tài liệu context; hãy thêm handoff vào một task.');
+      const at = new Date(now());
+      notes.save(handoffDirectory(project.id), {
+        title: input.title?.trim() || `Handoff ${at.toLocaleString('vi-VN')}`,
+        content: input.content,
+        source: 'AgentHub (dán)',
+        now: at,
+      });
+      return notes.list(handoffDirectory(project.id));
+    },
+
+    listLooseChats: (): Note[] => notes.list(looseChatDirectory),
+
+    readLooseChat: (id: string): NoteWithContent => notes.read(looseChatDirectory, id),
+
+    saveLooseChat(input: { title: string; content: string }): Note {
+      return notes.save(looseChatDirectory, { ...input, source: 'AgentHub (dán)', now: new Date(now()) });
+    },
+
+    // Into the project's documents (Inbox/, for an agent to turn into a task with context-capture)
+    // or, without documents, into its handoffs.
+    moveLooseChat(input: { id: string; projectId: string }): void {
+      const view = toView(requireProject(input.projectId));
+      notes.read(looseChatDirectory, input.id);
+      const target = view.context.enabled ? `${contextFolder(view.id)}/Inbox` : handoffDirectory(view.id);
+      notes.move(looseChatDirectory, input.id, target);
+    },
+
+    // For a handoff written in a chat that cannot reach the files (tab Chat without MCP):
+    // the only write AgentHub makes to the documents (ADR-019 item 4).
+    addHandoff(input: { id: string; taskRef: string; entry: string }): ProjectContextState['overview'] {
+      const folder = contextFolder(input.id);
+      if (!findTask(documents.overview(folder), input.taskRef)) throw new DomainError('NOT_FOUND', 'Không tìm thấy task này trong tài liệu.');
+      documents.appendHandoff(folder, input.taskRef, input.entry);
+      return documents.overview(folder);
     },
 
     getSettings,

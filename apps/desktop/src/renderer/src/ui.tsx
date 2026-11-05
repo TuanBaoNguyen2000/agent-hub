@@ -332,3 +332,59 @@ export function Dialog({ label, title, onClose, children, actions }: DialogProps
     document.body,
   );
 }
+
+interface TabsProps<T extends string> {
+  label: string;
+  // Ties each tab to its TabPanel: both build their ids from it.
+  idBase: string;
+  value: T;
+  options: readonly { value: T; label: ReactNode }[];
+  onChange: (value: T) => void;
+}
+
+const tabId = (idBase: string, value: string): string => `${idBase}-tab-${value}`;
+const panelId = (idBase: string, value: string): string => `${idBase}-panel-${value}`;
+
+export function Tabs<T extends string>({ label, idBase, value, options, onChange }: TabsProps<T>) {
+  const listRef = useRef<HTMLDivElement>(null);
+  function onKey(event: KeyboardEvent<HTMLDivElement>): void {
+    const index = options.findIndex((option) => option.value === value);
+    const next =
+      event.key === 'ArrowRight' ? index + 1 : event.key === 'ArrowLeft' ? index - 1 : event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : null;
+    if (next === null) return;
+    event.preventDefault();
+    const option = options[(next + options.length) % options.length];
+    if (!option) return;
+    onChange(option.value);
+    listRef.current?.querySelector<HTMLElement>(`#${CSS.escape(tabId(idBase, option.value))}`)?.focus();
+  }
+  return (
+    <div ref={listRef} className="tabs" role="tablist" aria-label={label} onKeyDown={onKey}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          id={tabId(idBase, option.value)}
+          type="button"
+          role="tab"
+          className="tab"
+          aria-selected={option.value === value}
+          aria-controls={panelId(idBase, option.value)}
+          tabIndex={option.value === value ? 0 : -1}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Every panel stays mounted and the others are only hidden, so a launch waiting for a decision
+// keeps its state while the user looks at another tab.
+export function TabPanel({ idBase, value, selected, children }: { idBase: string; value: string; selected: string; children: ReactNode }) {
+  return (
+    <div id={panelId(idBase, value)} role="tabpanel" aria-labelledby={tabId(idBase, value)} className="tab-panel stack" hidden={value !== selected}>
+      {children}
+    </div>
+  );
+}

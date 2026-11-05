@@ -1,6 +1,7 @@
 // Runtime values for Preload and Renderer, kept apart so those bundles do not pull in zod.
 export const IpcChannel = {
   systemStatus: 'system:status',
+  systemCopyText: 'system:copy-text',
   projectsList: 'projects:list',
   projectsPickFolder: 'projects:pick-folder',
   projectsAdd: 'projects:add',
@@ -8,6 +9,16 @@ export const IpcChannel = {
   projectsRemove: 'projects:remove',
   projectsUpdateContext: 'projects:update-context',
   projectsOpenContextFolder: 'projects:open-context-folder',
+  projectsContext: 'projects:context',
+  projectsDetectContext: 'projects:detect-context',
+  projectsMoveContext: 'projects:move-context',
+  projectsAddHandoff: 'projects:add-handoff',
+  projectsReadHandoff: 'projects:read-handoff',
+  projectsSaveHandoff: 'projects:save-handoff',
+  looseChatsList: 'loose-chats:list',
+  looseChatsRead: 'loose-chats:read',
+  looseChatsSave: 'loose-chats:save',
+  looseChatsMove: 'loose-chats:move',
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
   settingsOpenDataFolder: 'settings:open-data-folder',
@@ -33,6 +44,8 @@ export const IpcChannel = {
 } as const;
 
 export const CONTEXT_LANGUAGES = ['en', 'vi'] as const;
+// Same id as the application's CONTEXT_TOOLS_CONFIRMATION: consent to change the main config folder.
+export const CONTEXT_TOOLS_CONFIRMATION = 'context-tools-main-config';
 export const THEMES = ['system', 'light', 'dark'] as const;
 export const PROVIDERS = ['claude', 'codex'] as const;
 export const CLIENT_MODES = ['desktop', 'cli'] as const;

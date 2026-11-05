@@ -21,8 +21,20 @@ const profileFieldsSchema = {
   cliConfigRoot: pathSchema.nullable(),
   desktopDataDir: pathSchema.nullable(),
 };
+const taskRefSchema = z
+  .string()
+  .min(1)
+  .max(1000)
+  .regex(/^(?!\.)[^/\0]+\/(?!\.)[^/\0]+\/Tasks\/(?!\.)[^/\0]+\.md$/, 'Not a task document');
+
+const noteIdSchema = z.string().regex(/^\d{8}T\d{9}Z-[0-9a-f]{6}(?:-[a-z0-9-]{1,48})?$/, 'Not a note id');
+const noteTextSchema = z.string().min(1).max(200_000);
+
 const launchRequestSchema = z.strictObject({
   projectId: idSchema,
+  taskRef: taskRefSchema.nullable().optional(),
+  skipContextTools: z.boolean().optional(),
+  useTranscript: z.boolean().optional(),
   profileId: idSchema,
   mode: z.enum(CLIENT_MODES),
 });
@@ -35,6 +47,7 @@ const accountLaunchSchema = z.strictObject({
 // Main validates every payload against these before it reaches a use case.
 export const ipcInput = {
   [IpcChannel.systemStatus]: noInput,
+  [IpcChannel.systemCopyText]: z.strictObject({ text: z.string().min(1).max(20_000) }),
   [IpcChannel.projectsList]: noInput,
   [IpcChannel.projectsPickFolder]: noInput,
   [IpcChannel.projectsAdd]: z.strictObject({ path: pathSchema, name: labelSchema.optional() }),
@@ -47,6 +60,16 @@ export const ipcInput = {
     customPath: pathSchema.nullable().optional(),
   }),
   [IpcChannel.projectsOpenContextFolder]: z.strictObject({ id: idSchema }),
+  [IpcChannel.projectsContext]: z.strictObject({ id: idSchema }),
+  [IpcChannel.projectsDetectContext]: z.strictObject({ id: idSchema, apply: z.boolean() }),
+  [IpcChannel.projectsMoveContext]: z.strictObject({ id: idSchema, customPath: pathSchema.nullable(), move: z.enum(['ask', 'move', 'leave']) }),
+  [IpcChannel.projectsReadHandoff]: z.strictObject({ id: idSchema, noteId: noteIdSchema }),
+  [IpcChannel.projectsSaveHandoff]: z.strictObject({ id: idSchema, title: labelSchema.optional(), content: noteTextSchema }),
+  [IpcChannel.looseChatsList]: noInput,
+  [IpcChannel.looseChatsRead]: z.strictObject({ id: noteIdSchema }),
+  [IpcChannel.looseChatsSave]: z.strictObject({ title: labelSchema.min(1), content: noteTextSchema }),
+  [IpcChannel.looseChatsMove]: z.strictObject({ id: noteIdSchema, projectId: idSchema }),
+  [IpcChannel.projectsAddHandoff]: z.strictObject({ id: idSchema, taskRef: taskRefSchema, entry: z.string().min(1).max(200_000) }),
   [IpcChannel.settingsGet]: noInput,
   [IpcChannel.settingsUpdate]: z.strictObject({
     theme: z.enum(THEMES).optional(),
@@ -109,10 +132,25 @@ export interface ProjectDto {
     path: string;
     custom: boolean;
     pathStatus: PathStatusDto;
+    // Whether the project folder was already searched for documents it has (ADR-020 item 4).
+    detected: boolean;
   };
   createdAt: string;
   updatedAt: string;
 }
+
+// found: folders in AgentHub's layout; applied: the one the project now uses, if exactly one.
+export interface DetectedContextDto {
+  project: ProjectDto;
+  found: string[];
+  others: string[];
+  applied: string | null;
+}
+
+export type ContextFolderChangeDto =
+  | { status: 'done'; project: ProjectDto; moved: number; kept: string | null }
+  | { status: 'needs_decision'; project: ProjectDto; files: number }
+  | { status: 'conflict'; project: ProjectDto; conflicts: string[] };
 
 export interface SettingsDto {
   deviceId: string;
@@ -182,6 +220,45 @@ export interface UsageDto {
   checkedAt: string;
 }
 
+// Read back from the agents' documents; free text written by models, shown as plain text only.
+export interface ContextTaskDto {
+  ref: string;
+  id: string;
+  title: string;
+  state: string | null;
+  lastHandoff: { heading: string; at: string | null } | null;
+}
+
+export type ContextIssueKindDto = 'no_project_context' | 'no_workstream' | 'no_status' | 'no_tasks' | 'no_handoff_log';
+
+export interface ContextOverviewDto {
+  initialized: boolean;
+  workstreams: { slug: string; title: string; branch: string | null; tasks: ContextTaskDto[] }[];
+  issues: { kind: ContextIssueKindDto; workstream: string | null; taskRef: string | null }[];
+}
+
+export interface NoteDto {
+  id: string;
+  title: string;
+  createdAt: string;
+  source: string;
+}
+
+export type NoteWithContentDto = NoteDto & { content: string };
+
+export interface ProjectContextDto {
+  overview: ContextOverviewDto;
+  git: { state: 'repo' | 'not_repo' | 'unknown'; branch: string | null; head: string | null; headAt: string | null; dirty: boolean | null };
+  warnings: {
+    kind: 'branch_mismatch' | 'commits_after_handoff' | 'no_handoff' | 'old_handoff' | 'uncommitted' | ContextIssueKindDto;
+    taskRef: string | null;
+    workstream: string | null;
+    message: string;
+  }[];
+  handoffs: NoteDto[];
+  checkpointPrompt: string;
+}
+
 export interface LaunchPreviewDto {
   steps: { label: string; execution: 'automatic' | 'conditional' | 'manual'; warning?: string }[];
   requiredConfirmations: { id: string; label: string }[];
@@ -189,10 +266,25 @@ export interface LaunchPreviewDto {
   permission: 'allowed' | 'denied' | 'unset';
   projectName: string;
   profileAlias: string;
+  // What the new session is asked first; null when the project has no context documents.
+  prompt: string | null;
+  // A newer session than the last checkpoint, offered for the new agent to read (§7.6).
+  transcript: {
+    path: string;
+    updatedAt: string;
+    sourceAccount: string;
+    provider: ProviderDto;
+    otherAccount: boolean;
+    otherProvider: boolean;
+    checkpointAt: string;
+  } | null;
 }
 
 // Opening an account on its own has no project to ask permission for.
 export type AccountLaunchPreviewDto = Pick<LaunchPreviewDto, 'steps' | 'requiredConfirmations' | 'blocker'>;
+
+// copied: Main put the prompt on the clipboard, for a Desktop app to paste.
+export type LaunchResultDto = LaunchAttemptDto & { prompt: string | null; copied: boolean };
 
 export interface LaunchOutcomeDto {
   appOpened: boolean;
@@ -218,6 +310,7 @@ export interface LaunchAttemptDto {
 
 export interface IpcOutput {
   [IpcChannel.systemStatus]: SystemStatusDto;
+  [IpcChannel.systemCopyText]: null;
   [IpcChannel.projectsList]: ProjectDto[];
   [IpcChannel.projectsPickFolder]: string | null;
   [IpcChannel.projectsAdd]: ProjectDto;
@@ -225,6 +318,16 @@ export interface IpcOutput {
   [IpcChannel.projectsRemove]: null;
   [IpcChannel.projectsUpdateContext]: ProjectDto;
   [IpcChannel.projectsOpenContextFolder]: null;
+  [IpcChannel.projectsContext]: ProjectContextDto;
+  [IpcChannel.projectsDetectContext]: DetectedContextDto;
+  [IpcChannel.projectsMoveContext]: ContextFolderChangeDto;
+  [IpcChannel.projectsAddHandoff]: ContextOverviewDto;
+  [IpcChannel.projectsReadHandoff]: NoteWithContentDto;
+  [IpcChannel.projectsSaveHandoff]: NoteDto[];
+  [IpcChannel.looseChatsList]: NoteDto[];
+  [IpcChannel.looseChatsRead]: NoteWithContentDto;
+  [IpcChannel.looseChatsSave]: NoteDto;
+  [IpcChannel.looseChatsMove]: null;
   [IpcChannel.settingsGet]: SettingsDto;
   [IpcChannel.settingsUpdate]: SettingsDto;
   [IpcChannel.settingsOpenDataFolder]: null;
@@ -242,7 +345,7 @@ export interface IpcOutput {
   [IpcChannel.profilesLoginCancel]: null;
   [IpcChannel.permissionsSet]: null;
   [IpcChannel.launchPlan]: LaunchPreviewDto;
-  [IpcChannel.launchExecute]: LaunchAttemptDto;
+  [IpcChannel.launchExecute]: LaunchResultDto;
   [IpcChannel.launchHistory]: LaunchAttemptDto[];
   [IpcChannel.launchConfirmAccount]: null;
   [IpcChannel.launchAccountPlan]: AccountLaunchPreviewDto;
@@ -260,6 +363,7 @@ type Reply<C extends keyof IpcOutput> = Promise<IpcResult<IpcOutput[C]>>;
 
 export interface AgentHubApi {
   getSystemStatus(): Reply<typeof IpcChannel.systemStatus>;
+  copyText(input: IpcInput<typeof IpcChannel.systemCopyText>): Reply<typeof IpcChannel.systemCopyText>;
   listProjects(): Reply<typeof IpcChannel.projectsList>;
   pickProjectFolder(): Reply<typeof IpcChannel.projectsPickFolder>;
   addProject(input: IpcInput<typeof IpcChannel.projectsAdd>): Reply<typeof IpcChannel.projectsAdd>;
@@ -267,6 +371,16 @@ export interface AgentHubApi {
   removeProject(input: IpcInput<typeof IpcChannel.projectsRemove>): Reply<typeof IpcChannel.projectsRemove>;
   updateProjectContext(input: IpcInput<typeof IpcChannel.projectsUpdateContext>): Reply<typeof IpcChannel.projectsUpdateContext>;
   openContextFolder(input: IpcInput<typeof IpcChannel.projectsOpenContextFolder>): Reply<typeof IpcChannel.projectsOpenContextFolder>;
+  getProjectContext(input: IpcInput<typeof IpcChannel.projectsContext>): Reply<typeof IpcChannel.projectsContext>;
+  detectProjectContext(input: IpcInput<typeof IpcChannel.projectsDetectContext>): Reply<typeof IpcChannel.projectsDetectContext>;
+  moveProjectContext(input: IpcInput<typeof IpcChannel.projectsMoveContext>): Reply<typeof IpcChannel.projectsMoveContext>;
+  addHandoff(input: IpcInput<typeof IpcChannel.projectsAddHandoff>): Reply<typeof IpcChannel.projectsAddHandoff>;
+  readProjectHandoff(input: IpcInput<typeof IpcChannel.projectsReadHandoff>): Reply<typeof IpcChannel.projectsReadHandoff>;
+  saveProjectHandoff(input: IpcInput<typeof IpcChannel.projectsSaveHandoff>): Reply<typeof IpcChannel.projectsSaveHandoff>;
+  listLooseChats(): Reply<typeof IpcChannel.looseChatsList>;
+  readLooseChat(input: IpcInput<typeof IpcChannel.looseChatsRead>): Reply<typeof IpcChannel.looseChatsRead>;
+  saveLooseChat(input: IpcInput<typeof IpcChannel.looseChatsSave>): Reply<typeof IpcChannel.looseChatsSave>;
+  moveLooseChat(input: IpcInput<typeof IpcChannel.looseChatsMove>): Reply<typeof IpcChannel.looseChatsMove>;
   getSettings(): Reply<typeof IpcChannel.settingsGet>;
   updateSettings(input: IpcInput<typeof IpcChannel.settingsUpdate>): Reply<typeof IpcChannel.settingsUpdate>;
   openDataFolder(): Reply<typeof IpcChannel.settingsOpenDataFolder>;

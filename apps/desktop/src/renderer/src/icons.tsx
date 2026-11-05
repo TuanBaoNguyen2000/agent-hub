@@ -89,3 +89,9 @@ export const Close = () => (
     <path d="m4 4 8 8M12 4l-8 8" />
   </Icon>
 );
+
+export const Chat = () => (
+  <Icon>
+    <path d="M3 3.5h10v7H7.5L4.5 13v-2.5H3z" />
+  </Icon>
+);

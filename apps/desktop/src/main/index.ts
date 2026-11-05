@@ -1,12 +1,28 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { type LaunchService, type MetadataStore, createLaunchService, createWorkspace } from '@agenthub/application';
 import { createLauncher } from '@agenthub/integrations';
-import { openMetadataStore } from '@agenthub/persistence';
-import { createMacPlatform, createPathInspector } from '@agenthub/platform';
-import { BrowserWindow, app, dialog, nativeTheme, session } from 'electron';
+import {
+  appendHandoff,
+  conflictingFiles,
+  contextFiles,
+  copyContextFiles,
+  defaultContextFolder,
+  detectContext,
+  handoffFolder,
+  listNotes,
+  looseChatFolder,
+  moveNote,
+  newestSession,
+  openMetadataStore,
+  readContextOverview,
+  readNote,
+  saveNote,
+} from '@agenthub/persistence';
+import { createGitObserver, createMacPlatform, createPathInspector, createSkillInstaller, shellQuote } from '@agenthub/platform';
+import { BrowserWindow, app, dialog, nativeTheme, session, shell } from 'electron';
 import { registerIpcHandlers } from './ipc';
 
 // Dev runs keep their own data, so unreleased migrations never touch real data.
@@ -69,6 +85,25 @@ function createWindow(): void {
   }
 }
 
+// Clients start the MCP server through this stable path, so moving or updating the app only
+// needs the shim rewritten, never each account's config (SPIKE-10).
+function writeMcpShim(dataDirectory: string): string {
+  const shim = join(dataDirectory, 'bin', 'agenthub-mcp');
+  const script = join(app.getAppPath(), 'out', 'main', 'mcp.js');
+  const body = [
+    '#!/bin/sh',
+    '# Written by AgentHub at every start: runs its MCP server with the app binary in Node mode.',
+    `ELECTRON_RUN_AS_NODE=1 AGENTHUB_VERSION=${shellQuote(app.getVersion())} exec ${shellQuote(process.execPath)} ${shellQuote(script)} "$@"`,
+    '',
+  ].join('\n');
+  mkdirSync(join(dataDirectory, 'bin'), { recursive: true, mode: 0o700 });
+  const temporary = `${shim}.${process.pid}.tmp`;
+  writeFileSync(temporary, body, { mode: 0o700 });
+  chmodSync(temporary, 0o700);
+  renameSync(temporary, shim);
+  return shim;
+}
+
 function start(): void {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
 
@@ -79,26 +114,71 @@ function start(): void {
   store = openedStore;
 
   const paths = createPathInspector();
+  let mcpShim: string | null = null;
+  try {
+    mcpShim = writeMcpShim(dataDirectory);
+    mkdirSync(join(dataDirectory, 'logs'), { recursive: true, mode: 0o700 });
+  } catch (error) {
+    // Without the shim, opening still works; only the MCP step is skipped.
+    console.error(error);
+  }
   const newId = randomUUID;
   const now = (): string => new Date().toISOString();
-  const workspace = createWorkspace({
-    store: openedStore,
-    paths,
-    defaultContextDirectory: (projectId) => join(dataDirectory, 'projects', projectId, 'context'),
-    ensureDirectory: (path) => mkdirSync(path, { recursive: true, mode: 0o700 }),
-    newId,
-    now,
-  });
+  const defaultContextDirectory = (projectId: string): string => defaultContextFolder(dataDirectory, projectId);
   // Dev runs and tests keep accounts inside their own data folder, away from real logins.
   const usesOwnData = !app.isPackaged || app.commandLine.hasSwitch('user-data-dir');
   const testBrowser = usesOwnData ? process.env['AGENTHUB_E2E_BROWSER_DIR'] : undefined;
+  const testTrash = usesOwnData ? process.env['AGENTHUB_E2E_TRASH_DIR'] : undefined;
   const platform = createMacPlatform(testBrowser ? { browserDirs: [testBrowser], browserOpenCommand: join(testBrowser, 'open') } : {});
+  const git = createGitObserver(platform);
+  const documents = {
+    overview: readContextOverview,
+    detect: (projectPath: string) => detectContext(projectPath),
+    files: contextFiles,
+    conflicts: conflictingFiles,
+    copy: copyContextFiles,
+    appendHandoff: (folder: string, taskRef: string, entry: string) => {
+      appendHandoff(folder, taskRef, entry);
+    },
+  };
+  const notes = { list: (folder: string) => listNotes(folder), read: readNote, save: saveNote, move: moveNote };
+  const handoffDirectory = (projectId: string): string => handoffFolder(dataDirectory, projectId);
+  const workspace = createWorkspace({
+    store: openedStore,
+    paths,
+    defaultContextDirectory,
+    documents,
+    git,
+    notes,
+    handoffDirectory,
+    looseChatDirectory: looseChatFolder(dataDirectory),
+    ensureDirectory: (path) => mkdirSync(path, { recursive: true, mode: 0o700 }),
+    // E2E runs move folders into their own stand-in Trash, never the user's.
+    trash: testTrash ? async (path) => renameSync(path, join(testTrash, `${Date.now()}-${basename(path)}`)) : (path) => shell.trashItem(path),
+    newId,
+    now,
+  });
   const accountsRoot = usesOwnData ? join(dataDirectory, 'accounts') : join(homedir(), '.agenthub', 'accounts');
   const launching = createLaunchService({
     store: openedStore,
     launcher: createLauncher(platform),
     platform,
     paths,
+    // Packaged skills sit beside app.asar; a dev run reads them from the source tree.
+    skills: createSkillInstaller({
+      source: app.isPackaged ? join(process.resourcesPath, 'skills') : join(app.getAppPath(), 'skills'),
+      shared: join(dataDirectory, 'skills'),
+    }),
+    mcpServer: (profileId) =>
+      mcpShim === null
+        ? null
+        : { command: mcpShim, args: [`--account=${profileId}`, `--data=${dataDirectory}`, `--log=${join(dataDirectory, 'logs', 'mcp.log')}`] },
+    defaultContextDirectory,
+    documents,
+    git,
+    notes,
+    handoffDirectory,
+    sessions: { newest: (provider, configRoot, folder) => newestSession(provider, configRoot, folder) },
     deviceId: () => workspace.getSettings().deviceId,
     newId,
     now,

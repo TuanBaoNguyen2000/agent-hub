@@ -13,6 +13,7 @@ let root: string;
 let userData: string;
 let projectDir: string;
 let browserDir: string;
+let trashDir: string;
 let app: ElectronApplication | undefined;
 
 function launchArguments(): { executablePath?: string; args: string[] } {
@@ -25,7 +26,7 @@ function launchArguments(): { executablePath?: string; args: string[] } {
 async function launch(): Promise<Page> {
   // Playwright forces a light color scheme unless told not to; the theme test needs the real one.
   // Sign-ins go to a stand-in browser here, never the real one.
-  const env = { ...(process.env as Record<string, string>), AGENTHUB_E2E_BROWSER_DIR: browserDir };
+  const env = { ...(process.env as Record<string, string>), AGENTHUB_E2E_BROWSER_DIR: browserDir, AGENTHUB_E2E_TRASH_DIR: trashDir };
   app = await _electron.launch({ ...launchArguments(), colorScheme: null, env });
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
@@ -54,15 +55,32 @@ async function addProject(page: Page, path = projectDir): Promise<void> {
   await expect(page.locator('#project-path')).toHaveText(path);
 }
 
-const tree = (page: Page) => page.getByRole('navigation', { name: 'Projects' });
+const tree = (page: Page) => page.getByRole('navigation', { name: 'Điều hướng' });
 
-const contextSection = (page: Page) => page.getByRole('region', { name: 'Tài liệu context' });
+const openTab = (page: Page, name: 'Tổng quan' | 'Task' | 'Handoff' | 'Lịch sử' | 'Cài đặt') =>
+  page.getByRole('tablist', { name: 'Trang project' }).getByRole('tab', { name, exact: true }).click();
 
-async function turnOnContext(page: Page): Promise<void> {
-  await contextSection(page).getByRole('radiogroup', { name: 'Tài liệu context' }).getByRole('radio', { name: 'Bật' }).click();
-  await expect(contextSection(page).getByTestId('context-path')).toBeVisible();
+const docsCard = (page: Page) => page.getByRole('region', { name: 'Tài liệu context' });
+const contextSettings = (page: Page) => page.getByRole('region', { name: 'Cài đặt tài liệu context' });
+
+// "Tạo tài liệu context" on the overview, through its dialog; returns where the documents go.
+async function createDocs(page: Page, options: { folder?: string; language?: 'English' | 'Tiếng Việt' } = {}): Promise<string> {
+  await openTab(page, 'Tổng quan');
+  await docsCard(page).getByRole('button', { name: 'Tạo tài liệu context' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Tạo tài liệu context' });
+  if (options.folder) {
+    await dialog.getByRole('radio', { name: 'Folder khác' }).click();
+    await answerFolderDialog(options.folder);
+    await dialog.getByRole('button', { name: 'Chọn folder…' }).click();
+    await expect(dialog.getByTestId('create-docs-folder')).toHaveText(options.folder);
+  }
+  if (options.language) await dialog.getByRole('radio', { name: options.language }).click();
+  await dialog.getByRole('button', { name: 'Tạo tài liệu' }).click();
+  await expect(dialog).toBeHidden();
+  const path = docsCard(page).getByTestId('context-path');
+  await expect(path).toBeVisible();
+  return (await path.textContent()) ?? '';
 }
-
 
 test.beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'agenthub-e2e-')));
@@ -70,6 +88,8 @@ test.beforeEach(() => {
   projectDir = join(root, "Dự án 'nháy' $(touch injected)");
   mkdirSync(projectDir);
   browserDir = join(root, 'browser');
+  trashDir = join(root, 'trash');
+  mkdirSync(trashDir);
   mkdirSync(join(browserDir, 'Google Chrome.app'), { recursive: true });
   writeFileSync(join(browserDir, 'open'), `#!/bin/sh\nfor arg in "$@"; do echo "$arg" >> ${JSON.stringify(join(browserDir, 'log'))}; done\n`, { mode: 0o755 });
 });
@@ -84,18 +104,22 @@ test('Phase 1 exit criteria: a project and its context settings survive a restar
   await expect(page.getByRole('heading', { name: 'Chưa có project nào' })).toBeVisible();
 
   await addProject(page);
+  // The history waits in its own tab (ADR-020 item 2).
+  await expect(page.getByText('Project này chưa được mở lần nào')).toBeHidden();
+  await openTab(page, 'Lịch sử');
   await expect(page.getByText('Project này chưa được mở lần nào')).toBeVisible();
-  await turnOnContext(page);
-  await contextSection(page).getByRole('radiogroup', { name: 'Ngôn ngữ tài liệu' }).getByRole('radio', { name: 'Tiếng Việt' }).click();
-  const defaultFolder = (await contextSection(page).getByTestId('context-path').textContent()) ?? '';
+
+  const defaultFolder = await createDocs(page, { language: 'Tiếng Việt' });
   expect(defaultFolder.startsWith(join(userData, 'projects'))).toBe(true);
+  await expect(docsCard(page).getByRole('button', { name: 'Huỷ tạo' })).toBeVisible();
 
   page = await restart();
 
   await expect(page.locator('#project-path')).toHaveText(projectDir);
-  await expect(contextSection(page).getByRole('radio', { name: 'Bật' })).toBeChecked();
-  await expect(contextSection(page).getByRole('radio', { name: 'Tiếng Việt' })).toBeChecked();
-  await expect(contextSection(page).getByTestId('context-path')).toHaveText(defaultFolder);
+  await expect(docsCard(page).getByTestId('context-path')).toHaveText(defaultFolder);
+  await openTab(page, 'Cài đặt');
+  await expect(contextSettings(page).getByRole('radio', { name: 'Tiếng Việt' })).toBeChecked();
+  await expect(contextSettings(page).getByTestId('context-path')).toHaveText(defaultFolder);
 
   // AgentHub makes the folder for the agents, writes nothing into it, and nothing into the project.
   expect(readdirSync(defaultFolder)).toEqual([]);
@@ -103,31 +127,180 @@ test('Phase 1 exit criteria: a project and its context settings survive a restar
   expect(existsSync(join(userData, 'artifacts'))).toBe(false);
 });
 
-test('the context documents can live in a folder the user chooses, and go back to the default', async () => {
+test('tasks and handoffs come from the documents, and a pasted handoff lands at the top of the log', async () => {
   const page = await launch();
   await addProject(page);
-  await turnOnContext(page);
-  const defaultFolder = (await contextSection(page).getByTestId('context-path').textContent()) ?? '';
+  const folder = await createDocs(page);
+  const ref = join('Workstreams', 'combo', 'Tasks', 'TASK-001-combo-counter.md');
+  mkdirSync(join(folder, 'Workstreams', 'combo', 'Tasks'), { recursive: true });
+  writeFileSync(join(folder, 'README.md'), '# Context');
+  writeFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), '# Combo\n\n| Task | State |\n|---|---|\n| TASK-001 | in progress |\n');
+  writeFileSync(join(folder, ref), '# TASK-001 Combo counter\n');
+
+  // "Kiểm tra tài liệu" reads the files again and says what is missing from the layout.
+  const card = docsCard(page);
+  await card.getByRole('button', { name: 'Kiểm tra tài liệu' }).click();
+  await expect(card.getByTestId('context-summary')).toHaveText('1 workstream · 1 task');
+  await expect(card.getByTestId('git-observation')).toHaveText('Folder project không phải Git repo.');
+  await expect(card.getByRole('list', { name: 'Cảnh báo' })).toContainText('Tài liệu thiếu PROJECT_CONTEXT.md.');
+  await expect(card.getByText('cảnh báo ở từng task')).toBeVisible();
+  await expect(card.getByRole('status')).toContainText('cảnh báo');
+
+  writeFileSync(join(folder, 'PROJECT_CONTEXT.md'), '# Project');
+  writeFileSync(join(folder, ref), '# TASK-001 Combo counter\n\n## Handoff log\n');
+  await card.getByRole('button', { name: 'Kiểm tra tài liệu' }).click();
+  await expect(card.getByRole('list', { name: 'Cảnh báo' })).toBeHidden();
+
+  await card.getByRole('button', { name: 'Xem ở tab Task' }).click();
+  const tasks = page.getByRole('region', { name: 'Task trong tài liệu' });
+  const row = tasks.getByTestId('context-task');
+  await expect(row).toContainText('TASK-001 Combo counter');
+  await expect(row).toContainText('in progress');
+  await expect(row).toContainText('chưa có handoff');
+  await row.getByRole('radio').check();
+
+  await openTab(page, 'Tổng quan');
+  await expect(page.getByTestId('launch-task')).toContainText('TASK-001 Combo counter');
+
+  await openTab(page, 'Handoff');
+  const handoffs = page.getByRole('region', { name: 'Handoff của project' });
+  await handoffs.getByLabel('Nội dung handoff').fill('### 2026-11-05 10:00 — Chat / Claude\n- **Done:** pasted');
+  await handoffs.getByRole('button', { name: 'Thêm handoff', exact: true }).click();
+
+  await expect(handoffs.getByRole('status')).toHaveText('Đã thêm vào TASK-001.');
+  await openTab(page, 'Task');
+  await expect(row).not.toContainText('chưa có handoff');
+  expect(readFileSync(join(folder, ref), 'utf8')).toBe('# TASK-001 Combo counter\n\n## Handoff log\n\n### 2026-11-05 10:00 — Chat / Claude\n- **Done:** pasted\n');
+  expect(readdirSync(projectDir)).toEqual([]);
+});
+
+test('a project without documents keeps pasted handoffs, newest first, and a loose chat can move into it', async () => {
+  const page = await launch();
+  await addProject(page);
+
+  await openTab(page, 'Task');
+  await expect(page.getByRole('region', { name: 'Task trong tài liệu' }).getByRole('button', { name: 'Tạo tài liệu context' })).toBeVisible();
+
+  await openTab(page, 'Handoff');
+  const handoffs = page.getByRole('region', { name: 'Handoff của project' });
+  await expect(handoffs.getByText('Chưa có handoff nào.')).toBeVisible();
+  await handoffs.getByRole('button', { name: 'Copy lời nhắc tóm tắt' }).click();
+  await expect(handoffs.getByRole('button', { name: 'Đã copy' })).toBeVisible();
+  expect(await app?.evaluate(({ clipboard }) => clipboard.readText())).toContain('context_save_handoff');
+
+  await handoffs.getByRole('button', { name: 'Thêm handoff' }).click();
+  await handoffs.getByLabel('Tiêu đề handoff').fill('Đợt 1');
+  await handoffs.getByLabel('Nội dung handoff').fill('- **Done:** pasted');
+  await handoffs.getByRole('button', { name: 'Lưu handoff' }).click();
+  const first = handoffs.getByTestId('project-handoff').first();
+  await expect(first).toContainText('Đợt 1');
+  await expect(first).toContainText('Mới nhất');
+  await first.getByRole('button').click();
+  await expect(first).toContainText('- **Done:** pasted');
+
+  // Each loose chat is its own entry in the sidebar (ADR-020 item 2).
+  await expect(tree(page).getByText('Chưa có chat rời nào.')).toBeVisible();
+  await tree(page).getByRole('button', { name: 'Thêm chat rời' }).click();
+  await page.getByLabel('Tiêu đề chat rời').fill('Ý tưởng combo');
+  await page.getByLabel('Nội dung chat rời').fill('Combo reset sau 2 giây');
+  await page.getByRole('button', { name: 'Lưu chat rời' }).click();
+  const entry = tree(page).getByTestId('loose-chat');
+  await expect(entry).toHaveText('Ý tưởng combo');
+  await expect(entry).toHaveAttribute('aria-current', 'true');
+  await expect(page.getByRole('heading', { name: 'Ý tưởng combo' })).toBeVisible();
+  await expect(page.getByText('Combo reset sau 2 giây')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Copy lời nhắc tiếp tục' }).click();
+  expect(await app?.evaluate(({ clipboard }) => clipboard.readText())).toContain('context_loose_chats');
+  await page.getByLabel('Project đích').click();
+  await page.getByRole('menuitemradio', { name: /Dự án/ }).click();
+  await page.getByRole('button', { name: 'Chuyển vào project' }).click();
+
+  // The app goes to the project the chat went into.
+  await expect(page.locator('#project-path')).toHaveText(projectDir);
+  await expect(tree(page).getByText('Chưa có chat rời nào.')).toBeVisible();
+  await openTab(page, 'Handoff');
+  await expect(handoffs.getByTestId('project-handoff').first()).toContainText('Ý tưởng combo');
+  expect(readdirSync(projectDir)).toEqual([]);
+});
+
+test('the context documents can live in a folder the user chooses, go back to the default, and stop without losing files', async () => {
+  const page = await launch();
+  await addProject(page);
   const chosen = join(root, 'Tài liệu chung');
   mkdirSync(chosen);
 
+  expect(await createDocs(page, { folder: chosen })).toBe(chosen);
+
+  await openTab(page, 'Cài đặt');
+  const settings = contextSettings(page);
+  await expect(settings.getByText('Folder bạn chọn')).toBeVisible();
+  await settings.getByRole('button', { name: 'Dùng mặc định' }).click();
+  await expect(settings.getByTestId('context-path')).not.toHaveText(chosen);
+  const defaultFolder = (await settings.getByTestId('context-path').textContent()) ?? '';
+  expect(defaultFolder.startsWith(join(userData, 'projects'))).toBe(true);
+
   await answerFolderDialog(chosen);
-  await contextSection(page).getByRole('button', { name: 'Chọn folder khác' }).click();
-  await expect(contextSection(page).getByTestId('context-path')).toHaveText(chosen);
-  await expect(contextSection(page).getByText('Folder bạn chọn')).toBeVisible();
+  await settings.getByRole('button', { name: 'Chọn folder khác' }).click();
+  await expect(settings.getByTestId('context-path')).toHaveText(chosen);
 
-  await contextSection(page).getByRole('button', { name: 'Dùng mặc định' }).click();
-  await expect(contextSection(page).getByTestId('context-path')).toHaveText(defaultFolder);
+  writeFileSync(join(chosen, 'README.md'), '# Context');
+  page.once('dialog', (dialog) => void dialog.accept());
+  await settings.getByRole('button', { name: 'Ngừng dùng tài liệu' }).click();
+  await expect(settings.getByTestId('context-path')).toBeHidden();
+  await openTab(page, 'Tổng quan');
+  await expect(docsCard(page).getByRole('button', { name: 'Tạo tài liệu context' })).toBeVisible();
+  expect(readdirSync(chosen)).toEqual(['README.md']);
+});
 
-  await contextSection(page).getByRole('radio', { name: 'Tắt' }).click();
-  await expect(contextSection(page).getByTestId('context-path')).toBeHidden();
-  expect(readdirSync(chosen)).toEqual([]);
+test('documents already in the repo in AgentHub\'s layout are used right away, under their own workstream folder', async () => {
+  const docs = join(projectDir, 'AgentContext');
+  mkdirSync(join(docs, 'Playables', 'playable005', 'Tasks'), { recursive: true });
+  writeFileSync(join(docs, 'README.md'), '# Context');
+  writeFileSync(join(docs, 'PROJECT_CONTEXT.md'), '# Project');
+  writeFileSync(join(docs, 'Playables', 'playable005', 'STATUS.md'), '# Playable 005\n');
+  writeFileSync(join(docs, 'Playables', 'playable005', 'Tasks', 'TASK-016-intro.md'), '# TASK-016 Intro\n\n## Handoff log\n');
+  const page = await launch();
+  await addProject(page);
+
+  const notice = page.getByRole('status', { name: 'Tài liệu có sẵn' });
+  await expect(notice).toContainText(docs);
+  await expect(notice).toContainText('git status');
+  await expect(docsCard(page).getByTestId('context-summary')).toHaveText('1 workstream · 1 task');
+  await openTab(page, 'Task');
+  await expect(page.getByTestId('context-task')).toContainText('TASK-016 Intro');
+
+  await notice.getByRole('button', { name: 'Dùng nơi khác' }).click();
+  await expect(contextSettings(page).getByTestId('context-path')).toHaveText(docs);
+  await expect(notice).toBeHidden();
+});
+
+test('changing where the documents live asks first, moves them, and puts AgentHub\'s copy in the Trash', async () => {
+  const page = await launch();
+  await addProject(page);
+  const defaultFolder = await createDocs(page);
+  writeFileSync(join(defaultFolder, 'README.md'), '# Context');
+  const chosen = join(root, 'Tài liệu chung');
+  mkdirSync(chosen);
+
+  await openTab(page, 'Cài đặt');
+  await answerFolderDialog(chosen);
+  await contextSettings(page).getByRole('button', { name: 'Chọn folder khác' }).click();
+  const ask = page.getByRole('dialog', { name: 'Chuyển tài liệu' });
+  await expect(ask).toContainText('có 1 file');
+  await ask.getByRole('button', { name: 'Chuyển', exact: true }).click();
+
+  await expect(contextSettings(page).getByTestId('context-path')).toHaveText(chosen);
+  await expect(contextSettings(page).getByRole('status')).toContainText('Thùng rác');
+  expect(readFileSync(join(chosen, 'README.md'), 'utf8')).toBe('# Context');
+  expect(existsSync(defaultFolder)).toBe(false);
+  expect(readdirSync(trashDir)).toHaveLength(1);
 });
 
 test('a project folder that moved can be relinked without losing its context settings', async () => {
   let page = await launch();
   await addProject(page);
-  await turnOnContext(page);
+  await createDocs(page);
 
   await quit();
   const moved = join(root, 'đã chuyển chỗ');
@@ -140,7 +313,7 @@ test('a project folder that moved can be relinked without losing its context set
 
   await expect(page.locator('#project-path')).toHaveText(moved);
   await expect(page.getByText('Không tìm thấy folder của project')).toBeHidden();
-  await expect(contextSection(page).getByRole('radio', { name: 'Bật' })).toBeChecked();
+  await expect(docsCard(page).getByRole('button', { name: 'Huỷ tạo' })).toBeVisible();
 });
 
 test('the same folder cannot be added twice', async () => {
@@ -411,6 +584,34 @@ test('a first launch asks about the project once, and a denied pair stays blocke
 
   await decision.getByRole('button', { name: 'Đổi thành cho phép' }).click();
   await expect(decision.getByText('không được phép dùng project')).toBeHidden();
+
+  // Another tab and back: the launch still waits for its decision.
+  await openTab(page, 'Lịch sử');
+  await expect(decision).toBeHidden();
+  await openTab(page, 'Tổng quan');
+  await expect(decision.getByRole('button', { name: 'Huỷ' })).toBeVisible();
+});
+
+test('with context documents on, the main account is asked before skills and MCP go into its config', async () => {
+  const page = await launch();
+  await setCli(page, 'Claude CLI', fakeClaude());
+  await addAccount(page, 'Claude');
+  await addProject(page);
+  await createDocs(page);
+
+  await page.getByRole('button', { name: 'Mở trong Terminal' }).click();
+  const decision = page.getByRole('group', { name: 'Cần bạn quyết định' });
+  await decision.getByRole('button', { name: 'Cho phép', exact: true }).click();
+
+  // Nothing is linked until the box is ticked; this test stops before that.
+  const consent = decision.getByRole('checkbox', { name: /cấu hình chính/ });
+  await expect(consent).toBeVisible();
+  // Skills already linked by an earlier run on this machine are not asked about again.
+  await expect(consent).toHaveAccessibleName(/MCP "agenthub"/);
+  await expect(decision.getByRole('button', { name: 'Tiếp tục mở' })).toBeDisabled();
+  // Declining is an option too: the account opens, just without the tools.
+  await expect(decision.getByRole('button', { name: 'Mở mà không cài' })).toBeEnabled();
+  await decision.getByRole('button', { name: 'Huỷ' }).click();
 });
 
 test('a missing CLI blocks the Terminal launch with a clear reason', async () => {
@@ -436,7 +637,7 @@ test('the theme setting applies and survives a restart', async () => {
   let page = await launch();
   await page.getByRole('button', { name: 'Cài đặt' }).click();
   await page.getByText('Nâng cao').click();
-  await expect(page.locator('#schema-version')).toHaveText('4');
+  await expect(page.locator('#schema-version')).toHaveText('5');
 
   const theme = (label: string) => page.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: label });
   await theme('Tối').click();

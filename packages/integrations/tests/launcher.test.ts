@@ -1,7 +1,7 @@
 import type { InstalledApp, LaunchTarget, PlatformPort, RunOptions, RunResult, ToolProcess } from '@agenthub/application';
 import type { AccountProfile } from '@agenthub/domain';
 import { describe, expect, it } from 'vitest';
-import { CLAUDE_USAGE_ARGS, createLauncher, parseClaudeUsage, parseCodexUsage } from '../src/index';
+import { CLAUDE_USAGE_ARGS, cliPromptArgs, createLauncher, parseClaudeUsage, parseCodexUsage } from '../src/index';
 
 const CLAUDE_APP: InstalledApp = {
   path: '/Applications/Claude.app',
@@ -51,8 +51,9 @@ function fakeTool(reply: (message: Record<string, unknown>, tool: { send: (value
   };
 }
 
-function fakePlatform(overrides: Partial<PlatformPort> & { logins?: string[] } = {}): Fake {
+function fakePlatform(overrides: Partial<PlatformPort> & { logins?: string[]; files?: Record<string, string> } = {}): Fake {
   const calls: Call[] = [];
+  const files = overrides.files ?? {};
   const record = (method: string, args: unknown[]): void => {
     calls.push({ method, args });
   };
@@ -107,6 +108,11 @@ function fakePlatform(overrides: Partial<PlatformPort> & { logins?: string[] } =
     isEmptyDirectory: () => false,
     pathKind: () => 'directory',
     homeDirectory: () => '/Users/test',
+    readTextFile: (path) => files[path] ?? null,
+    writeTextFile: (path, content) => {
+      files[path] = content;
+      record('writeTextFile', [path, content]);
+    },
     ...overrides,
   };
   return { platform, calls };
@@ -126,7 +132,7 @@ function profile(overrides: Partial<AccountProfile> = {}): AccountProfile {
 }
 
 function target(overrides: Partial<LaunchTarget> & { profile?: AccountProfile } = {}): LaunchTarget {
-  return { profile: profile(), mode: 'cli', projectPath: PROJECT, cliOverride: null, ...overrides };
+  return { profile: profile(), mode: 'cli', projectPath: PROJECT, cliOverride: null, prompt: null, ...overrides };
 }
 
 const callsOf = (fake: Fake, method: string): unknown[][] => fake.calls.filter((call) => call.method === method).map((call) => call.args);
@@ -200,6 +206,155 @@ describe('Codex CLI', () => {
     await launcher.launch(await launcher.plan(target({ profile: codex })));
 
     expect(callsOf(fake, 'openTerminal')[0]?.[0]).toMatchObject({ executable: '/bin/codex', extraEnv: { CODEX_HOME: '/Users/test/codex-b' } });
+  });
+});
+
+describe('the opening prompt (TDD §8.2, SPIKE-13)', () => {
+  const prompt = { text: `Use the context-resume skill. Context documents: /d/T\u00e0i li\u1ec7u $(touch x) 'q'`, addDir: '/d/T\u00e0i li\u1ec7u' };
+
+  it('puts the prompt last and keeps --add-dir from swallowing it', async () => {
+    const fake = fakePlatform();
+    const launcher = createLauncher(fake.platform);
+
+    const outcome = await launcher.launch(await launcher.plan(target({ prompt })));
+
+    expect((callsOf(fake, 'openTerminal')[0]?.[0] as { args: string[] }).args).toEqual([`--add-dir=${prompt.addDir}`, prompt.text]);
+    expect(outcome.userActionRequired.join()).toContain('tin tưởng folder');
+    expect(outcome.userActionRequired.join()).not.toContain('Nhập prompt');
+  });
+
+  it('gives Codex the folder too, without the Claude trust step', async () => {
+    const fake = fakePlatform();
+    const launcher = createLauncher(fake.platform);
+
+    const plan = await launcher.plan(target({ prompt, profile: profile({ provider: 'codex' }) }));
+    await launcher.launch(plan);
+
+    expect((callsOf(fake, 'openTerminal')[0]?.[0] as { args: string[] }).args).toEqual([`--add-dir=${prompt.addDir}`, prompt.text]);
+    expect(plan.steps.map((step) => step.label).join()).not.toContain('tin tưởng');
+  });
+
+  it('grants Claude, not Codex, the folders it only has to read', () => {
+    const withTranscript = { text: 'x', addDir: '/docs', readDirs: ['/sessions'] };
+    expect(cliPromptArgs(withTranscript, 'claude')).toEqual(['--add-dir=/docs', '--add-dir=/sessions', 'x']);
+    expect(cliPromptArgs(withTranscript, 'codex')).toEqual(['--add-dir=/docs', 'x']);
+  });
+
+  it('warns Desktop users that the agent will ask to read the transcript', async () => {
+    const plan = await createLauncher(fakePlatform().platform).plan(target({ mode: 'desktop', prompt: { text: 'x', addDir: null, readDirs: ['/s'] } }));
+    expect(plan.steps.some((step) => step.warning?.includes('transcript'))).toBe(true);
+  });
+
+  it('sends only the prompt when the documents are inside the project', async () => {
+    expect(cliPromptArgs({ text: 'x', addDir: null })).toEqual(['x']);
+    expect(cliPromptArgs(null)).toEqual([]);
+  });
+
+  it('asks Desktop users to paste the copied prompt, and warns about a folder outside the project', async () => {
+    const launcher = createLauncher(fakePlatform().platform);
+
+    const plan = await launcher.plan(target({ mode: 'desktop', prompt }));
+    const outcome = await launcher.launch(plan);
+
+    expect(plan.steps.some((step) => step.warning?.includes('ngoài project'))).toBe(true);
+    expect(outcome.userActionRequired.join()).toContain('dán lời nhắc');
+  });
+
+  it('keeps each account\'s skills in its own config folder, home for the default one', () => {
+    const launcher = createLauncher(fakePlatform().platform);
+
+    expect(launcher.skillsDirectory(profile({ cliConfigRoot: '/a/claude' }))).toBe('/a/claude/skills');
+    expect(launcher.skillsDirectory(profile())).toBe('/Users/test/.claude/skills');
+    expect(launcher.skillsDirectory(profile({ provider: 'codex' }))).toBe('/Users/test/.codex/skills');
+    expect(launcher.sharedSkillsDirectories()).toEqual(['/Users/test/.agents/skills']);
+  });
+});
+
+describe('MCP registration (SPIKE-10, 11, 12)', () => {
+  const server = { command: '/data/bin/agenthub-mcp', args: ['--account=p', '--data=/data dữ liệu'] };
+  const runs = (fake: Fake): string[] => callsOf(fake, 'run').map((call) => (call[1] as string[]).join(' '));
+
+  it('adds the server to a Claude account through its own CLI, with the account env', async () => {
+    const fake = fakePlatform();
+    const launcher = createLauncher(fake.platform);
+    const b = profile({ cliConfigRoot: '/Users/test/claude b' });
+
+    expect(await launcher.mcpRegistration(b, server, null)).toEqual({ pending: ['/Users/test/claude b/.claude.json'], problems: [] });
+    await launcher.registerMcp(b, server, null);
+
+    const add = callsOf(fake, 'run').find((call) => (call[1] as string[])[1] === 'add-json');
+    expect(add?.[1]).toEqual(['mcp', 'add-json', '-s', 'user', 'agenthub', JSON.stringify({ type: 'stdio', ...server })]);
+    expect((add?.[2] as RunOptions).extraEnv).toEqual({ CLAUDE_CONFIG_DIR: '/Users/test/claude b' });
+    expect(runs(fake)).not.toContain('mcp remove -s user agenthub');
+  });
+
+  it('replaces an outdated Claude entry and leaves a current one alone', async () => {
+    const config = (args: string[]) => JSON.stringify({ mcpServers: { agenthub: { type: 'stdio', command: server.command, args }, other: {} } });
+    const outdated = fakePlatform({ files: { '/Users/test/.claude.json': config(['--account=old']) } });
+    await createLauncher(outdated.platform).registerMcp(profile(), server, null);
+    expect(runs(outdated)).toEqual(expect.arrayContaining(['mcp remove -s user agenthub']));
+
+    const current = fakePlatform({ files: { '/Users/test/.claude.json': config(server.args) } });
+    const launcher = createLauncher(current.platform);
+    expect((await launcher.mcpRegistration(profile(), server, null)).pending).toEqual([]);
+    await launcher.registerMcp(profile(), server, null);
+    expect(runs(current).filter((args) => args.startsWith('mcp'))).toEqual([]);
+  });
+
+  it('never touches a config file it cannot parse', async () => {
+    const fake = fakePlatform({ files: { '/Users/test/.claude.json': '{ broken' } });
+    const registration = await createLauncher(fake.platform).mcpRegistration(profile(), server, null);
+
+    expect(registration.pending).toEqual([]);
+    expect(registration.problems[0]).toContain('JSON');
+  });
+
+  it('adds the same entry to the config of the account\'s own Desktop window, keeping what is there', async () => {
+    const desktopConfig = '/Users/test/desktop b/claude_desktop_config.json';
+    const fake = fakePlatform({ files: { [desktopConfig]: JSON.stringify({ mcpServers: { mine: { command: 'x' } }, preferences: { a: 1 } }) } });
+    const b = profile({ cliConfigRoot: '/Users/test/claude b', desktopDataDir: '/Users/test/desktop b' });
+    const launcher = createLauncher(fake.platform);
+
+    expect((await launcher.mcpRegistration(b, server, null)).pending).toContain(desktopConfig);
+    await launcher.registerMcp(b, server, null);
+
+    const written = JSON.parse(callsOf(fake, 'writeTextFile')[0]?.[1] as string) as Record<string, unknown>;
+    expect(written).toEqual({ mcpServers: { mine: { command: 'x' }, agenthub: server }, preferences: { a: 1 } });
+  });
+
+  it('leaves the main Desktop app alone, as it may be signed in to another account', async () => {
+    const fake = fakePlatform();
+    await createLauncher(fake.platform).registerMcp(profile(), server, null);
+    expect(callsOf(fake, 'writeTextFile')).toEqual([]);
+  });
+
+  it('asks Codex itself whether the server is there, and adds it with CODEX_HOME', async () => {
+    let registered: string | null = null;
+    const fake = fakePlatform({
+      run: async (_executable, args, options) => {
+        fake.calls.push({ method: 'run', args: [_executable, args, options] });
+        if (args.join(' ') === 'mcp get agenthub --json') {
+          return registered ? ok(registered) : { exit: 1, stdout: '', stderr: "No MCP server named 'agenthub' found.", timedOut: false, errorCode: null };
+        }
+        return ok();
+      },
+    });
+    const codex = profile({ provider: 'codex', cliConfigRoot: '/Users/test/codex b' });
+    const launcher = createLauncher(fake.platform);
+
+    expect((await launcher.mcpRegistration(codex, server, null)).pending).toEqual(['/Users/test/codex b/config.toml']);
+    await launcher.registerMcp(codex, server, null);
+    const add = callsOf(fake, 'run').find((call) => (call[1] as string[])[1] === 'add');
+    expect(add?.[1]).toEqual(['mcp', 'add', 'agenthub', '--', server.command, ...server.args]);
+    expect((add?.[2] as RunOptions).extraEnv).toEqual({ CODEX_HOME: '/Users/test/codex b' });
+
+    registered = JSON.stringify({ name: 'agenthub', transport: { type: 'stdio', command: server.command, args: server.args } });
+    expect((await launcher.mcpRegistration(codex, server, null)).pending).toEqual([]);
+  });
+
+  it('reports a failed registration', async () => {
+    const fake = fakePlatform({ run: async () => ({ exit: 1, stdout: '', stderr: 'boom', timedOut: false, errorCode: null }) });
+    await expect(createLauncher(fake.platform).registerMcp(profile(), server, null)).rejects.toThrow(/boom/);
   });
 });
 

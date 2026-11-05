@@ -1,16 +1,10 @@
-import type { ClientModeDto, LaunchAttemptDto, LaunchPreviewDto, ProfileDto, ProjectDto } from '@agenthub/contracts';
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { CONTEXT_TOOLS_CONFIRMATION } from '@agenthub/contracts/constants';
+import type { ClientModeDto, LaunchAttemptDto, LaunchPreviewDto, LaunchResultDto, ProfileDto, ProjectDto } from '@agenthub/contracts';
+import { type ReactNode, useEffect, useState } from 'react';
 import { AccountAvatar, PROVIDER_LABELS, needsDecision, windowLabel } from './accounts';
 import { api, unwrap } from './api';
 import { ChevronUpDown, Gear, Monitor, Terminal } from './icons';
 import { Menu, MenuItem, MenuSeparator } from './ui';
-
-const LAUNCH_LABELS = {
-  planned: 'Đang mở',
-  launched: 'Đã mở',
-  manual_step: 'Đã mở',
-  failed: 'Thất bại',
-} as const;
 
 const WORKSPACE_LABELS = {
   opened: 'Đã mở tại folder của project.',
@@ -23,30 +17,28 @@ interface Props {
   project: ProjectDto;
   accounts: ProfileDto[] | undefined;
   onOpenSettings: () => void;
-  // Shown between the launch result and the history, which grows over time.
-  children?: ReactNode;
+  // The task the next launch points the agent at; null leaves the choice to the agent.
+  taskRef: string | null;
+  // The project's earlier launches, newest first: the account last used is picked again.
+  history: LaunchAttemptDto[];
+  // After each launch, so the page reloads the history.
+  onLaunched: () => void;
+  // The task line, shown under the launch bar.
+  taskSummary?: ReactNode;
 }
 
-// Opens an account at the project's folder, and lists the project's earlier launches.
-export function ProjectLaunch({ project, accounts, onOpenSettings, children }: Props) {
+// Opens an account at the project's folder.
+export function ProjectLaunch({ project, accounts, onOpenSettings, taskRef, history, onLaunched, taskSummary }: Props) {
   const [error, setError] = useState<string>();
 
   const [accountId, setAccountId] = useState('');
   const [pending, setPending] = useState<{ mode: ClientModeDto; preview: LaunchPreviewDto }>();
   const [confirmed, setConfirmed] = useState<string[]>([]);
-  const [history, setHistory] = useState<LaunchAttemptDto[]>([]);
-  const [last, setLast] = useState<LaunchAttemptDto>();
+  // Off until the user ticks it: reading another session's transcript is their call (§7.6).
+  const [useTranscript, setUseTranscript] = useState(false);
+  const [last, setLast] = useState<LaunchResultDto>();
+  const [copiedAgain, setCopiedAgain] = useState(false);
   const [busy, setBusy] = useState(false);
-
-  const refreshHistory = useCallback(async () => {
-    const loaded = await unwrap(api.listLaunches({ projectId: project.id }));
-    setHistory(loaded);
-    return loaded;
-  }, [project.id]);
-
-  useEffect(() => {
-    refreshHistory().catch((reason: unknown) => setError((reason as Error).message));
-  }, [refreshHistory]);
 
   // The account last used for this project, until the user picks another one.
   useEffect(() => {
@@ -55,26 +47,30 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, children }: P
     setAccountId(recent?.profileId ?? accounts[0]?.id ?? '');
   }, [accounts, history, accountId]);
 
-  async function execute(mode: ClientModeDto, confirmations: string[]): Promise<void> {
+  async function execute(mode: ClientModeDto, confirmations: string[], skipContextTools = false): Promise<void> {
+    const transcript = useTranscript && pending?.preview.transcript !== null && pending !== undefined;
+    setUseTranscript(false);
     setBusy(true);
     setPending(undefined);
     setConfirmed([]);
     try {
-      setLast(await unwrap(api.executeLaunch({ request: { projectId: project.id, profileId: accountId, mode }, confirmations })));
+      setLast(await unwrap(api.executeLaunch({ request: { projectId: project.id, taskRef, profileId: accountId, mode, ...(skipContextTools ? { skipContextTools } : {}), ...(transcript ? { useTranscript: true } : {}) }, confirmations })));
     } catch (reason) {
       setError((reason as Error).message);
     } finally {
       setBusy(false);
     }
-    await refreshHistory().catch(() => undefined);
+    onLaunched();
   }
 
   async function open(mode: ClientModeDto): Promise<void> {
     setError(undefined);
     setLast(undefined);
+    setCopiedAgain(false);
+    setUseTranscript(false);
     try {
-      const preview = await unwrap(api.planLaunch({ projectId: project.id, profileId: accountId, mode }));
-      if (needsDecision(preview) || preview.permission !== 'allowed') {
+      const preview = await unwrap(api.planLaunch({ projectId: project.id, taskRef, profileId: accountId, mode }));
+      if (needsDecision(preview) || preview.permission !== 'allowed' || preview.transcript !== null) {
         setConfirmed([]);
         setPending({ mode, preview });
       } else {
@@ -96,16 +92,20 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, children }: P
     }
   }
 
-  async function confirmAccount(attemptId: string): Promise<void> {
+  async function copyPrompt(text: string): Promise<void> {
     try {
-      await unwrap(api.confirmLaunchAccount({ attemptId }));
-      await refreshHistory();
+      await unwrap(api.copyText({ text }));
+      setCopiedAgain(true);
     } catch (reason) {
       setError((reason as Error).message);
     }
   }
 
   const missingConfirmation = pending?.preview.requiredConfirmations.some((item) => !confirmed.includes(item.id)) ?? false;
+  // Declining the change to the main config still opens, just without skills and MCP this time.
+  const asksForTools = pending?.preview.requiredConfirmations.some((item) => item.id === CONTEXT_TOOLS_CONFIRMATION) ?? false;
+  const missingOther =
+    pending?.preview.requiredConfirmations.some((item) => item.id !== CONTEXT_TOOLS_CONFIRMATION && !confirmed.includes(item.id)) ?? false;
   const canContinue = pending !== undefined && pending.preview.permission === 'allowed' && !pending.preview.blocker && !missingConfirmation && !busy;
   const account = accounts?.find((item) => item.id === accountId);
 
@@ -174,6 +174,8 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, children }: P
         </div>
       )}
 
+      {taskSummary}
+
       {pending && (
         <div className="card" aria-label="Cần bạn quyết định" role="group">
           {pending.preview.blocker && (
@@ -214,6 +216,24 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, children }: P
               </button>
             </div>
           )}
+          {pending.preview.transcript && (
+            <div className="banner warning" role="group" aria-label="Transcript của phiên cũ">
+              <p>
+                Phiên {pending.preview.transcript.provider === 'claude' ? 'Claude' : 'Codex'} của account "{pending.preview.transcript.sourceAccount}" còn làm tiếp lúc{' '}
+                {new Date(pending.preview.transcript.updatedAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}, sau checkpoint gần nhất (
+                {new Date(pending.preview.transcript.checkpointAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}). Phần đó chưa được ghi lại.
+              </p>
+              {(pending.preview.transcript.otherAccount || pending.preview.transcript.otherProvider) && (
+                <p>
+                  Agent mới thuộc {pending.preview.transcript.otherProvider ? 'provider khác' : 'account khác'} sẽ đọc nội dung của phiên đó, có thể gồm source code. Chỉ đồng ý nếu điều này được phép.
+                </p>
+              )}
+              <label className="choice">
+                <input type="checkbox" checked={useTranscript} onChange={(event) => setUseTranscript(event.target.checked)} />
+                Cho agent mới đọc phần cuối transcript và viết checkpoint bù
+              </label>
+            </div>
+          )}
           {pending.preview.requiredConfirmations.map((item) => (
             <label key={item.id} className="choice">
               <input
@@ -232,6 +252,15 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, children }: P
                 Tiếp tục mở
               </button>
             )}
+            {asksForTools && !pending.preview.blocker && pending.preview.permission === 'allowed' && (
+              <button
+                type="button"
+                disabled={missingOther || busy}
+                onClick={() => void execute(pending.mode, confirmed.filter((id) => id !== CONTEXT_TOOLS_CONFIRMATION), true)}
+              >
+                Mở mà không cài
+              </button>
+            )}
             <button type="button" onClick={() => setPending(undefined)}>
               Huỷ
             </button>
@@ -248,6 +277,21 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, children }: P
       {last?.outcome && (
         <div className="card" role="status" aria-label="Kết quả lần mở">
           <p>{WORKSPACE_LABELS[last.outcome.workspace]}</p>
+          {last.prompt && (
+            <div className="prompt-box" aria-label="Lời nhắc cho phiên mới" role="group">
+              <p className="hint">
+                {last.mode === 'cli'
+                  ? 'Đã gửi làm prompt đầu tiên của CLI:'
+                  : last.copied
+                    ? 'Đã copy vào clipboard. Dán vào cuộc trò chuyện mới:'
+                    : 'Dán vào cuộc trò chuyện mới:'}
+              </p>
+              <code className="prompt-text">{last.prompt}</code>
+              <button type="button" onClick={() => void copyPrompt(last.prompt as string)}>
+                {copiedAgain ? 'Đã copy' : 'Copy lại'}
+              </button>
+            </div>
+          )}
           {last.outcome.warnings.map((warning) => (
             <p key={warning} className="banner warning">
               {warning}
@@ -263,34 +307,6 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, children }: P
         </div>
       )}
 
-      {children}
-
-      <section className="stack" aria-label="Lịch sử mở">
-        <h2>Lịch sử mở</h2>
-        {history.length === 0 && <p className="hint">Project này chưa được mở lần nào.</p>}
-        <ul className="list">
-          {history.map((attempt) => (
-            <li key={attempt.id} className="history-item">
-              <span className="grow">
-                {new Date(attempt.createdAt).toLocaleString('vi-VN')} — {attempt.profileAlias}, {attempt.mode === 'cli' ? 'Terminal' : 'Desktop'}:{' '}
-                {LAUNCH_LABELS[attempt.status]}
-                {attempt.errorCode ? ` (${attempt.errorCode})` : ''}
-              </span>
-              {/* Never says "switched": AgentHub cannot observe which account an app uses (TDD §8.4). */}
-              {attempt.accountConfirmedAt ? (
-                <span className="badge">Bạn đã xác nhận account</span>
-              ) : (
-                <span className="badge manual">Account chưa xác minh</span>
-              )}
-              {!attempt.accountConfirmedAt && attempt.status !== 'failed' && (
-                <button type="button" onClick={() => void confirmAccount(attempt.id)}>
-                  Xác nhận đúng account
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      </section>
     </>
   );
 }

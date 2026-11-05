@@ -1,6 +1,8 @@
 import {
   type AccountProfile,
+  CONTEXT_LANGUAGES,
   type ClientMode,
+  type ContextLanguage,
   DomainError,
   type LaunchAttempt,
   type LaunchOutcome,
@@ -9,7 +11,8 @@ import {
   isSamePath,
   requireLabel,
 } from '@agenthub/domain';
-import type { MetadataStore, PathInspector } from './index';
+import { contextWarnings, findTask } from './context-view';
+import type { ContextDocuments, GitObserver, MetadataStore, NoteStore, PathInspector, StoredProject } from './index';
 
 export const CLI_PATH_KEYS = { claude: 'cli_path_claude', codex: 'cli_path_codex' } as const;
 
@@ -80,6 +83,10 @@ export interface PlatformPort {
   defaultDesktopDataDirs(): string[];
   ensureDirectory(path: string): void;
   isEmptyDirectory(path: string): boolean;
+  // Small config files only; null when the file does not exist.
+  readTextFile(path: string): string | null;
+  // Temp file and rename, so a crash never leaves half a config behind.
+  writeTextFile(path: string, content: string): void;
   pathKind(path: string): 'directory' | 'file' | 'missing' | 'relative';
   homeDirectory(): string;
 }
@@ -107,12 +114,62 @@ export interface LaunchPlan {
   action: unknown;
 }
 
+// What the new session is asked first (TDD §8.2). A CLI takes it as its first prompt; a Desktop
+// app cannot, so the user pastes it.
+export interface LaunchPrompt {
+  text: string;
+  // The context folder when it lies outside the project, so the agent may read and write it.
+  addDir: string | null;
+  // Folders the agent only has to read, such as the one holding a transcript (SPIKE-15). Claude
+  // needs them granted; Codex reads outside its workspace already.
+  readDirs?: string[];
+}
+
+// --- Fallback transcript (ADR-019 item 10): only where a session file is, never what it says. ---
+
+export interface SessionLocation {
+  path: string;
+  cwd: string;
+  updatedAt: string;
+}
+
+export interface SessionLocator {
+  // configRoot null means the provider's default folder.
+  newest(provider: Provider, configRoot: string | null, folder: string): SessionLocation | null;
+}
+
+// Shown before opening, for the user to accept or not (§7.6).
+export interface TranscriptOffer {
+  path: string;
+  updatedAt: string;
+  sourceProfileId: string;
+  sourceAccount: string;
+  provider: Provider;
+  // Moving source code between accounts or providers needs the user's eyes (§8.3 item 3).
+  otherAccount: boolean;
+  otherProvider: boolean;
+  checkpointAt: string;
+}
+
 export interface LaunchTarget {
   profile: AccountProfile;
   mode: ClientMode;
   // null opens the account on its own: the app without a folder, or Terminal at home.
   projectPath: string | null;
   cliOverride: string | null;
+  prompt: LaunchPrompt | null;
+}
+
+// --- Skills: one copy owned by AgentHub, linked into each allowed account (ADR-019, SPIKE-14). ---
+
+// 'foreign': something of the same name that AgentHub did not put there; it is never replaced.
+export type SkillPresence = 'installed' | 'missing' | 'foreign';
+
+export interface SkillInstaller {
+  readonly names: readonly string[];
+  inspect(directory: string): Record<string, SkillPresence>;
+  // Refreshes AgentHub's copy and links only the missing names.
+  install(directory: string): void;
 }
 
 export interface ProfileStatus {
@@ -162,8 +219,28 @@ export interface UsageReport {
 
 export type UsageView = UsageReport & { checkedAt: string };
 
+// How a client starts AgentHub's MCP server for one account (SPIKE-10): the shim and its arguments.
+export interface McpServerSpec {
+  command: string;
+  args: string[];
+}
+
+export interface McpRegistration {
+  // Human names of the config files that need the server added or corrected; empty when done.
+  pending: string[];
+  // Why a config cannot be checked or changed, such as a missing CLI or an unreadable file.
+  problems: string[];
+}
+
 export interface Launcher {
   plan(target: LaunchTarget): Promise<LaunchPlan>;
+  // Registered under the same name everywhere, as Claude Desktop prefers its own copy (SPIKE-12).
+  mcpRegistration(profile: AccountProfile, server: McpServerSpec, cliOverride: string | null): Promise<McpRegistration>;
+  registerMcp(profile: AccountProfile, server: McpServerSpec, cliOverride: string | null): Promise<void>;
+  // Where the provider's CLI reads this account's own skills.
+  skillsDirectory(profile: AccountProfile): string;
+  // A folder the provider reads for every account, so AgentHub must never install there.
+  sharedSkillsDirectories(): string[];
   launch(plan: LaunchPlan): Promise<LaunchOutcome>;
   status(profile: AccountProfile, cliOverride: string | null): Promise<ProfileStatus>;
   // Asks the official CLI, read-only; it spends no tokens of the account (SPIKE-16).
@@ -180,6 +257,15 @@ export interface LaunchServiceDependencies {
   launcher: Launcher;
   platform: PlatformPort;
   paths: PathInspector;
+  skills: SkillInstaller;
+  // null when the MCP shim is not available, for example in a test without one.
+  mcpServer: (profileId: string) => McpServerSpec | null;
+  defaultContextDirectory: (projectId: string) => string;
+  documents: ContextDocuments;
+  git: GitObserver;
+  notes: NoteStore;
+  handoffDirectory: (projectId: string) => string;
+  sessions: SessionLocator;
   deviceId: () => string;
   newId: () => string;
   now: () => string;
@@ -189,6 +275,12 @@ export interface LaunchServiceDependencies {
 
 export interface LaunchRequest {
   projectId: string;
+  // A task from the project's documents (ContextTask.ref); the agent is pointed at it.
+  taskRef?: string | null | undefined;
+  // The user chose to open without adding skills and MCP to this account's config this time.
+  skipContextTools?: boolean | undefined;
+  // The user accepted the transcript offer of the preview (§7.6).
+  useTranscript?: boolean | undefined;
   profileId: string;
   mode: ClientMode;
 }
@@ -206,9 +298,25 @@ export interface LaunchPreview {
   permission: PermissionState;
   projectName: string;
   profileAlias: string;
+  prompt: string | null;
+  transcript: TranscriptOffer | null;
 }
 
 export type LaunchHistoryEntry = LaunchAttempt & { profileAlias: string };
+
+// The prompt is only kept for this reply, so the UI can show and copy it.
+export type LaunchResult = LaunchHistoryEntry & { prompt: string | null };
+
+// One consent covers both skills and MCP in the main config folder (ADR-019 item 6).
+export const CONTEXT_TOOLS_CONFIRMATION = 'context-tools-main-config';
+
+const LANGUAGE_NAMES: Record<ContextLanguage, string> = { en: 'English', vi: 'Vietnamese' };
+
+export const isInside = (child: string, parent: string): boolean => {
+  const a = child.normalize('NFC').replace(/\/+$/, '');
+  const b = parent.normalize('NFC').replace(/\/+$/, '');
+  return a === b || a.startsWith(`${b}/`);
+};
 
 export interface ProfileInput {
   provider: Provider;
@@ -247,7 +355,24 @@ interface ActiveLogin {
   state: LoginState;
 }
 
-export function createLaunchService({ store, launcher, platform, paths, deviceId, newId, now, accountDirectories }: LaunchServiceDependencies) {
+export function createLaunchService({
+  store,
+  launcher,
+  platform,
+  paths,
+  skills,
+  mcpServer,
+  defaultContextDirectory,
+  documents,
+  git,
+  notes,
+  handoffDirectory,
+  sessions,
+  deviceId,
+  newId,
+  now,
+  accountDirectories,
+}: LaunchServiceDependencies) {
   // One at a time: a Codex login always listens on the same local port.
   let activeLogin: ActiveLogin | undefined;
   let loginRequest = 0;
@@ -327,20 +452,222 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
     return allowed ? 'allowed' : 'denied';
   }
 
-  async function preview(request: LaunchRequest): Promise<LaunchPreview> {
+  // TDD §8.2. Tasks are not chosen in AgentHub yet, so the agent reads STATUS and asks.
+  interface PromptPlan {
+    prompt: LaunchPrompt;
+    taskRef: string | null;
+    // §8.3 item 5: remind about a checkpoint, never block.
+    warnings: PlannedStep[];
+  }
+
+  async function promptFor(project: StoredProject & { path: string }, taskRef: string | null): Promise<PromptPlan | null> {
+    if (!project.context.enabled) {
+      if (taskRef) throw new DomainError('VALIDATION_FAILED', 'Project này chưa bật tài liệu context, nên không có task để chọn.');
+      // §8.2: without documents, the newest saved handoff is the context.
+      const folder = handoffDirectory(project.id);
+      const latest = notes.list(folder)[0];
+      if (!latest) return null;
+      const file = `${folder}/${latest.id}.md`;
+      const text = `Continue from the latest AgentHub handoff for this project: ${file} — read it, check Git, and tell me what you understand before changing anything.`;
+      return { prompt: { text, addDir: isInside(folder, project.path) ? null : folder }, taskRef: null, warnings: [] };
+    }
+    const folder = project.contextPath ?? defaultContextDirectory(project.id);
+    if (platform.pathKind(folder) !== 'directory') {
+      throw new DomainError('PROJECT_PATH_MISSING', 'Không tìm thấy folder tài liệu context. Hãy chọn lại nơi lưu trong trang project.');
+    }
+    const addDir = isInside(folder, project.path) ? null : folder;
+    const language = LANGUAGE_NAMES[CONTEXT_LANGUAGES.includes(project.context.language) ? project.context.language : 'en'];
+    const initialised = platform.pathKind(`${folder}/README.md`) === 'file';
+    if (!initialised) {
+      if (taskRef) throw new DomainError('NOT_FOUND', 'Tài liệu chưa được tạo, nên chưa có task.');
+      // Notes the project already keeps in another shape are linked, not copied (ADR-020 item 4).
+      const existing = documents.detect(project.path).others.filter((path) => !isInside(`${project.path}/${path}`, folder));
+      const linked = existing.length > 0 ? ` Existing docs in the project folder: ${existing.join(', ')} — link and summarise them, do not copy them.` : '';
+      const text = `Use the context-init skill. Context documents: ${folder} (not set up yet). Write them in ${language}; ask me for the brief before writing.${linked}`;
+      return { prompt: { text, addDir }, taskRef: null, warnings: [] };
+    }
+    if (!taskRef) {
+      const text = `Use the context-resume skill. Context documents: ${folder} — read them, check Git, and tell me what you understand before changing anything.`;
+      return { prompt: { text, addDir }, taskRef: null, warnings: [] };
+    }
+    const overview = documents.overview(folder);
+    const found = findTask(overview, taskRef);
+    if (!found) throw new DomainError('NOT_FOUND', 'Không tìm thấy task này trong tài liệu. Hãy tải lại trang project.');
+    const observation = await git.observe(project.path);
+    const workstream = overview.workstreams.find((item) => item.tasks.includes(found.task));
+    const warnings = contextWarnings(overview, observation, new Date(now()))
+      .filter((warning) => warning.taskRef === taskRef || (warning.kind === 'branch_mismatch' && warning.workstream === workstream?.slug))
+      .map((warning): PlannedStep => ({ label: 'Kiểm tra ngữ cảnh trước khi mở', execution: 'manual', warning: warning.message }));
+    const text = `Use the context-resume skill for ${found.task.id} (${taskRef}). Context documents: ${folder} — read them, check Git, and tell me what you understand before changing anything.`;
+    return { prompt: { text, addDir }, taskRef, warnings };
+  }
+
+  interface ContextSetup {
+    skillsDirectory: string;
+    installSkills: boolean;
+    mcp: McpServerSpec | null;
+    steps: PlannedStep[];
+    confirmations: RequiredConfirmation[];
+  }
+
+  // Accounts get the skills and the MCP server when they open a project, and the user's own
+  // skills of the same name are left alone.
+  async function contextSetup(profile: AccountProfile, mode: ClientMode): Promise<ContextSetup> {
+    const directory = launcher.skillsDirectory(profile);
+    const state = skills.inspect(directory);
+    const missing = skills.names.filter((name) => state[name] === 'missing');
+    const foreign = skills.names.filter((name) => state[name] === 'foreign');
+    const steps: PlannedStep[] = [];
+    const mainConfigChanges: string[] = [];
+    if (missing.length > 0) {
+      steps.push({ label: `Cài skill ${missing.join(', ')} cho account này`, execution: 'automatic' });
+      mainConfigChanges.push(`${missing.length} skill vào ${directory}`);
+    }
+    if (foreign.length > 0) {
+      steps.push({
+        label: 'Giữ nguyên skill trùng tên của bạn',
+        execution: 'automatic',
+        warning: `${directory} đã có ${foreign.join(', ')} không do AgentHub cài; agent sẽ dùng bản đó.`,
+      });
+    }
+    const leaked = launcher
+      .sharedSkillsDirectories()
+      .filter((shared) => Object.values(skills.inspect(shared)).some((presence) => presence !== 'missing'));
+    for (const shared of leaked) {
+      steps.push({
+        label: 'Kiểm tra skill dùng chung',
+        execution: 'manual',
+        warning: `${shared} có skill context-*. Mọi account đều đọc thư mục này, nên nên xoá chúng khỏi đó.`,
+      });
+    }
+
+    const server = mcpServer(profile.id);
+    let mcp: McpServerSpec | null = null;
+    if (server) {
+      const registration = await launcher.mcpRegistration(profile, server, cliOverride(profile.provider));
+      for (const problem of registration.problems) {
+        steps.push({ label: 'Đăng ký MCP của AgentHub', execution: 'manual', warning: `${problem} Agent vẫn đọc tài liệu qua đường dẫn trong lời nhắc.` });
+      }
+      if (registration.pending.length > 0) {
+        mcp = server;
+        const desktopNote =
+          mode === 'desktop' && profile.desktopDataDir !== null
+            ? { warning: 'Nếu cửa sổ Desktop của account này đang mở, hãy thoát rồi mở lại để nó nạp MCP.' }
+            : {};
+        steps.push({ label: 'Đăng ký MCP "agenthub" cho account này', execution: 'automatic', ...desktopNote });
+        mainConfigChanges.push(`MCP "agenthub" vào ${registration.pending.join(', ')}`);
+      }
+    }
+
+    const confirmations: RequiredConfirmation[] =
+      profile.cliConfigRoot === null && mainConfigChanges.length > 0
+        ? [
+            {
+              id: CONTEXT_TOOLS_CONFIRMATION,
+              label: `Thêm ${mainConfigChanges.join(' và ')}? Đây là cấu hình chính của bạn. AgentHub chỉ thêm phần của nó, không sửa skill hay MCP server khác.`,
+            },
+          ]
+        : [];
+    return {
+      skillsDirectory: directory,
+      installSkills: skills.names.some((name) => state[name] !== 'foreign'),
+      mcp,
+      steps,
+      confirmations,
+    };
+  }
+
+  // The newest checkpoint the documents or handoffs record: the selected task's, else any.
+  function lastCheckpoint(project: StoredProject, taskRef: string | null): number | null {
+    if (!project.context.enabled) {
+      const newest = notes.list(handoffDirectory(project.id))[0];
+      return newest ? Date.parse(newest.createdAt) : null;
+    }
+    const folder = project.contextPath ?? defaultContextDirectory(project.id);
+    if (platform.pathKind(folder) !== 'directory') return null;
+    const tasks = documents.overview(folder).workstreams.flatMap((workstream) => workstream.tasks);
+    const times = tasks
+      .filter((task) => taskRef === null || task.ref === taskRef)
+      .map((task) => (task.lastHandoff?.at ? Date.parse(task.lastHandoff.at) : Number.NaN))
+      .filter((time) => !Number.isNaN(time));
+    return times.length > 0 ? Math.max(...times) : null;
+  }
+
+  // ADR-019 item 10: a session of this folder, in any account allowed here, that went on after
+  // the last checkpoint. Without any checkpoint there is nothing to compare, so no offer.
+  function transcriptOffer(project: StoredProject & { path: string }, target: AccountProfile, taskRef: string | null): TranscriptOffer | null {
+    const checkpoint = lastCheckpoint(project, taskRef);
+    if (checkpoint === null) return null;
+    let best: { location: SessionLocation; profile: AccountProfile } | null = null;
+    for (const candidate of store.profiles.list()) {
+      if (store.permissions.get(project.id, candidate.id) !== true) continue;
+      const location = sessions.newest(candidate.provider, candidate.cliConfigRoot, project.path);
+      if (location && (!best || location.updatedAt > best.location.updatedAt)) best = { location, profile: candidate };
+    }
+    // A minute of slack: the checkpoint itself is written from inside that session.
+    if (!best || Date.parse(best.location.updatedAt) <= checkpoint + 60_000) return null;
+    return {
+      path: best.location.path,
+      updatedAt: best.location.updatedAt,
+      sourceProfileId: best.profile.id,
+      sourceAccount: accountName(best.profile),
+      provider: best.profile.provider,
+      otherAccount: best.profile.id !== target.id,
+      otherProvider: best.profile.provider !== target.provider,
+      checkpointAt: new Date(checkpoint).toISOString(),
+    };
+  }
+
+  function withTranscript(prompt: LaunchPrompt, offer: TranscriptOffer, documentsOn: boolean): LaunchPrompt {
+    const source = `${offer.provider === 'claude' ? 'Claude' : 'Codex'} account ${offer.sourceAccount}, last active ${offer.updatedAt}`;
+    const write = documentsOn
+      ? 'first write the missing checkpoint with the context-checkpoint skill'
+      : 'first save the missing handoff with the agenthub MCP tool context_save_handoff';
+    const text =
+      `${prompt.text} The previous session (${source}) went on after the last checkpoint. Its transcript is ${offer.path}. ` +
+      `Read only its last 200 lines (for example tail -n 200), not the whole file and nothing else in that folder, then ${write}, marking what you take from it as reported.`;
+    const folder = offer.path.slice(0, offer.path.lastIndexOf('/'));
+    return { ...prompt, text, readDirs: [...(prompt.readDirs ?? []), folder] };
+  }
+
+  async function preparedPlan(request: LaunchRequest) {
     const { project, profile } = requestContext(request);
+    const promptPlan = await promptFor(project, request.taskRef ?? null);
+    const offer = promptPlan ? transcriptOffer(project, profile, promptPlan.taskRef) : null;
+    const prompt =
+      promptPlan && offer && request.useTranscript ? withTranscript(promptPlan.prompt, offer, project.context.enabled) : (promptPlan?.prompt ?? null);
     const plan = await launcher.plan({
       profile,
       mode: request.mode,
       projectPath: project.path,
       cliOverride: cliOverride(profile.provider),
+      prompt,
     });
-    return { plan, permission: permissionOf(project.id, profile.id), projectName: project.name, profileAlias: accountName(profile) };
+    // Every project gets the tools: without documents, MCP is how a session saves its handoff.
+    const setup = !plan.blocker && !request.skipContextTools ? await contextSetup(profile, request.mode) : null;
+    const merged: LaunchPlan = {
+      ...plan,
+      steps: [...(promptPlan?.warnings ?? []), ...(setup?.steps ?? []), ...plan.steps],
+      requiredConfirmations: [...(setup?.confirmations ?? []), ...plan.requiredConfirmations],
+    };
+    return { project, profile, prompt, taskRef: promptPlan?.taskRef ?? null, plan: merged, setup, offer };
+  }
+
+  async function preview(request: LaunchRequest): Promise<LaunchPreview> {
+    const { project, profile, prompt, plan, offer } = await preparedPlan(request);
+    return {
+      plan,
+      permission: permissionOf(project.id, profile.id),
+      projectName: project.name,
+      profileAlias: accountName(profile),
+      prompt: prompt?.text ?? null,
+      transcript: offer,
+    };
   }
 
   function previewAccount(request: AccountLaunchRequest): Promise<LaunchPlan> {
     const profile = requireProfile(request.profileId);
-    return launcher.plan({ profile, mode: request.mode, projectPath: null, cliOverride: cliOverride(profile.provider) });
+    return launcher.plan({ profile, mode: request.mode, projectPath: null, cliOverride: cliOverride(profile.provider), prompt: null });
   }
 
   return {
@@ -506,9 +833,9 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
 
     preview,
 
-    async execute(request: LaunchRequest, confirmations: string[]): Promise<LaunchHistoryEntry> {
-      const { project, profile } = requestContext(request);
-      const { plan, permission } = await preview(request);
+    async execute(request: LaunchRequest, confirmations: string[]): Promise<LaunchResult> {
+      const { project, profile, plan, prompt, taskRef, setup } = await preparedPlan(request);
+      const permission = permissionOf(project.id, profile.id);
 
       if (permission !== 'allowed') {
         throw new DomainError('PROFILE_NOT_ALLOWED', `Account "${accountName(profile)}" chưa được phép dùng project "${project.name}".`);
@@ -520,7 +847,7 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
       const attempt = {
         id: newId(),
         projectId: project.id,
-        taskRef: null,
+        taskRef,
         profileId: profile.id,
         mode: request.mode,
         status: 'planned' as const,
@@ -530,7 +857,19 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
       store.launches.insert(attempt);
 
       try {
-        const outcome = await launcher.launch(plan);
+        // Also refreshes AgentHub's copy, so an app update reaches accounts already set up.
+        if (setup?.installSkills) skills.install(setup.skillsDirectory);
+        // MCP is a convenience: the prompt still names the folder, so a failure only warns.
+        let mcpWarning: string | null = null;
+        if (setup?.mcp) {
+          try {
+            await launcher.registerMcp(profile, setup.mcp, cliOverride(profile.provider));
+          } catch (error) {
+            mcpWarning = `Không đăng ký được MCP: ${(error as Error).message}`;
+          }
+        }
+        const launched = await launcher.launch(plan);
+        const outcome = mcpWarning ? { ...launched, warnings: [...launched.warnings, mcpWarning] } : launched;
         const status = outcome.userActionRequired.length > 0 ? 'manual_step' : 'launched';
         store.launches.finish(attempt.id, status, null, outcome);
       } catch (error) {
@@ -538,7 +877,7 @@ export function createLaunchService({ store, launcher, platform, paths, deviceId
         store.launches.finish(attempt.id, 'failed', code, null);
         throw error;
       }
-      return { ...(store.launches.get(attempt.id) as LaunchAttempt), profileAlias: accountName(profile) };
+      return { ...(store.launches.get(attempt.id) as LaunchAttempt), profileAlias: accountName(profile), prompt: prompt?.text ?? null };
     },
 
     previewAccount,

@@ -1,21 +1,27 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  type GitObservation,
   type LaunchService,
+  type LaunchTarget,
+  type SessionLocation,
   type Launcher,
   type LoginProcess,
   type MetadataStore,
   type PlatformPort,
   type Workspace,
+  CONTEXT_TOOLS_CONFIRMATION,
   createLaunchService,
   createWorkspace,
 } from '@agenthub/application';
 import { DomainError, type LaunchOutcome, accountName } from '@agenthub/domain';
-import { openMetadataStore } from '@agenthub/persistence';
-import { createMacPlatform, createPathInspector } from '@agenthub/platform';
+import { appendHandoff, conflictingFiles, contextFiles, copyContextFiles, detectContext, openMetadataStore, readContextOverview, listNotes, moveNote, readNote, saveNote } from '@agenthub/persistence';
+import { createMacPlatform, createPathInspector, createSkillInstaller } from '@agenthub/platform';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+const documentPorts = { overview: readContextOverview, detect: (path: string) => detectContext(path), files: contextFiles, conflicts: conflictingFiles, copy: copyContextFiles };
 
 // Real persistence with a scripted launcher: this tests the rules around a launch.
 let root: string;
@@ -54,6 +60,15 @@ function pendingLogin(url = 'https://claude.com/login'): LoginProcess & { finish
 const outcome: LaunchOutcome = { appOpened: true, workspace: 'opened', sessionStarted: false, userActionRequired: [], warnings: [] };
 
 let plannedPaths: (string | null)[] = [];
+let plannedPrompts: (LaunchTarget['prompt'])[] = [];
+// Which accounts have AgentHub's MCP server, and whether registering fails.
+let mcpRegistered = new Set<string>();
+let mcpFails = false;
+// Newest session per account config folder ('main' for the default one).
+let sessionsByRoot = new Map<string, SessionLocation>();
+let gitState: GitObservation = { state: 'not_repo', root: null, branch: null, head: null, headAt: null, dirty: null };
+const gitObserver = { observe: async () => gitState };
+const documents = { ...documentPorts, appendHandoff: (folder: string, ref: string, entry: string) => void appendHandoff(folder, ref, entry) };
 let usageReads = 0;
 let usagePercent = 10;
 let clock = Date.parse('2026-11-04T10:00:00.000Z');
@@ -61,7 +76,16 @@ let clock = Date.parse('2026-11-04T10:00:00.000Z');
 const launcher: Launcher = {
   plan: async (target) => {
     plannedPaths.push(target.projectPath);
+    plannedPrompts.push(target.prompt);
     return plan;
+  },
+  skillsDirectory: (profile) => join(profile.cliConfigRoot ?? join(root, 'home', '.claude'), 'skills'),
+  sharedSkillsDirectories: () => [join(root, 'home', '.agents', 'skills')],
+  mcpRegistration: async (profile) => ({ pending: mcpRegistered.has(profile.id) ? [] : [`${profile.id}/config`], problems: [] }),
+  registerMcp: async (profile, server) => {
+    if (mcpFails) throw new DomainError('LAUNCH_FAILED', 'Không đăng ký được MCP cho Claude: boom');
+    expect(server.args).toContain(`--account=${profile.id}`);
+    mcpRegistered.add(profile.id);
   },
   launch: () => {
     launched += 1;
@@ -104,6 +128,12 @@ function open(): void {
     paths,
     defaultContextDirectory: (projectId) => join(root, 'projects', projectId, 'context'),
     ensureDirectory: (path) => mkdirSync(path, { recursive: true }),
+    trash: async () => undefined,
+    documents,
+    git: gitObserver,
+    notes: { list: (folder) => listNotes(folder), read: readNote, save: saveNote, move: moveNote },
+    handoffDirectory: (projectId) => join(root, 'projects', projectId, 'handoffs'),
+    looseChatDirectory: join(root, 'loose-chats'),
     newId: randomUUID,
     now,
   });
@@ -123,6 +153,15 @@ function open(): void {
     launcher,
     platform,
     paths,
+    // The skills that ship with the app, linked from a copy in the test's own data folder.
+    skills: createSkillInstaller({ source: join(__dirname, '..', 'skills'), shared: join(root, 'data', 'skills') }),
+    mcpServer: (profileId) => ({ command: join(root, 'bin', 'agenthub-mcp'), args: [`--account=${profileId}`, `--data=${root}`] }),
+    defaultContextDirectory: (projectId) => join(root, 'projects', projectId, 'context'),
+    documents,
+    git: gitObserver,
+    notes: { list: (folder) => listNotes(folder), read: readNote, save: saveNote, move: moveNote },
+    handoffDirectory: (projectId) => join(root, 'projects', projectId, 'handoffs'),
+    sessions: { newest: (_provider, configRoot) => sessionsByRoot.get(configRoot ?? 'main') ?? null },
     deviceId: () => workspace.getSettings().deviceId,
     newId: randomUUID,
     now: () => new Date(clock).toISOString(),
@@ -153,6 +192,11 @@ beforeEach(() => {
   mkdirSync(projectDir);
   launched = 0;
   plannedPaths = [];
+  plannedPrompts = [];
+  mcpRegistered = new Set();
+  mcpFails = false;
+  sessionsByRoot = new Map();
+  gitState = { state: 'not_repo', root: null, branch: null, head: null, headAt: null, dirty: null };
   usageReads = 0;
   usagePercent = 10;
   clock = Date.parse('2026-11-04T10:00:00.000Z');
@@ -518,7 +562,7 @@ describe('launch rules', () => {
 
   it('requires every confirmation the plan asks for', async () => {
     const { project } = context();
-    const profile = claudeProfile();
+    const profile = claudeProfile('A', join(root, 'a'));
     launching.setPermission({ projectId: project.id, profileId: profile.id, allowed: true });
     plan = { ...plan, requiredConfirmations: [{ id: 'risky', label: 'Vẫn thử?' }] };
     const request = { projectId: project.id, profileId: profile.id, mode: 'desktop' } as const;
@@ -554,7 +598,7 @@ describe('opening an account without a project', () => {
 describe('launch history', () => {
   function allowed() {
     const { project } = context();
-    const profile = claudeProfile('Cá nhân');
+    const profile = claudeProfile('Cá nhân', join(root, 'ca-nhan'));
     launching.setPermission({ projectId: project.id, profileId: profile.id, allowed: true });
     return { project, profile, request: { projectId: project.id, profileId: profile.id, mode: 'desktop' } as const };
   }
@@ -605,5 +649,291 @@ describe('launch history', () => {
 
     expect(launching.listProfiles()).toEqual([]);
     expect(launching.listLaunches(project.id)[0]?.profileAlias).toBe('Account đã gỡ');
+  });
+});
+
+describe('opening with context documents (ADR-019, TDD §8.2)', () => {
+  const SKILLS = ['context-capture', 'context-checkpoint', 'context-init', 'context-resume'];
+
+  function allowedProject(cliConfigRoot: string | null = join(root, 'account-b')) {
+    const project = workspace.addProject({ path: projectDir });
+    const profile = claudeProfile('B', cliConfigRoot);
+    launching.setPermission({ projectId: project.id, profileId: profile.id, allowed: true });
+    return { project, profile, request: { projectId: project.id, profileId: profile.id, mode: 'cli' } as const };
+  }
+
+  it('without documents or a handoff, opens with no prompt but still gives the account its tools', async () => {
+    const { profile, request } = allowedProject();
+
+    const result = await launching.execute(request, []);
+
+    expect(result.prompt).toBeNull();
+    expect(plannedPrompts).toEqual([null]);
+    // MCP is how a session of this project saves its handoff (§7.5).
+    expect([...mcpRegistered]).toEqual([profile.id]);
+    expect(existsSync(join(root, 'account-b', 'skills', 'context-checkpoint'))).toBe(true);
+  });
+
+  it('without documents, asks the next session to read the newest handoff, with access to its folder', async () => {
+    const { project, request } = allowedProject();
+    const folder = join(root, 'projects', project.id, 'handoffs');
+    const older = saveNote(folder, { title: 'Cũ', content: 'a', source: 't', now: new Date('2026-11-04T00:00:00Z') });
+    const newer = saveNote(folder, { title: 'Mới', content: 'b', source: 't', now: new Date('2026-11-05T00:00:00Z') });
+
+    const result = await launching.execute(request, []);
+
+    expect(result.prompt).toContain(`${folder}/${newer.id}.md`);
+    expect(result.prompt).not.toContain(older.id);
+    expect(plannedPrompts.at(-1)?.addDir).toBe(folder);
+  });
+
+  it('opens without touching the main config when the user declines, and asks again next time', async () => {
+    const { request } = allowedProject(null);
+
+    expect(await codeOf(() => launching.execute(request, []))).toBe('CONFIRMATION_REQUIRED');
+    const result = await launching.execute({ ...request, skipContextTools: true }, []);
+
+    expect(result.status).toBe('launched');
+    expect(mcpRegistered.size).toBe(0);
+    expect(existsSync(join(root, 'home', '.claude', 'skills'))).toBe(false);
+    expect((await launching.preview(request)).plan.requiredConfirmations.map((item) => item.id)).toEqual([CONTEXT_TOOLS_CONFIRMATION]);
+  });
+
+  it('asks a new session to set up empty documents, in the project language, with access to the folder', async () => {
+    const { project, request } = allowedProject();
+    const folder = workspace.updateProjectContext({ id: project.id, enabled: true, language: 'vi' }).context.path;
+
+    const preview = await launching.preview(request);
+    const result = await launching.execute(request, []);
+
+    expect(preview.prompt).toBe(result.prompt);
+    expect(result.prompt).toContain('context-init');
+    expect(result.prompt).toContain(folder);
+    expect(result.prompt).toContain('Vietnamese');
+    expect(result.prompt).not.toContain('Existing docs');
+    expect(plannedPrompts.at(-1)).toEqual({ text: result.prompt, addDir: folder });
+  });
+
+  it('names notes the project already keeps in another shape, for context-init to link (ADR-020 item 4)', async () => {
+    const { project, request } = allowedProject();
+    mkdirSync(join(projectDir, 'Docs'));
+    writeFileSync(join(projectDir, 'Docs', 'Continuity.md'), '# Continuity');
+    writeFileSync(join(projectDir, 'AGENTS.md'), '# Agents');
+    workspace.updateProjectContext({ id: project.id, enabled: true });
+
+    const result = await launching.execute(request, []);
+
+    expect(result.prompt).toContain('Existing docs in the project folder: AGENTS.md, Docs/Continuity.md — link and summarise them, do not copy them.');
+  });
+
+  it('asks to resume once the documents exist, without --add-dir when they are inside the project', async () => {
+    const { project, request } = allowedProject();
+    const inside = join(projectDir, 'AgentContext');
+    mkdirSync(inside);
+    writeFileSync(join(inside, 'README.md'), '# Context');
+    workspace.updateProjectContext({ id: project.id, enabled: true, customPath: inside });
+
+    const result = await launching.execute(request, []);
+
+    expect(result.prompt).toMatch(/^Use the context-resume skill\. Context documents: /);
+    expect(plannedPrompts.at(-1)?.addDir).toBeNull();
+  });
+
+  it('links the four skills into the account it opens, and only that account', async () => {
+    const { project, request } = allowedProject();
+    workspace.updateProjectContext({ id: project.id, enabled: true });
+
+    const preview = await launching.preview(request);
+    expect(preview.plan.steps[0]?.label).toContain('Cài skill');
+    expect(preview.plan.requiredConfirmations).toEqual([]);
+    await launching.execute(request, []);
+
+    for (const name of SKILLS) expect(lstatSync(join(root, 'account-b', 'skills', name)).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(root, 'home', '.claude', 'skills'))).toBe(false);
+    expect((await launching.preview(request)).plan.steps.some((step) => step.label.includes('Cài skill'))).toBe(false);
+  });
+
+  it('asks before touching the main config folder, once', async () => {
+    const { project, request } = allowedProject(null);
+    workspace.updateProjectContext({ id: project.id, enabled: true });
+
+    const preview = await launching.preview(request);
+    expect(preview.plan.requiredConfirmations.map((item) => item.id)).toEqual([CONTEXT_TOOLS_CONFIRMATION]);
+    expect(await codeOf(() => launching.execute(request, []))).toBe('CONFIRMATION_REQUIRED');
+    expect(existsSync(join(root, 'home', '.claude', 'skills'))).toBe(false);
+
+    await launching.execute(request, [CONTEXT_TOOLS_CONFIRMATION]);
+
+    expect(lstatSync(join(root, 'home', '.claude', 'skills', 'context-resume')).isSymbolicLink()).toBe(true);
+    expect((await launching.preview(request)).plan.requiredConfirmations).toEqual([]);
+  });
+
+  it('keeps the user\'s own skill of the same name, and warns about skills every account reads', async () => {
+    const { project, request } = allowedProject();
+    workspace.updateProjectContext({ id: project.id, enabled: true });
+    mkdirSync(join(root, 'account-b', 'skills', 'context-resume'), { recursive: true });
+    writeFileSync(join(root, 'account-b', 'skills', 'context-resume', 'SKILL.md'), 'mine');
+    mkdirSync(join(root, 'home', '.agents', 'skills', 'context-init'), { recursive: true });
+
+    const preview = await launching.preview(request);
+    await launching.execute(request, []);
+
+    const warnings = preview.plan.steps.map((step) => step.warning ?? '').join(' ');
+    expect(warnings).toContain('context-resume');
+    expect(warnings).toContain('.agents');
+    expect(lstatSync(join(root, 'account-b', 'skills', 'context-resume')).isSymbolicLink()).toBe(false);
+  });
+
+  it('stops when a chosen documents folder has gone', async () => {
+    const { project, request } = allowedProject();
+    const chosen = join(root, 'docs');
+    mkdirSync(chosen);
+    workspace.updateProjectContext({ id: project.id, enabled: true, customPath: chosen });
+    rmSync(chosen, { recursive: true });
+
+    expect(await codeOf(() => launching.execute(request, []))).toBe('PROJECT_PATH_MISSING');
+    expect(launched).toBe(0);
+  });
+
+  it('registers AgentHub\'s MCP server for the account once, alongside the skills', async () => {
+    const { project, profile, request } = allowedProject();
+    workspace.updateProjectContext({ id: project.id, enabled: true });
+
+    const preview = await launching.preview(request);
+    expect(preview.plan.steps.some((step) => step.label.includes('MCP'))).toBe(true);
+    await launching.execute(request, []);
+
+    expect([...mcpRegistered]).toEqual([profile.id]);
+    expect((await launching.preview(request)).plan.steps.some((step) => step.label.includes('MCP'))).toBe(false);
+  });
+
+  it('names both changes when asking about the main config folder', async () => {
+    const { project, request } = allowedProject(null);
+    workspace.updateProjectContext({ id: project.id, enabled: true });
+
+    const [consent] = (await launching.preview(request)).plan.requiredConfirmations;
+
+    expect(consent?.label).toContain('skill');
+    expect(consent?.label).toContain('MCP');
+  });
+
+  it('still opens when MCP cannot be registered, and says so', async () => {
+    const { project, request } = allowedProject();
+    workspace.updateProjectContext({ id: project.id, enabled: true });
+    mcpFails = true;
+
+    const result = await launching.execute(request, []);
+
+    expect(result.status).toBe('launched');
+    expect(result.outcome?.warnings.join()).toContain('boom');
+  });
+
+  it('points the agent at the chosen task, records it, and reminds about commits newer than its handoff', async () => {
+    const { project, request } = allowedProject();
+    const folder = workspace.updateProjectContext({ id: project.id, enabled: true }).context.path;
+    mkdirSync(join(folder, 'Workstreams', 'combo', 'Tasks'), { recursive: true });
+    writeFileSync(join(folder, 'README.md'), '# Context');
+    writeFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), '# Combo\n| Task | State |\n|---|---|\n| TASK-001 | in progress |\n');
+    const ref = 'Workstreams/combo/Tasks/TASK-001-counter.md';
+    writeFileSync(join(folder, ref), '# TASK-001\n## Handoff log\n### 2026-11-01 10:00 — A\n');
+    gitState = { state: 'repo', root: projectDir, branch: 'main', head: 'abc', headAt: '2026-11-03T00:00:00.000Z', dirty: true };
+
+    const preview = await launching.preview({ ...request, taskRef: ref });
+    const result = await launching.execute({ ...request, taskRef: ref }, []);
+
+    expect(result.prompt).toContain(`context-resume skill for TASK-001 (${ref})`);
+    expect(result.taskRef).toBe(ref);
+    expect(launching.listLaunches(project.id)[0]?.taskRef).toBe(ref);
+    const warnings = preview.plan.steps.map((step) => step.warning ?? '').join(' ');
+    expect(warnings).toContain('commit mới hơn handoff');
+    // Uncommitted changes concern the whole project and stay on the page, not in every launch.
+    expect(warnings).not.toContain('chưa commit');
+  });
+
+  it('points the agent at a task under a workstream folder with another name', async () => {
+    const { project, request } = allowedProject();
+    const folder = workspace.updateProjectContext({ id: project.id, enabled: true }).context.path;
+    const ref = 'Playables/playable005/Tasks/TASK-016-intro.md';
+    mkdirSync(join(folder, 'Playables', 'playable005', 'Tasks'), { recursive: true });
+    writeFileSync(join(folder, 'README.md'), '# Context');
+    writeFileSync(join(folder, ref), '# TASK-016\n## Handoff log\n');
+
+    const result = await launching.execute({ ...request, taskRef: ref }, []);
+
+    expect(result.prompt).toContain(`context-resume skill for TASK-016 (${ref})`);
+  });
+
+  it('refuses a task that is not in the documents, or a task while the documents are off', async () => {
+    const { project, request } = allowedProject();
+    const ref = 'Workstreams/combo/Tasks/TASK-404.md';
+    expect(await codeOf(() => launching.preview({ ...request, taskRef: ref }))).toBe('VALIDATION_FAILED');
+
+    const folder = workspace.updateProjectContext({ id: project.id, enabled: true }).context.path;
+    writeFileSync(join(folder, 'README.md'), '# Context');
+    expect(await codeOf(() => launching.execute({ ...request, taskRef: ref }, []))).toBe('NOT_FOUND');
+    expect(launched).toBe(0);
+  });
+
+  describe('fallback transcript (ADR-019 item 10)', () => {
+    function withHandoff(at: string) {
+      const { project, profile, request } = allowedProject();
+      const folder = workspace.updateProjectContext({ id: project.id, enabled: true }).context.path;
+      mkdirSync(join(folder, 'Workstreams', 'combo', 'Tasks'), { recursive: true });
+      writeFileSync(join(folder, 'README.md'), '# Context');
+      writeFileSync(join(folder, 'Workstreams', 'combo', 'Tasks', 'TASK-001-x.md'), `# TASK-001\n## Handoff log\n### ${at} — A\n`);
+      return { project, profile, request };
+    }
+    const session = (path: string, updatedAt: string): SessionLocation => ({ path, cwd: projectDir, updatedAt });
+
+    it('offers the newest session of an allowed account that went on after the last checkpoint', async () => {
+      const { project, request } = withHandoff('2026-11-05 10:00');
+      const codex = launching.createProfile({ provider: 'codex', alias: 'C', cliConfigRoot: join(root, 'codex-c'), desktopDataDir: null });
+      launching.setPermission({ projectId: project.id, profileId: codex.id, allowed: true });
+      const notAllowed = claudeProfile('X', join(root, 'x'));
+      sessionsByRoot.set(join(root, 'codex-c'), session('/s/codex/rollout-1.jsonl', new Date(2026, 10, 5, 11, 0).toISOString()));
+      sessionsByRoot.set(join(root, 'x'), session('/s/x/newer.jsonl', new Date(2026, 10, 5, 12, 0).toISOString()));
+      expect(notAllowed.id).toBeTruthy();
+
+      const offer = (await launching.preview(request)).transcript;
+
+      expect(offer).toMatchObject({ path: '/s/codex/rollout-1.jsonl', provider: 'codex', otherAccount: true, otherProvider: true });
+    });
+
+    it('offers nothing when the session is not newer than the checkpoint, or there is no checkpoint at all', async () => {
+      const { request } = withHandoff('2026-11-05 10:00');
+      sessionsByRoot.set(join(root, 'account-b'), session('/s/b.jsonl', new Date(2026, 10, 5, 10, 0, 30).toISOString()));
+      expect((await launching.preview(request)).transcript).toBeNull();
+
+      const plainDir = join(root, 'plain');
+      mkdirSync(plainDir);
+      const plain = workspace.addProject({ path: plainDir });
+      launching.setPermission({ projectId: plain.id, profileId: request.profileId, allowed: true });
+      sessionsByRoot.set(join(root, 'account-b'), session('/s/b.jsonl', '2030-01-01T00:00:00.000Z'));
+      expect((await launching.preview({ ...request, projectId: plain.id })).transcript).toBeNull();
+    });
+
+    it('only points the agent at the transcript once the user accepts, granting Claude its folder', async () => {
+      const { request } = withHandoff('2026-11-05 10:00');
+      sessionsByRoot.set(join(root, 'account-b'), session('/s/claude/proj/abc.jsonl', new Date(2026, 10, 5, 11, 0).toISOString()));
+
+      const declined = await launching.execute(request, []);
+      expect(declined.prompt).not.toContain('transcript');
+
+      const accepted = await launching.execute({ ...request, useTranscript: true }, []);
+      expect(accepted.prompt).toContain('Its transcript is /s/claude/proj/abc.jsonl');
+      expect(accepted.prompt).toContain('tail -n 200');
+      expect(accepted.prompt).toContain('context-checkpoint');
+      expect(plannedPrompts.at(-1)?.readDirs).toEqual(['/s/claude/proj']);
+    });
+
+    it('asks a project without documents to save the missing handoff instead', async () => {
+      const { project, request } = allowedProject();
+      saveNote(join(root, 'projects', project.id, 'handoffs'), { title: 'h', content: 'x', source: 't', now: new Date('2026-11-05T03:00:00Z') });
+      sessionsByRoot.set(join(root, 'account-b'), session('/s/b.jsonl', '2026-11-05T04:00:00.000Z'));
+
+      const result = await launching.execute({ ...request, useTranscript: true }, []);
+
+      expect(result.prompt).toContain('context_save_handoff');
+    });
   });
 });

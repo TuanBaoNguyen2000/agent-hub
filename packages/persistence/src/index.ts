@@ -11,6 +11,14 @@ import type { AccountProfile, ClientMode, ContextLanguage, LaunchAttempt, Launch
 import { type SqliteDatabase, openDatabase, schemaVersion } from './database';
 import { MIGRATIONS } from './migrations';
 
+export { type SessionLocation, newestSession } from './session-locator';
+export { type Note, type NoteWithContent, listNotes, moveNote, readNote, saveNote } from './notes';
+export { handoffTime, latestHandoff, readContextOverview, statusBranch, taskStates, workstreamFolders } from './context-overview';
+export { MAX_SCANNED_FOLDERS, detectContext, isContextFolder } from './context-detect';
+export { conflictingFiles, contextFiles, copyContextFiles } from './context-move';
+export { CONTEXT_CATALOG_SCHEMA, type ContextProjectEntry, contextProjectsFor, defaultContextFolder, handoffFolder, looseChatFolder } from './context-catalog';
+export { type ContextEntry, MAX_DOCUMENT_BYTES, appendHandoff, insertHandoff, listContext, readContext, sha256, writeContext } from './context-files';
+
 interface ProjectRow {
   id: string;
   name: string;
@@ -20,6 +28,7 @@ interface ProjectRow {
   context_language: ContextLanguage;
   absolute_path: string | null;
   context_path: string | null;
+  context_detected_at: string | null;
 }
 
 type Location = { id: string; deviceId: string; path: string };
@@ -30,13 +39,14 @@ const toProject = (row: ProjectRow): StoredProject => ({
   context: { enabled: row.context_enabled === 1, language: row.context_language },
   path: row.absolute_path,
   contextPath: row.context_path,
+  contextDetectedAt: row.context_detected_at,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
 
 function projectRepository(db: SqliteDatabase): ProjectRepository {
   const select = `
-    SELECT p.id, p.name, p.created_at, p.updated_at, p.context_enabled, p.context_language, l.absolute_path, l.context_path
+    SELECT p.id, p.name, p.created_at, p.updated_at, p.context_enabled, p.context_language, l.absolute_path, l.context_path, l.context_detected_at
     FROM projects p
     LEFT JOIN project_locations l ON l.project_id = p.id AND l.device_id = @deviceId
     WHERE p.removed_at IS NULL`;
@@ -48,13 +58,17 @@ function projectRepository(db: SqliteDatabase): ProjectRepository {
   const upsertLocation = db.prepare(`
     INSERT INTO project_locations (id, project_id, device_id, absolute_path)
     VALUES (@id, @projectId, @deviceId, @path)
-    ON CONFLICT(project_id, device_id) DO UPDATE SET absolute_path = excluded.absolute_path`);
+    ON CONFLICT(project_id, device_id) DO UPDATE SET
+      absolute_path = excluded.absolute_path,
+      -- Another folder may hold other documents, so it is searched again.
+      context_detected_at = CASE WHEN project_locations.absolute_path = excluded.absolute_path THEN project_locations.context_detected_at END`);
   const touch = db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?');
   const rename = db.prepare('UPDATE projects SET name = ?, updated_at = ? WHERE id = ?');
   const updateContext = db.prepare(
     'UPDATE projects SET context_enabled = @enabled, context_language = @language, updated_at = @updatedAt WHERE id = @id',
   );
   const updateContextPath = db.prepare('UPDATE project_locations SET context_path = ? WHERE project_id = ? AND device_id = ?');
+  const markDetected = db.prepare('UPDATE project_locations SET context_detected_at = ? WHERE project_id = ? AND device_id = ?');
   const markRemoved = db.prepare('UPDATE projects SET removed_at = ?, updated_at = ? WHERE id = ?');
 
   const insert = db.transaction((project: Project, location: Location) => {
@@ -96,6 +110,9 @@ function projectRepository(db: SqliteDatabase): ProjectRepository {
     },
     setContext: (id, deviceId, context, contextPath, updatedAt) => {
       setContext(id, deviceId, context, contextPath, updatedAt);
+    },
+    markContextDetected: (id, deviceId, at) => {
+      markDetected.run(at, id, deviceId);
     },
     markRemoved: (id, removedAt) => {
       markRemoved.run(removedAt, removedAt, id);

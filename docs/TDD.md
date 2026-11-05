@@ -1,8 +1,8 @@
 # AgentHub — Technical Design Document (TDD)
 
 > **Project:** AgentHub — Cross-platform AI Agent Workspace & Context Manager  
-> **Version:** 0.1.15 (ADR-009, ADR-013–019: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP, login, context do agent duy trì; Phase 0 macOS exit review; Phase 1 và 2 trên macOS; FR-018 usage limit; Phase 3 bước 1: mô hình Project)  
-> **Updated:** 2026-11-04  
+> **Version:** 0.1.22 (ADR-020: sửa Phase 3 theo đánh giá, bước 1–2 đã triển khai; ADR-009, ADR-013–019: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP, login, context do agent duy trì; Phase 0 macOS exit review; Phase 1 và 2 trên macOS; FR-018 usage limit; Phase 3 đủ deliverables trên macOS, đang sửa theo đánh giá)  
+> **Updated:** 2026-11-05  
 > **Status:** Draft for implementation review  
 > **Platforms:** macOS and Windows  
 > **Language:** Vietnamese (technical identifiers in English)  
@@ -556,6 +556,8 @@ CREATE TABLE launch_attempts (
 
 **Phase 3 (ADR-019):** không thêm `checkpoints`, `handoffs` như draft. **Đã triển khai ở migration 4 (2026-11-05):** bỏ bảng `tasks` (backup tự động trước khi nâng schema); `launch_attempts` tạo lại với `project_id` thay `task_id`, thêm `task_ref` (đường dẫn task trong tài liệu, nullable, chưa dùng), giữ các lần mở cũ qua project của task; `projects` thêm `context_enabled` (mặc định 0) và `context_language` (`en` hoặc `vi`, mặc định `en`); `project_locations` thêm `context_path`, vì folder tài liệu tự chọn là đường dẫn trên từng máy, null nghĩa là thư mục mặc định (§6.3). Index `launch_attempts(project_id, created_at)`.
 
+**Migration 5 (ADR-020, 2026-11-05):** `project_locations` thêm `context_detected_at`: lần cuối máy này tìm tài liệu có sẵn trong folder project (§9.1). Project có từ trước bắt đầu với null nên được tìm một lần; đổi folder project thì về null để tìm lại.
+
 ### 6.3. Local artifact layout
 
 Theo ADR-019 (thay layout theo task của bản trước):
@@ -635,7 +637,15 @@ Thiết kế theo [ADR-019](decisions/019-agent-maintained-context.md) (2026-11-
 
 Skill theo chuẩn Agent Skills (`SKILL.md`), dùng chung cho Claude và Codex. AgentHub cài vào thư mục cấu hình của từng account được phép dùng project; khi tài liệu nằm trong repo có thể cài thêm ở cấp project.
 
+**Đã triển khai (2026-11-05):** bốn skill nằm ở `apps/desktop/skills/`, viết bằng tiếng Anh vì dành cho agent; bản đóng gói đặt chúng ở `Contents/Resources/skills` (ngoài `app.asar`). AgentHub giữ một bản chung ở `<userData>/skills/` và tạo symlink trong `$CLAUDE_CONFIG_DIR/skills` hoặc `$CODEX_HOME/skills` (account mặc định: `~/.claude/skills`, `~/.codex/skills`) khi mở account cho project có bật tài liệu. Mỗi lần mở làm mới bản chung, nên bản cập nhật của app đến mọi account. Không thay skill trùng tên không do AgentHub tạo; cảnh báo khi `~/.agents/skills` có skill `context-*` (SPIKE-14); account mặc định phải tick đồng ý ở lần cài đầu. Chưa cài ở cấp project.
+
 **MCP server của AgentHub** cung cấp `context_projects`, `context_read`, `context_write` (ghi cả file kèm checksum bản đã đọc), `context_append_handoff`, `context_capture`. Server chỉ đụng vào thư mục tài liệu, không nhận đường dẫn tuỳ ý, và chỉ cho thấy project mà account đăng ký nó được phép dùng (FR-016). Server chạy được khi app AgentHub đóng. Đăng ký vào cấu hình MCP của từng account; với account chính phải hỏi người dùng trước.
+
+**Đã triển khai (2026-11-05), trừ `context_capture`** (để sang bước "Chat rời"):
+- **Chạy:** `apps/desktop/src/mcp/`, build thành `out/main/mcp.js` trong `app.asar`. App viết lại shim `<userData>/bin/agenthub-mcp` mỗi lần khởi động; shim chạy binary của app với `ELECTRON_RUN_AS_NODE=1`. Tham số: `--account=<profile id>`, `--data=<userData>`, `--log=<userData>/logs/mcp.log`. Hỗ trợ protocol `2024-11-05` đến `2025-11-25`.
+- **Giới hạn:** mỗi lần gọi tool, server đọc database ở chế độ chỉ đọc (cần schema ≥ 4, không migrate) để lấy các project bật tài liệu mà account được phép trên máy này, nên đổi quyền trong app có hiệu lực ngay. Project được chỉ bằng id hoặc tên. Đường dẫn phải nằm trong folder tài liệu, kể cả qua symlink; bỏ qua file ẩn; chỉ ghi file `.md`, tối đa 1 MB.
+- **Ghi:** `context_write` cần `base_sha256` của bản đã đọc (file mới thì bỏ trống), ghi qua file tạm rồi rename. `context_append_handoff` chèn mục lên đầu "Handoff log" (tạo heading nếu chưa có) và tự đọc lại khi file đổi giữa chừng. `context_read` với đường dẫn rỗng hoặc kết thúc bằng `/` trả danh sách file.
+- **Đăng ký** cùng lúc với cài skill, khi mở account cho project bật tài liệu: Claude bằng `claude mcp add-json -s user` (gỡ bản cũ nếu khác tham số), Codex bằng `codex mcp add`; cửa sổ Claude Desktop riêng của account được ghi thêm vào `claude_desktop_config.json` của instance đó, giữ nguyên nội dung khác. Không đăng ký vào Claude Desktop chính, vì app chính có thể đăng nhập account khác. Account chính dùng chung một ô đồng ý với skill. Đăng ký lỗi thì vẫn mở, kèm cảnh báo. Không đổi `approval_mode` của Codex: TUI hỏi khi agent gọi tool ghi.
 
 | Nơi chat | Tài liệu trong repo | Tài liệu ngoài repo |
 |---|---|---|
@@ -653,6 +663,13 @@ Skill theo chuẩn Agent Skills (`SKILL.md`), dùng chung cho Claude và Codex. 
 | Không tài liệu, tab Chat | Phiên cũ tóm tắt, copy/dán (hoặc qua MCP) | Không tự động được; người dùng tự copy từ chat cũ |
 
 - Project không bật tài liệu vẫn lưu các bản tóm tắt chuyển ngữ cảnh thành lịch sử handoff gọn. Chat không thuộc project nào lưu ở mục "Chat rời" và chuyển vào project được.
+
+**Đã triển khai (2026-11-05):**
+- **Ghi chú:** mỗi handoff hoặc chat rời là một file Markdown `<UTC tới mili giây>-<6 hex>-<slug>.md` (dòng đầu `# tiêu đề`, dòng hai là comment `agenthub: created=…; source=…`), ghi một lần, không sửa. Handoff ở `<userData>/projects/<id>/handoffs/`, chat rời ở `<userData>/loose-chats/`.
+- **MCP:** `context_projects` liệt kê mọi project account được phép, kèm `documents`. Project không có tài liệu dùng `context_save_handoff` và `context_handoffs` (danh sách, hoặc đọc theo id hay `latest`); tool tài liệu từ chối project này và ngược lại, kèm hướng dẫn tool đúng. `context_capture` lưu chat rời, `context_loose_chats` đọc lại. Chat rời không thuộc project nên mọi account có MCP của AgentHub đều đọc được. Nguồn ghi là `clientInfo` của client MCP.
+- **Mở account:** project không có tài liệu mà có handoff thì lời nhắc là "Continue from the latest AgentHub handoff…" kèm đường dẫn file, CLI được `--add-dir=` thư mục handoff. Skill và MCP được cài khi mở mọi project, vì project không có tài liệu cũng cần MCP để lưu handoff. Khi plan cần đồng ý sửa cấu hình chính, người dùng có thể chọn "Mở mà không cài" cho lần đó.
+- **App:** trang project không có tài liệu có phần "Handoff" (danh sách, xem nội dung, dán handoff, copy lời nhắc tóm tắt chuẩn cho phiên cũ); project có tài liệu có nút copy lời nhắc `context-checkpoint`. Màn "Chat rời" để xem, dán, copy lời nhắc tiếp tục hoặc nội dung, và chuyển vào project: có tài liệu thì vào `Inbox/` của tài liệu, không có thì thành một handoff.
+- **Skill:** `context-checkpoint` lưu một handoff qua `context_save_handoff` khi project không có tài liệu; `context-resume` đọc file handoff trong lời nhắc; `context-capture` lưu chat rời qua `context_capture`.
 - Không trường hợp nào mở tiếp đúng đoạn chat cũ ở account khác: resume chéo account bị từ chối (SPIKE-01, SPIKE-08).
 - Project của claude.ai nằm trên server của account nguồn; instructions và file kiến thức phải được tạo lại ở account đích.
 - Với chat surface không đọc được file local, dùng MCP hoặc copy/dán; không giả định tự động nạp local path.
@@ -661,11 +678,18 @@ Skill theo chuẩn Agent Skills (`SKILL.md`), dùng chung cho Claude và Codex. 
 
 Khi phiên cũ dừng trước checkpoint, với chat có folder (CLI, tab Code, Codex app): AgentHub tìm đường dẫn file session gần nhất của folder project trong account nguồn, chỉ đọc đủ để định vị (`cwd`, đường dẫn, thời gian), và đưa đường dẫn cho phiên đích. Agent đích đọc phần cuối transcript và viết checkpoint bù. Người dùng xác nhận trước, nhất là khi chuyển sang account hoặc provider khác. Không áp dụng cho tab Chat và cloud environment. Chi tiết và giới hạn ở ADR-019 mục 10.
 
+**Đã triển khai (2026-11-05):**
+- **Định vị** (`packages/persistence/src/session-locator.ts`, theo SPIKE-15): Claude tìm `<config>/projects/<cwd mã hoá>*` theo tiền tố (cả NFC và NFD) rồi kiểm tra `cwd` ở dòng đầu có `cwd`, sắp theo mtime; Codex đọc bảng `threads` của `state_<n>.sqlite` mới nhất, chỉ-đọc, chỉ `rollout_path`, `cwd`, `updated_at_ms`, bỏ thread archive và file đã mất; không mở được bảng thì quét dòng `session_meta` của 400 rollout mới nhất. So `cwd` sau chuẩn hoá NFC, tính cả thư mục con. Account mặc định dùng `~/.claude`, `~/.codex`.
+- **Đề xuất:** khi mở account cho project có lời nhắc, AgentHub tìm session mới nhất của folder project trong mọi account được phép dùng project đó. Nếu session mới hơn checkpoint gần nhất quá một phút (handoff mới nhất của task đã chọn, hoặc của mọi task; project không có tài liệu thì handoff mới nhất), bảng trước khi mở hiện account, provider, giờ, và cảnh báo khi khác account hoặc provider. Không có checkpoint nào thì không đề xuất.
+- **Xác nhận:** ô "Cho agent mới đọc phần cuối transcript…", mặc định không tick, không lưu. Khi tick, lời nhắc thêm đường dẫn file và yêu cầu chỉ đọc 200 dòng cuối (`tail`), rồi viết checkpoint bù bằng `context-checkpoint` (hoặc `context_save_handoff` khi không có tài liệu), ghi là reported. Claude CLI được thêm `--add-dir=<thư mục chứa file>`; Codex đọc được không cần; Desktop có cảnh báo agent sẽ hỏi quyền đọc file.
+
 ### 7.7. Tránh mất context khi quota chạm giới hạn
 
 - Khuyến khích `context-checkpoint` trước khi kết thúc một mốc lớn hoặc đổi account; không dựa vào khả năng gọi lại agent sau khi quota hết.
 - UI cảnh báo khi có thay đổi file hoặc commit mới hơn handoff gần nhất, khi branch lệch với `STATUS`, và khi task đang làm không có handoff trong thời gian dài; không tạo cảm giác an toàn giả.
 - Tạo chat mới không tự làm mới quota account; đổi account chỉ dùng account hợp lệ theo quy định provider.
+
+**Đã triển khai (2026-11-05):** trang project đọc lại tài liệu (task theo `<thư mục workstream>/*/Tasks/TASK-*.md`; thư mục workstream là `Workstreams/` hoặc mọi thư mục cấp một không ẩn có ít nhất một thư mục con chứa `STATUS.md` hoặc `Tasks/`, ví dụ `Playables/` (ADR-020 mục 4); `ref` của task là đường dẫn thật, trạng thái từ bảng trong `STATUS.md`, dòng `Branch:`, heading đầu tiên dưới "Handoff log" là handoff mới nhất, giờ ghi trong heading coi là giờ máy) và Git (§10.1), rồi cảnh báo: thay đổi chưa commit; branch khác với `STATUS`; task chưa xong có commit mới hơn handoff; task đang làm chưa có handoff hoặc handoff quá 7 ngày. Task có trạng thái kiểu "done", "xong" không bị cảnh báo. Cảnh báo không chặn việc mở. Đọc lại khi cửa sổ được focus và khi bấm "Tải lại".
 
 ---
 
@@ -689,7 +713,11 @@ Outputs: lời nhắc cho phiên mới, cách đưa lời nhắc vào (prompt ba
 | Có hoạt động mới hơn handoff gần nhất, chat có folder | Đề xuất fallback transcript (§7.6) |
 | Không có ngữ cảnh nào | Mở như Phase 2, không lời nhắc |
 
+**Chọn task (2026-11-05):** trang project cho chọn một task đọc từ tài liệu, mặc định là task của lần mở gần nhất. Lời nhắc thành `Use the context-resume skill for TASK-NNN (<đường dẫn>)…`, `launch_attempts.task_ref` ghi đường dẫn đó, và plan nhắc checkpoint khi task có commit mới hơn handoff hoặc workstream lệch branch (§8.3 mục 5).
+
 CLI nhận lời nhắc làm prompt ban đầu. Desktop được copy sẵn một dòng để dán. Tab Chat không có MCP được copy gói ngữ cảnh đầy đủ.
+
+**Đã triển khai (2026-11-05), hai dòng đầu của bảng:** folder tài liệu chưa có `README.md` thì lời nhắc là `context-init` (kèm ngôn ngữ của project), ngược lại là `context-resume`. CLI nhận lời nhắc làm tham số cuối, kèm `--add-dir=<folder tài liệu>` khi folder nằm ngoài project, cho cả Claude và Codex (SPIKE-13). Với Desktop, Main copy lời nhắc vào clipboard sau khi mở, và UI hiện lời nhắc kèm nút copy lại. Folder tài liệu tự chọn đã mất thì không mở (`PROJECT_PATH_MISSING`). Chưa có chọn task, handoff khi không bật tài liệu, fallback transcript.
 
 ### 8.3. Guardrails
 
@@ -718,7 +746,26 @@ CLI nhận lời nhắc làm prompt ban đầu. Desktop được copy sẵn mộ
 
 **Phase 3 (ADR-019):** không còn tạo task, tab Context và Quyết định theo task, hay Context Editor. Project hiển thị cài đặt tài liệu, task và handoff gần nhất đọc từ tài liệu, cảnh báo, lịch sử mở và trạng thái Git; tài liệu mở trong editor của người dùng. Thêm mục "Chat rời" và thao tác "Thêm handoff".
 
-**Đã triển khai (2026-11-05):** cột trái chỉ còn danh sách project; trang project có thanh mở account, phần "Tài liệu context" (bật/tắt, nơi lưu mặc định hoặc folder tự chọn, ngôn ngữ, nút mở folder trong Finder) và lịch sử mở theo project. Đã bỏ tạo task, tab Context, Quyết định, Chi tiết và Context Editor. Chưa có hiển thị task, handoff, cảnh báo, "Chat rời".
+**Đã triển khai (2026-11-05):** cột trái chỉ còn danh sách project; trang project có thanh mở account, phần "Tài liệu context" (bật/tắt, nơi lưu mặc định hoặc folder tự chọn, ngôn ngữ, nút mở folder trong Finder) và lịch sử mở theo project. Đã bỏ tạo task, tab Context, Quyết định, Chi tiết và Context Editor. Bước 4 thêm phần "Task": trạng thái Git, cảnh báo cấp project, danh sách task theo workstream (trạng thái, handoff mới nhất, cảnh báo của từng task) để chọn cho lần mở tới, và "Thêm handoff" cho task đã chọn: dán handoff từ tab Chat, AgentHub chèn lên đầu Handoff log bằng cùng code ghi atomic có checksum với MCP. Chưa có "Chat rời".
+
+**Bố cục theo ADR-020 (bước 1, 2026-11-05):** cột trái có hai phần có tiêu đề, mỗi phần có nút "+": Project, và Chat rời (mỗi chat một mục, danh sách đọc lại khi cửa sổ được focus vì agent thêm chat qua MCP). Một chat rời mở ra trang riêng: nội dung, copy lời nhắc tiếp tục hoặc nội dung, chuyển vào project rồi nhảy sang project đó. Trang project chia tab, mọi tab giữ mounted nên lần mở đang chờ quyết định không mất khi đổi tab:
+
+| Tab | Nội dung |
+|---|---|
+| Tổng quan | Thanh mở account, bảng quyết định, kết quả lần mở; dòng "Task cho lần mở" (nút Đổi sang tab Task); thẻ "Tài liệu context" |
+| Task | Chọn task theo workstream; project chưa có tài liệu thì giải thích và có nút tạo |
+| Handoff | Có tài liệu: copy lời nhắc checkpoint, dán handoff cho task đang chọn. Không tài liệu: danh sách handoff, dán, copy lời nhắc tóm tắt |
+| Lịch sử | Các lần mở và xác nhận account |
+| Cài đặt | Nơi lưu, ngôn ngữ tài liệu, mở folder, "Ngừng dùng tài liệu" (không xoá file) |
+
+Thẻ "Tài liệu context" thay công tắc: chưa dùng thì "Tạo tài liệu context" mở hộp thoại chọn nơi lưu (dữ liệu AgentHub hoặc folder khác) và ngôn ngữ; đã bật mà chưa có `README.md` thì nhắc mở account để chạy `context-init`, kèm "Kiểm tra tài liệu" và "Huỷ tạo"; đã có tài liệu thì hiện số workstream và task, đường dẫn, Git, cảnh báo cấp project và số cảnh báo ở task, cùng nút "Kiểm tra tài liệu", "Mở folder" và copy lời nhắc để agent đối chiếu tài liệu với code (không sửa gì trước khi người dùng xác nhận). "Kiểm tra tài liệu" đọc lại file và báo phần thiếu so với khuôn §7.2: thiếu `PROJECT_CONTEXT.md`, chưa có workstream, workstream thiếu `STATUS.md` hoặc không có task, task thiếu "Handoff log". Các mục này đi cùng cảnh báo §7.7.
+
+**Tài liệu có sẵn và đổi nơi lưu (ADR-020 bước 2, 2026-11-05):**
+
+- **Tìm:** Main quét folder project theo chiều rộng, sâu tối đa 3 cấp (`Docs/` thêm một cấp), bỏ thư mục ẩn, `node_modules`, `Library`, `Temp`, `obj`, `Logs`, `Build*`, dừng ở 4000 thư mục. Bộ cùng khuôn: folder (không phải chính folder project) có `PROJECT_CONTEXT.md`, hoặc có `README.md` kèm thư mục workstream; không quét tiếp bên trong bộ đã thấy. Khác khuôn: file `.md` trong `Docs/` có tên chứa `Continuity`, `STATUS`, `HANDOFF` hoặc `CONTEXT`, cùng `AGENTS.md` và `CLAUDE.md` ở gốc.
+- **Khi nào:** trang project của một project chưa dùng tài liệu tự tìm một lần trên mỗi máy (ngay sau khi thêm, và cho project có từ trước); bấm "Tạo tài liệu context" cũng tìm lại. Đúng một bộ cùng khuôn: project dùng ngay folder đó và chỉ thông báo (nhắc thay đổi sẽ hiện trong `git status` nếu folder nằm trong repo), kèm nút "Dùng nơi khác". Nhiều bộ: danh sách để chọn, kèm "Tạo bộ mới".
+- **Khác khuôn:** lời nhắc `context-init` thêm "Existing docs in the project folder: … — link and summarise them, do not copy them."
+- **Đổi nơi lưu** (tab Cài đặt): folder cũ có file thì hỏi Chuyển / Không chuyển / Huỷ. Chuyển copy mọi file (không theo symlink, bỏ `.DS_Store`), dừng và liệt kê nếu folder mới đã có file trùng tên, không ghi đè gì. Folder cũ trong dữ liệu AgentHub vào Thùng rác (`shell.trashItem`); folder người dùng chọn thì để nguyên và báo đường dẫn. Từ chối khi folder mới và cũ nằm trong nhau.
 
 ### 9.2. Primary flow
 
@@ -752,6 +799,8 @@ Thay các scenario A–D của bản trước theo ADR-019. Mỗi scenario chạ
 ### 10.1. Read-only observations
 
 **MVP ([ADR-017](decisions/017-mvp-git-observations.md)):** Git repo root, current branch, current commit SHA, dirty/clean. Project không phải Git repo có observation `unknown`.
+
+**Đã triển khai (2026-11-05):** `packages/platform/src/git.ts` chạy `rev-parse --show-toplevel`, `symbolic-ref --short HEAD`, `rev-parse --verify HEAD`, `log -1 --format=%cI`, `status --porcelain`, luôn với `--no-optional-locks`, `core.fsmonitor=false`, `GIT_TERMINAL_PROMPT=0`; không ghi gì vào repo, kể cả index. Kết quả là `repo`, `not_repo` hoặc `unknown`. Nếu chỉ có `/usr/bin/git` mà Command Line Tools chưa cài thì không chạy (tránh hộp thoại cài đặt) và trả `unknown`. Thêm thời điểm commit HEAD so với ADR-017, để so với handoff.
 
 **P1 (Phase 4):**
 
@@ -899,7 +948,18 @@ Theo [ADR-015](decisions/015-macos-first-delivery.md), exit criteria của Phase
 
 **Thứ tự:** spike → mô hình Project → skill và lời nhắc (thử với tài liệu trong repo) → MCP → hiển thị task và cảnh báo → không tài liệu và Chat rời → fallback transcript.
 
-**Exit criteria:** chạy thành công bảy scenario ở §9.4 trên `.app` với account thật. Không dùng model APIs.
+**Exit criteria:** chạy thành công bảy scenario ở §9.4 trên `.app` với account thật. Không dùng model APIs. Cách chạy: [testing/phase3-acceptance.md](testing/phase3-acceptance.md).
+
+**Sửa theo đánh giá ([ADR-020](decisions/020-phase3-review-changes.md), 2026-11-05).** Người dùng thử tới scenario 1 và yêu cầu sửa trước khi chạy tiếp. Kế hoạch chi tiết: [plans/adr-020-plan.md](plans/adr-020-plan.md). Thứ tự:
+
+1. Bố cục: cột trái chia Project và Chat rời; trang project chia tab (Tổng quan, Task, Handoff, Lịch sử, Cài đặt); nút "Tạo tài liệu" và "Kiểm tra tài liệu" thay công tắc. **Đã triển khai (2026-11-05)**, xem §9.1.
+2. Tài liệu có sẵn: tự trỏ tới bộ tài liệu cùng khuôn trong folder project, thư mục workstream tên tuỳ ý; nêu tài liệu khác khuôn trong lời nhắc `context-init`; hỏi chuyển tài liệu khi đổi nơi lưu.
+   **Bước 2 đã triển khai (2026-11-05)**, xem §6.2, §7.7, §9.1.
+3. Màn Công cụ agent: skill và MCP theo account, thêm skill riêng, cài tự động là tuỳ chọn.
+4. Ngôn ngữ giao diện (English, Tiếng Việt, 한국어) và ngôn ngữ trò chuyện.
+5. Màn quản lý Task (thiết kế sau). Lời nhắc cho Claude Desktop giữ clipboard cho tới khi có evidence cho deep link.
+
+Sau đó người dùng chạy lại danh sách thử (cập nhật theo bố cục mới).
 
 ### Phase 4 — Git/Unity context (P1)
 
@@ -1081,4 +1141,4 @@ account switching tự động. Báo lại những giả định cần xác minh
 
 ---
 
-**End of TDD v0.1.15.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3; revision 0.1.4 thêm ADR-015 (macOS trước, Windows thành milestone riêng); revision 0.1.5 ghi kết quả exit review Phase 0 trên macOS, thêm SPIKE-09 và điều kiện launcher ở §5.2, cho §3.1 khớp với ADR-013 và ADR-014; revision 0.1.6 ghi ADR-009, ADR-016, ADR-017, tách §10.1 theo MVP và P1, trả lời §16 câu 1 và câu 3; revision 0.1.7 ghi kết quả technical bootstrap; revision 0.1.8 ghi kết quả Phase 1, khác biệt schema ở §6.2 và mã lỗi mới ở §12.2; revision 0.1.9 ghi kết quả Phase 2 và khác biệt schema tương ứng; revision 0.1.10 ghi thay đổi UX ở §9.1; revision 0.1.11 thêm ADR-018 và §11.4 về đăng nhập, tên account theo email; revision 0.1.12 ghi quy tắc macOS chọn instance khởi động sớm nhất ở §5.2; revision 0.1.13 thêm ADR-019: context do agent duy trì qua tài liệu, skill và MCP, viết lại §6.3, §7, §8, §9.4 và Phase 3, đóng ADR-011, trả lời §16 câu 5–7; revision 0.1.14 thêm FR-018 (usage limit theo account); revision 0.1.15 ghi bước 1 của Phase 3 ở §6.2, §6.3 và §9.1: migration 4 bỏ `tasks`, lịch sử mở theo project, cài đặt tài liệu context. ADR-013 và ADR-014 chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.
+**End of TDD v0.1.20.** Revision 0.1.2 thêm ADR-013 (Claude Desktop account instances) dựa trên SPIKE-07; revision 0.1.3 thêm ADR-014 (Codex profiles) dựa trên SPIKE-08 và sửa §3.3; revision 0.1.4 thêm ADR-015 (macOS trước, Windows thành milestone riêng); revision 0.1.5 ghi kết quả exit review Phase 0 trên macOS, thêm SPIKE-09 và điều kiện launcher ở §5.2, cho §3.1 khớp với ADR-013 và ADR-014; revision 0.1.6 ghi ADR-009, ADR-016, ADR-017, tách §10.1 theo MVP và P1, trả lời §16 câu 1 và câu 3; revision 0.1.7 ghi kết quả technical bootstrap; revision 0.1.8 ghi kết quả Phase 1, khác biệt schema ở §6.2 và mã lỗi mới ở §12.2; revision 0.1.9 ghi kết quả Phase 2 và khác biệt schema tương ứng; revision 0.1.10 ghi thay đổi UX ở §9.1; revision 0.1.11 thêm ADR-018 và §11.4 về đăng nhập, tên account theo email; revision 0.1.12 ghi quy tắc macOS chọn instance khởi động sớm nhất ở §5.2; revision 0.1.13 thêm ADR-019: context do agent duy trì qua tài liệu, skill và MCP, viết lại §6.3, §7, §8, §9.4 và Phase 3, đóng ADR-011, trả lời §16 câu 5–7; revision 0.1.14 thêm FR-018 (usage limit theo account); revision 0.1.15 ghi bước 1 của Phase 3 ở §6.2, §6.3 và §9.1: migration 4 bỏ `tasks`, lịch sử mở theo project, cài đặt tài liệu context; revision 0.1.16 ghi bước 2 ở §7.4 và §8.2: bốn skill, cài theo account, lời nhắc khi mở; revision 0.1.17 ghi bước 3 ở §7.4: MCP server, giới hạn theo account, đăng ký; revision 0.1.18 ghi bước 4 ở §7.7, §8.2, §9.1, §10.1: task đọc từ tài liệu, chọn task, cảnh báo, Git observation, "Thêm handoff"; revision 0.1.19 ghi bước 5 ở §7.5: handoff của project không có tài liệu, Chat rời, tool MCP tương ứng, "Mở mà không cài"; revision 0.1.20 ghi bước 6 ở §7.6 (fallback transcript) và danh sách thử Phase 3. ADR-013 và ADR-014 chỉ có evidence trên macOS; các tích hợp provider khác chưa được xác minh lại. Nội dung cần được cập nhật khi có kết quả Phase 0 hoặc thay đổi yêu cầu. Bất kỳ tích hợp mới nào dựa vào native app/session/auth phải đi qua capability verification và ADR review trước khi được ghi là supported.
