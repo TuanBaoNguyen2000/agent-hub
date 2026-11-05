@@ -1,6 +1,6 @@
 # Persistence
 
-**Status:** Có SQLite (better-sqlite3), migration 1–4, backup trước khi nâng schema và tests. Migration 4 bỏ bảng `tasks` (ADR-019). Có đọc, ghi tài liệu context cho MCP (đường dẫn giới hạn trong folder, checksum, ghi atomic, chèn handoff) catalog chỉ-đọc theo account, đọc lại task, trạng thái, handoff từ tài liệu, kho ghi chú cho handoff không tài liệu và Chat rời, và định vị session gần nhất theo folder (fallback transcript).
+**Status:** Có SQLite (better-sqlite3), migration 1–6, backup trước khi nâng schema và tests. Migration 4 bỏ bảng `tasks` (ADR-019); migration 6 thêm skill riêng và "Tự cài khi mở" theo account (ADR-020). Có đọc, ghi tài liệu context cho MCP (đường dẫn giới hạn trong folder, checksum, ghi atomic, chèn handoff) catalog chỉ-đọc theo account, đọc lại task, trạng thái, handoff từ tài liệu, kho ghi chú cho handoff không tài liệu và Chat rời, và định vị session gần nhất theo folder (fallback transcript).
 
 ## Trách nhiệm
 

@@ -1,3 +1,5 @@
+import { type Message, msg } from '@agenthub/domain';
+import { stateGroup } from './task-document';
 import type { ContextIssue, ContextIssueKind, ContextOverview, ContextTask, GitObservation } from './index';
 
 // TDD §7.7 and §9.3: warnings about context that may be out of date. They inform and never block;
@@ -10,36 +12,32 @@ export interface ContextWarning {
   // null when it concerns the whole project rather than one task or workstream.
   taskRef: string | null;
   workstream: string | null;
-  message: string;
+  message: Message;
 }
 
 export const OLD_HANDOFF_DAYS = 7;
 
-// Whole words only; \b would not see Vietnamese letters such as đ.
-const word = (alternatives: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}])(?:${alternatives})(?![\\p{L}\\p{N}])`, 'iu');
-const DONE = word('done|xong|complete|completed|hoàn thành|closed|cancell?ed|huỷ|hủy|archived');
-const ACTIVE = word('in[ -]progress|doing|active|wip|đang làm|đang');
-
-export const isDone = (task: ContextTask): boolean => task.state !== null && DONE.test(task.state);
-export const isActive = (task: ContextTask): boolean => task.state !== null && ACTIVE.test(task.state) && !isDone(task);
+// The same grouping as the task screen (ADR-021 item 4), so warnings and the list agree.
+export const isDone = (task: ContextTask): boolean => stateGroup(task.state) === 'done';
+export const isActive = (task: ContextTask): boolean => stateGroup(task.state) === 'active';
 
 const day = 24 * 60 * 60 * 1000;
 
-function issueMessage(issue: ContextIssue, overview: ContextOverview): string {
+function issueMessage(issue: ContextIssue, overview: ContextOverview): Message {
   const workstream = overview.workstreams.find((item) => item.slug === issue.workstream);
   const name = workstream?.title ?? issue.workstream ?? '';
   switch (issue.kind) {
     case 'no_project_context':
-      return 'Tài liệu thiếu PROJECT_CONTEXT.md.';
+      return msg('context.issue.noProjectContext');
     case 'no_workstream':
-      return 'Tài liệu chưa có workstream nào.';
+      return msg('context.issue.noWorkstream');
     case 'no_status':
-      return `Workstream "${name}" thiếu STATUS.md.`;
+      return msg('context.issue.noStatus', { name });
     case 'no_tasks':
-      return `Workstream "${name}" chưa có task nào trong Tasks/.`;
+      return msg('context.issue.noTasks', { name });
     case 'no_handoff_log': {
       const task = workstream?.tasks.find((item) => item.ref === issue.taskRef);
-      return `${task?.id ?? issue.taskRef ?? ''} thiếu mục "Handoff log".`;
+      return msg('context.issue.noHandoffLog', { task: task?.id ?? issue.taskRef ?? '' });
     }
   }
 }
@@ -52,7 +50,7 @@ export function contextWarnings(overview: ContextOverview, git: GitObservation, 
       kind: 'uncommitted',
       taskRef: null,
       workstream: null,
-      message: 'Có thay đổi chưa commit. Trước khi đổi account, hãy cho agent chạy context-checkpoint.',
+      message: msg('context.warning.uncommitted'),
     });
   }
   for (const workstream of overview.workstreams) {
@@ -61,7 +59,7 @@ export function contextWarnings(overview: ContextOverview, git: GitObservation, 
         kind: 'branch_mismatch',
         taskRef: null,
         workstream: workstream.slug,
-        message: `STATUS của "${workstream.title}" ghi branch ${workstream.branch}, nhưng folder project đang ở ${git.branch ?? 'detached HEAD'}.`,
+        message: msg('context.warning.branchMismatch', { workstream: workstream.title, expected: workstream.branch, actual: git.branch ?? 'detached HEAD' }),
       });
     }
     for (const task of workstream.tasks) {
@@ -72,16 +70,16 @@ export function contextWarnings(overview: ContextOverview, git: GitObservation, 
           kind: 'commits_after_handoff',
           taskRef: task.ref,
           workstream: workstream.slug,
-          message: `${task.id}: có commit mới hơn handoff gần nhất; phần việc sau đó chưa được ghi lại.`,
+          message: msg('context.warning.commitsAfterHandoff', { task: task.id }),
         });
       } else if (isActive(task) && task.lastHandoff === null) {
-        warnings.push({ kind: 'no_handoff', taskRef: task.ref, workstream: workstream.slug, message: `${task.id} đang làm nhưng chưa có handoff nào.` });
+        warnings.push({ kind: 'no_handoff', taskRef: task.ref, workstream: workstream.slug, message: msg('context.warning.noHandoff', { task: task.id }) });
       } else if (isActive(task) && handoffAt !== null && now.getTime() - handoffAt > OLD_HANDOFF_DAYS * day) {
         warnings.push({
           kind: 'old_handoff',
           taskRef: task.ref,
           workstream: workstream.slug,
-          message: `${task.id}: handoff gần nhất đã hơn ${OLD_HANDOFF_DAYS} ngày.`,
+          message: msg('context.warning.oldHandoff', { task: task.id, days: OLD_HANDOFF_DAYS }),
         });
       }
     }

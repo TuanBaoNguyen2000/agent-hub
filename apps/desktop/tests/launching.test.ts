@@ -12,16 +12,28 @@ import {
   type MetadataStore,
   type PlatformPort,
   type Workspace,
-  CONTEXT_TOOLS_CONFIRMATION,
   createLaunchService,
   createWorkspace,
 } from '@agenthub/application';
-import { DomainError, type LaunchOutcome, accountName } from '@agenthub/domain';
-import { appendHandoff, conflictingFiles, contextFiles, copyContextFiles, detectContext, openMetadataStore, readContextOverview, listNotes, moveNote, readNote, saveNote } from '@agenthub/persistence';
-import { createMacPlatform, createPathInspector, createSkillInstaller } from '@agenthub/platform';
+import { DomainError, type LaunchOutcome, type Message, accountName, raw } from '@agenthub/domain';
+import { translate } from '@agenthub/i18n';
+
+// What the user reads, in the language the E2E tests and these expectations use.
+const text = (message: Message | undefined): string => (message ? translate('vi', message) : '');
+import { appendHandoff, conflictingFiles, contextFiles, copyContextFiles, detectContext, openMetadataStore, readContextOverview, listNotes, moveNote, readNote, saveNote, listContext, readContext, writeContext } from '@agenthub/persistence';
+import { createMacPlatform, createPathInspector, createSkillInstaller, readSkillManifest } from '@agenthub/platform';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-const documentPorts = { overview: readContextOverview, detect: (path: string) => detectContext(path), files: contextFiles, conflicts: conflictingFiles, copy: copyContextFiles };
+const documentPorts = {
+  overview: readContextOverview,
+  detect: (path: string) => detectContext(path),
+  files: contextFiles,
+  conflicts: conflictingFiles,
+  copy: copyContextFiles,
+  list: (folder: string) => listContext(folder),
+  read: readContext,
+  write: writeContext,
+};
 
 // Real persistence with a scripted launcher: this tests the rules around a launch.
 let root: string;
@@ -63,6 +75,8 @@ let plannedPaths: (string | null)[] = [];
 let plannedPrompts: (LaunchTarget['prompt'])[] = [];
 // Which accounts have AgentHub's MCP server, and whether registering fails.
 let mcpRegistered = new Set<string>();
+// Registered with an older command, as after the shim moved.
+let mcpOutdated = new Set<string>();
 let mcpFails = false;
 // Newest session per account config folder ('main' for the default one).
 let sessionsByRoot = new Map<string, SessionLocation>();
@@ -81,11 +95,20 @@ const launcher: Launcher = {
   },
   skillsDirectory: (profile) => join(profile.cliConfigRoot ?? join(root, 'home', '.claude'), 'skills'),
   sharedSkillsDirectories: () => [join(root, 'home', '.agents', 'skills')],
-  mcpRegistration: async (profile) => ({ pending: mcpRegistered.has(profile.id) ? [] : [`${profile.id}/config`], problems: [] }),
+  mcpRegistration: async (profile) => {
+    const config = `${profile.id}/config`;
+    if (mcpOutdated.has(profile.id)) return { pending: [config], registered: [config], problems: [] };
+    return mcpRegistered.has(profile.id) ? { pending: [], registered: [config], problems: [] } : { pending: [config], registered: [], problems: [] };
+  },
   registerMcp: async (profile, server) => {
-    if (mcpFails) throw new DomainError('LAUNCH_FAILED', 'Không đăng ký được MCP cho Claude: boom');
+    if (mcpFails) throw new DomainError('LAUNCH_FAILED', raw('Không đăng ký được MCP cho Claude: boom'));
     expect(server.args).toContain(`--account=${profile.id}`);
+    mcpOutdated.delete(profile.id);
     mcpRegistered.add(profile.id);
+  },
+  unregisterMcp: async (profile) => {
+    mcpOutdated.delete(profile.id);
+    mcpRegistered.delete(profile.id);
   },
   launch: () => {
     launched += 1;
@@ -156,6 +179,7 @@ function open(): void {
     // The skills that ship with the app, linked from a copy in the test's own data folder.
     skills: createSkillInstaller({ source: join(__dirname, '..', 'skills'), shared: join(root, 'data', 'skills') }),
     mcpServer: (profileId) => ({ command: join(root, 'bin', 'agenthub-mcp'), args: [`--account=${profileId}`, `--data=${root}`] }),
+    readSkill: readSkillManifest,
     defaultContextDirectory: (projectId) => join(root, 'projects', projectId, 'context'),
     documents,
     git: gitObserver,
@@ -194,13 +218,14 @@ beforeEach(() => {
   plannedPaths = [];
   plannedPrompts = [];
   mcpRegistered = new Set();
+  mcpOutdated = new Set();
   mcpFails = false;
   sessionsByRoot = new Map();
   gitState = { state: 'not_repo', root: null, branch: null, head: null, headAt: null, dirty: null };
   usageReads = 0;
   usagePercent = 10;
   clock = Date.parse('2026-11-04T10:00:00.000Z');
-  plan = { steps: [{ label: 'Mở', execution: 'automatic' }], requiredConfirmations: [], blocker: null, action: { secret: 'command' } };
+  plan = { steps: [{ label: raw('Mở'), execution: 'automatic' }], requiredConfirmations: [], blocker: null, action: { secret: 'command' } };
   launchResult = async () => outcome;
   fingerprints.clear();
   emails.clear();
@@ -277,7 +302,7 @@ describe('profiles', () => {
 
     const status = await launching.profileStatus(a.id);
 
-    expect(status.sameAccountAs).toEqual(['b@example.com']);
+    expect(status.sameAccountAs.map(text)).toEqual(['b@example.com']);
     expect(status.accountFingerprint).toBeNull();
   });
 });
@@ -365,11 +390,11 @@ describe('account names', () => {
     await launching.profileStatus(account.id);
     const input = { id: account.id, provider: 'claude' as const, cliConfigRoot: null, desktopDataDir: null };
 
-    expect(accountName(launching.updateProfile({ ...input, alias: 'Công việc' }))).toBe('a@example.com');
+    expect(text(accountName(launching.updateProfile({ ...input, alias: 'Công việc' })))).toBe('a@example.com');
   });
 
   it('never makes up a name for an account it knows nothing about', () => {
-    expect(accountName(launching.addAccount({ provider: 'codex', source: 'machine' }))).toBe('Codex (chưa rõ account)');
+    expect(text(accountName(launching.addAccount({ provider: 'codex', source: 'machine' })))).toBe('Codex (chưa rõ account)');
   });
 
   it('lets several accounts go without a nickname', () => {
@@ -554,7 +579,7 @@ describe('launch rules', () => {
     const { project } = context();
     const profile = claudeProfile();
     launching.setPermission({ projectId: project.id, profileId: profile.id, allowed: true });
-    plan = { ...plan, blocker: { code: 'BIN_NOT_FOUND', message: 'x' } };
+    plan = { ...plan, blocker: { code: 'BIN_NOT_FOUND', message: raw('x') } };
 
     expect(await codeOf(() => launching.execute({ projectId: project.id, profileId: profile.id, mode: 'cli' }, []))).toBe('BIN_NOT_FOUND');
     expect(launched).toBe(0);
@@ -564,7 +589,7 @@ describe('launch rules', () => {
     const { project } = context();
     const profile = claudeProfile('A', join(root, 'a'));
     launching.setPermission({ projectId: project.id, profileId: profile.id, allowed: true });
-    plan = { ...plan, requiredConfirmations: [{ id: 'risky', label: 'Vẫn thử?' }] };
+    plan = { ...plan, requiredConfirmations: [{ id: 'risky', label: raw('Vẫn thử?') }] };
     const request = { projectId: project.id, profileId: profile.id, mode: 'desktop' } as const;
 
     expect(await codeOf(() => launching.execute(request, ['other']))).toBe('CONFIRMATION_REQUIRED');
@@ -587,9 +612,9 @@ describe('opening an account without a project', () => {
 
   it('still needs every confirmation and stops at a blocker', async () => {
     const profile = claudeProfile();
-    plan = { ...plan, requiredConfirmations: [{ id: 'risky', label: 'Rủi ro' }] };
+    plan = { ...plan, requiredConfirmations: [{ id: 'risky', label: raw('Rủi ro') }] };
     expect(await codeOf(() => launching.openAccount({ profileId: profile.id, mode: 'desktop' }, []))).toBe('CONFIRMATION_REQUIRED');
-    plan = { ...plan, requiredConfirmations: [], blocker: { code: 'APP_NOT_FOUND', message: 'Không có app' } };
+    plan = { ...plan, requiredConfirmations: [], blocker: { code: 'APP_NOT_FOUND', message: raw('Không có app') } };
     expect(await codeOf(() => launching.openAccount({ profileId: profile.id, mode: 'desktop' }, []))).toBe('APP_NOT_FOUND');
     expect(launched).toBe(0);
   });
@@ -608,7 +633,8 @@ describe('launch history', () => {
 
     const attempt = await launching.execute(request, []);
 
-    expect(attempt).toMatchObject({ status: 'launched', accountConfirmedAt: null, profileAlias: 'Claude (chưa rõ account)', outcome });
+    expect(attempt).toMatchObject({ status: 'launched', accountConfirmedAt: null, outcome });
+    expect(text(attempt.profileAlias)).toBe('Claude (chưa rõ account)');
     store.close();
     open();
     expect(launching.listLaunches(project.id).map((item) => item.id)).toEqual([attempt.id]);
@@ -616,7 +642,7 @@ describe('launch history', () => {
 
   it('marks an attempt with manual steps as manual_step, not launched', async () => {
     const { request } = allowed();
-    launchResult = async () => ({ ...outcome, workspace: 'manual', userActionRequired: ['Chọn folder'] });
+    launchResult = async () => ({ ...outcome, workspace: 'manual', userActionRequired: [raw('Chọn folder')] });
 
     expect((await launching.execute(request, [])).status).toBe('manual_step');
   });
@@ -624,7 +650,7 @@ describe('launch history', () => {
   it('records a failed launch with its code', async () => {
     const { project, request } = allowed();
     launchResult = async () => {
-      throw new DomainError('LAUNCH_FAILED', 'Không mở được.');
+      throw new DomainError('LAUNCH_FAILED', raw('Không mở được.'));
     };
 
     expect(await codeOf(() => launching.execute(request, []))).toBe('LAUNCH_FAILED');
@@ -648,7 +674,7 @@ describe('launch history', () => {
     launching.removeProfile(profile.id);
 
     expect(launching.listProfiles()).toEqual([]);
-    expect(launching.listLaunches(project.id)[0]?.profileAlias).toBe('Account đã gỡ');
+    expect(text(launching.listLaunches(project.id)[0]?.profileAlias)).toBe('Account đã gỡ');
   });
 });
 
@@ -687,16 +713,48 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
     expect(plannedPrompts.at(-1)?.addDir).toBe(folder);
   });
 
-  it('opens without touching the main config when the user declines, and asks again next time', async () => {
-    const { request } = allowedProject(null);
+  it('the main account installs nothing by itself: the plan only names what it lacks (ADR-020 item 1)', async () => {
+    const { profile, request } = allowedProject(null);
 
-    expect(await codeOf(() => launching.execute(request, []))).toBe('CONFIRMATION_REQUIRED');
-    const result = await launching.execute({ ...request, skipContextTools: true }, []);
+    const preview = await launching.preview(request);
+    expect(preview.plan.requiredConfirmations).toEqual([]);
+    expect(preview.missingTools).toEqual({ skills: SKILLS, mcp: true });
+    expect(preview.plan.steps.map((step) => text(step.warning)).join(' ')).toContain('Công cụ agent');
+    const result = await launching.execute(request, []);
 
     expect(result.status).toBe('launched');
     expect(mcpRegistered.size).toBe(0);
     expect(existsSync(join(root, 'home', '.claude', 'skills'))).toBe(false);
-    expect((await launching.preview(request)).plan.requiredConfirmations.map((item) => item.id)).toEqual([CONTEXT_TOOLS_CONFIRMATION]);
+
+    await launching.tools.setAutoInstall(profile.id, true);
+    expect((await launching.preview(request)).missingTools).toBeNull();
+    await launching.execute(request, []);
+    expect(lstatSync(join(root, 'home', '.claude', 'skills', 'context-resume')).isSymbolicLink()).toBe(true);
+    expect([...mcpRegistered]).toEqual([profile.id]);
+  });
+
+  it('a separate account installs by default, and can be told not to', async () => {
+    const { profile, request } = allowedProject();
+    await launching.tools.setAutoInstall(profile.id, false);
+    store.close();
+    open();
+
+    const preview = await launching.preview(request);
+    await launching.execute(request, []);
+
+    expect(preview.missingTools).toEqual({ skills: SKILLS, mcp: true });
+    expect(existsSync(join(root, 'account-b', 'skills'))).toBe(false);
+  });
+
+  it('says nothing about tools the account already has', async () => {
+    const { profile, request } = allowedProject(null);
+    await launching.tools.install(profile.id, { kind: 'mcp' });
+    for (const name of SKILLS) await launching.tools.install(profile.id, { kind: 'skill', name });
+
+    const preview = await launching.preview(request);
+
+    expect(preview.missingTools).toBeNull();
+    expect(preview.plan.steps.some((step) => text(step.warning).includes('Công cụ agent'))).toBe(false);
   });
 
   it('asks a new session to set up empty documents, in the project language, with access to the folder', async () => {
@@ -726,6 +784,24 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
     expect(result.prompt).toContain('Existing docs in the project folder: AGENTS.md, Docs/Continuity.md — link and summarise them, do not copy them.');
   });
 
+  it('writes the prompt in the chat language and asks for replies in it; the documents keep their own language (ADR-020 item 6)', async () => {
+    const { project, request } = allowedProject();
+    workspace.updateProjectContext({ id: project.id, enabled: true, language: 'en' });
+
+    expect((await launching.preview(request)).prompt).toMatch(/^Use the context-init skill/);
+    workspace.updateSettings({ chatLanguage: 'vi' });
+    const vietnamese = (await launching.preview(request)).prompt ?? '';
+    expect(vietnamese).toMatch(/^Dùng skill context-init\. /);
+    expect(vietnamese).toContain('Viết bằng tiếng Anh');
+    expect(vietnamese).toMatch(/Hãy trả lời tôi bằng tiếng Việt\.$/);
+
+    workspace.updateProjectContext({ id: project.id, chatLanguage: 'ko', language: 'ko' });
+    const korean = (await launching.preview(request)).prompt ?? '';
+    expect(korean).toContain('context-init 스킬');
+    expect(korean).toContain('한국어로 작성');
+    expect(korean).toMatch(/한국어로 답해 주세요\.$/);
+  });
+
   it('asks to resume once the documents exist, without --add-dir when they are inside the project', async () => {
     const { project, request } = allowedProject();
     const inside = join(projectDir, 'AgentContext');
@@ -744,28 +820,13 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
     workspace.updateProjectContext({ id: project.id, enabled: true });
 
     const preview = await launching.preview(request);
-    expect(preview.plan.steps[0]?.label).toContain('Cài skill');
+    expect(text(preview.plan.steps[0]?.label)).toContain('Cài skill');
     expect(preview.plan.requiredConfirmations).toEqual([]);
     await launching.execute(request, []);
 
     for (const name of SKILLS) expect(lstatSync(join(root, 'account-b', 'skills', name)).isSymbolicLink()).toBe(true);
     expect(existsSync(join(root, 'home', '.claude', 'skills'))).toBe(false);
-    expect((await launching.preview(request)).plan.steps.some((step) => step.label.includes('Cài skill'))).toBe(false);
-  });
-
-  it('asks before touching the main config folder, once', async () => {
-    const { project, request } = allowedProject(null);
-    workspace.updateProjectContext({ id: project.id, enabled: true });
-
-    const preview = await launching.preview(request);
-    expect(preview.plan.requiredConfirmations.map((item) => item.id)).toEqual([CONTEXT_TOOLS_CONFIRMATION]);
-    expect(await codeOf(() => launching.execute(request, []))).toBe('CONFIRMATION_REQUIRED');
-    expect(existsSync(join(root, 'home', '.claude', 'skills'))).toBe(false);
-
-    await launching.execute(request, [CONTEXT_TOOLS_CONFIRMATION]);
-
-    expect(lstatSync(join(root, 'home', '.claude', 'skills', 'context-resume')).isSymbolicLink()).toBe(true);
-    expect((await launching.preview(request)).plan.requiredConfirmations).toEqual([]);
+    expect((await launching.preview(request)).plan.steps.some((step) => text(step.label).includes('Cài skill'))).toBe(false);
   });
 
   it('keeps the user\'s own skill of the same name, and warns about skills every account reads', async () => {
@@ -778,7 +839,7 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
     const preview = await launching.preview(request);
     await launching.execute(request, []);
 
-    const warnings = preview.plan.steps.map((step) => step.warning ?? '').join(' ');
+    const warnings = preview.plan.steps.map((step) => text(step.warning)).join(' ');
     expect(warnings).toContain('context-resume');
     expect(warnings).toContain('.agents');
     expect(lstatSync(join(root, 'account-b', 'skills', 'context-resume')).isSymbolicLink()).toBe(false);
@@ -800,21 +861,11 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
     workspace.updateProjectContext({ id: project.id, enabled: true });
 
     const preview = await launching.preview(request);
-    expect(preview.plan.steps.some((step) => step.label.includes('MCP'))).toBe(true);
+    expect(preview.plan.steps.some((step) => text(step.label).includes('MCP'))).toBe(true);
     await launching.execute(request, []);
 
     expect([...mcpRegistered]).toEqual([profile.id]);
-    expect((await launching.preview(request)).plan.steps.some((step) => step.label.includes('MCP'))).toBe(false);
-  });
-
-  it('names both changes when asking about the main config folder', async () => {
-    const { project, request } = allowedProject(null);
-    workspace.updateProjectContext({ id: project.id, enabled: true });
-
-    const [consent] = (await launching.preview(request)).plan.requiredConfirmations;
-
-    expect(consent?.label).toContain('skill');
-    expect(consent?.label).toContain('MCP');
+    expect((await launching.preview(request)).plan.steps.some((step) => text(step.label).includes('MCP'))).toBe(false);
   });
 
   it('still opens when MCP cannot be registered, and says so', async () => {
@@ -825,7 +876,24 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
     const result = await launching.execute(request, []);
 
     expect(result.status).toBe('launched');
-    expect(result.outcome?.warnings.join()).toContain('boom');
+    expect(result.outcome?.warnings.map(text).join()).toContain('boom');
+  });
+
+  it('asks the agent to fill in a task in an interactive session, never on its own (ADR-021 item 7)', async () => {
+    const { project, request } = allowedProject();
+    const folder = workspace.updateProjectContext({ id: project.id, enabled: true }).context.path;
+    mkdirSync(join(folder, 'Workstreams', 'combo', 'Tasks'), { recursive: true });
+    writeFileSync(join(folder, 'README.md'), '# Context');
+    const ref = 'Workstreams/combo/Tasks/TASK-001-counter.md';
+    writeFileSync(join(folder, ref), '# TASK-001\n## Handoff log\n');
+
+    const result = await launching.execute({ ...request, taskRef: ref, purpose: 'refine' }, []);
+
+    expect(result.prompt).toContain(`context-resume skill for TASK-001 (${ref})`);
+    expect(result.prompt).toContain('write testable acceptance criteria');
+    expect(result.taskRef).toBe(ref);
+    expect(launched).toBe(1);
+    expect(await codeOf(() => launching.preview({ ...request, purpose: 'refine' }))).toBe('VALIDATION_FAILED');
   });
 
   it('points the agent at the chosen task, records it, and reminds about commits newer than its handoff', async () => {
@@ -844,7 +912,7 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
     expect(result.prompt).toContain(`context-resume skill for TASK-001 (${ref})`);
     expect(result.taskRef).toBe(ref);
     expect(launching.listLaunches(project.id)[0]?.taskRef).toBe(ref);
-    const warnings = preview.plan.steps.map((step) => step.warning ?? '').join(' ');
+    const warnings = preview.plan.steps.map((step) => text(step.warning)).join(' ');
     expect(warnings).toContain('commit mới hơn handoff');
     // Uncommitted changes concern the whole project and stay on the page, not in every launch.
     expect(warnings).not.toContain('chưa commit');
@@ -935,5 +1003,132 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
 
       expect(result.prompt).toContain('context_save_handoff');
     });
+  });
+});
+
+describe('agent tools (ADR-020 item 1)', () => {
+  const SKILLS = ['context-capture', 'context-checkpoint', 'context-init', 'context-resume'];
+
+  function customSkill(name: string, folderName = name, base = join(root, 'my skills')): string {
+    const folder = join(base, folderName);
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'SKILL.md'), `---\nname: ${name}\ndescription: Một skill riêng.\n---\n# ${name}\n`);
+    return folder;
+  }
+
+  it('lists the shipped skills and each account, with the main config off by default', async () => {
+    const main = claudeProfile('Main');
+    const separate = claudeProfile('B', join(root, 'account-b'));
+
+    const view = await launching.tools.view();
+
+    expect(view.skills.map((skill) => [skill.name, skill.kind])).toEqual(SKILLS.map((name) => [name, 'builtin']));
+    expect(view.skills.every((skill) => (skill.description ?? '').length > 0)).toBe(true);
+    const byId = new Map(view.accounts.map((account) => [account.profileId, account]));
+    expect(byId.get(main.id)).toMatchObject({ mainConfig: true, autoInstall: false, mcp: 'missing' });
+    expect(byId.get(separate.id)).toMatchObject({ mainConfig: false, autoInstall: true, skillsDirectory: join(root, 'account-b', 'skills') });
+    expect(Object.values(byId.get(separate.id)?.skills ?? {})).toEqual(SKILLS.map(() => 'missing'));
+    expect(view.leaked).toEqual([]);
+  });
+
+  it('installs and removes one tool for one account', async () => {
+    const a = claudeProfile('A', join(root, 'account-a'));
+    const b = claudeProfile('B', join(root, 'account-b'));
+
+    let state = await launching.tools.install(a.id, { kind: 'skill', name: 'context-init' });
+    expect(state.skills['context-init']).toBe('installed');
+    expect(state.skills['context-resume']).toBe('missing');
+    expect(existsSync(join(root, 'account-b', 'skills'))).toBe(false);
+
+    state = await launching.tools.install(a.id, { kind: 'mcp' });
+    expect(state.mcp).toBe('installed');
+    expect([...mcpRegistered]).toEqual([a.id]);
+
+    state = await launching.tools.uninstall(a.id, { kind: 'skill', name: 'context-init' });
+    expect(state.skills['context-init']).toBe('missing');
+    state = await launching.tools.uninstall(a.id, { kind: 'mcp' });
+    expect(state.mcp).toBe('missing');
+    expect((await launching.tools.account(b.id)).mcp).toBe('missing');
+  });
+
+  it('shows an outdated MCP entry as partial, and installing fixes it', async () => {
+    const a = claudeProfile('A', join(root, 'account-a'));
+    mcpOutdated.add(a.id);
+
+    expect((await launching.tools.account(a.id)).mcp).toBe('partial');
+    expect((await launching.tools.install(a.id, { kind: 'mcp' })).mcp).toBe('installed');
+  });
+
+  it("leaves the user's own skill of the same name alone, and names skills every account reads", async () => {
+    const a = claudeProfile('A', join(root, 'account-a'));
+    mkdirSync(join(root, 'account-a', 'skills', 'context-resume'), { recursive: true });
+    writeFileSync(join(root, 'account-a', 'skills', 'context-resume', 'SKILL.md'), 'mine');
+    mkdirSync(join(root, 'home', '.agents', 'skills', 'context-init'), { recursive: true });
+
+    await launching.tools.uninstall(a.id, { kind: 'skill', name: 'context-resume' });
+    await launching.tools.install(a.id, { kind: 'skill', name: 'context-resume' });
+
+    const view = await launching.tools.view();
+    expect(view.accounts[0]?.skills['context-resume']).toBe('foreign');
+    expect(lstatSync(join(root, 'account-a', 'skills', 'context-resume')).isSymbolicLink()).toBe(false);
+    expect(view.leaked).toEqual([{ directory: join(root, 'home', '.agents', 'skills'), names: ['context-init'] }]);
+  });
+
+  it('keeps the auto-install choice across a restart', async () => {
+    const main = claudeProfile('Main');
+    await launching.tools.setAutoInstall(main.id, true);
+    store.close();
+    open();
+    expect((await launching.tools.account(main.id)).autoInstall).toBe(true);
+  });
+
+  it("adds a user's skill from a copy, installs it per account, and removes it from every account", async () => {
+    const a = claudeProfile('A', join(root, 'account-a'));
+    const b = claudeProfile('B', join(root, 'account-b'));
+    const folder = customSkill('review-unity');
+
+    const added = launching.tools.addSkill(folder);
+    expect(added).toMatchObject({ name: 'review-unity', kind: 'custom', sourcePath: folder });
+    // AgentHub works from its own copy, so the original may move.
+    rmSync(folder, { recursive: true });
+    await launching.tools.install(a.id, { kind: 'skill', name: 'review-unity' });
+    await launching.tools.install(b.id, { kind: 'skill', name: 'review-unity' });
+    expect((await launching.tools.view()).skills.at(-1)).toMatchObject({ name: 'review-unity', kind: 'custom', description: 'Một skill riêng.' });
+    store.close();
+    open();
+    expect((await launching.tools.account(a.id)).skills['review-unity']).toBe('installed');
+
+    launching.tools.removeSkill('review-unity');
+
+    expect(existsSync(join(root, 'account-a', 'skills', 'review-unity'))).toBe(false);
+    expect(existsSync(join(root, 'account-b', 'skills', 'review-unity'))).toBe(false);
+    expect(existsSync(join(root, 'data', 'skills', 'review-unity'))).toBe(false);
+    expect((await launching.tools.view()).skills.map((skill) => skill.name)).toEqual(SKILLS);
+  });
+
+  it('refuses an invalid skill, a taken name, and a skill from the folder every account reads', async () => {
+    const invalid = join(root, 'my skills', 'broken');
+    mkdirSync(invalid, { recursive: true });
+    writeFileSync(join(invalid, 'SKILL.md'), '# no frontmatter');
+    launching.tools.addSkill(customSkill('mine'));
+
+    expect(await codeOf(() => launching.tools.addSkill(invalid))).toBe('SKILL_INVALID');
+    expect(await codeOf(() => launching.tools.addSkill(customSkill('context-init')))).toBe('SKILL_EXISTS');
+    expect(await codeOf(() => launching.tools.addSkill(customSkill('mine', 'mine', join(root, 'again'))))).toBe('SKILL_EXISTS');
+    expect(await codeOf(() => launching.tools.addSkill(customSkill('shared', 'shared', join(root, 'home', '.agents', 'skills'))))).toBe('SKILL_INVALID');
+    expect(await codeOf(() => launching.tools.removeSkill('context-init'))).toBe('NOT_FOUND');
+  });
+
+  it("opening with auto install adds only the shipped skills, not the user's own", async () => {
+    const project = workspace.addProject({ path: projectDir });
+    const profile = claudeProfile('B', join(root, 'account-b'));
+    launching.setPermission({ projectId: project.id, profileId: profile.id, allowed: true });
+    launching.tools.addSkill(customSkill('mine'));
+
+    await launching.execute({ projectId: project.id, profileId: profile.id, mode: 'cli' }, []);
+
+    const state = await launching.tools.account(profile.id);
+    expect(SKILLS.map((name) => state.skills[name])).toEqual(SKILLS.map(() => 'installed'));
+    expect(state.skills['mine']).toBe('missing');
   });
 });

@@ -14,7 +14,7 @@ import {
   writeSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { DomainError } from '@agenthub/domain';
+import { DomainError, raw } from '@agenthub/domain';
 
 // Files agents read and write in a project's context folder (ADR-019). Every path is relative to
 // that folder and must stay inside it, through symlinks too. Only Markdown is ever written.
@@ -24,7 +24,7 @@ const MAX_LISTED = 1000;
 
 export const sha256 = (content: string): string => createHash('sha256').update(content, 'utf8').digest('hex');
 
-const invalid = (message: string): DomainError => new DomainError('VALIDATION_FAILED', message);
+const invalid = (message: string): DomainError => new DomainError('VALIDATION_FAILED', raw(message));
 
 function isWithin(path: string, root: string): boolean {
   return path === root || path.startsWith(root + sep);
@@ -96,7 +96,7 @@ export function insertHandoff(document: string, entry: string): string {
 
 export function listContext(root: string, relativePath = ''): ContextEntry[] {
   const { path, realRoot } = resolveInside(root, relativePath);
-  if (!existsSync(path)) throw new DomainError('NOT_FOUND', 'No such folder in the context documents.');
+  if (!existsSync(path)) throw new DomainError('NOT_FOUND', raw('No such folder in the context documents.'));
   const entries: ContextEntry[] = [];
   const walk = (folder: string): void => {
     for (const item of readdirSync(folder, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
@@ -117,7 +117,7 @@ export function listContext(root: string, relativePath = ''): ContextEntry[] {
 
 export function readContext(root: string, relativePath: string): { content: string; sha256: string } {
   const { path } = resolveInside(root, relativePath);
-  if (!existsSync(path) || !statSync(path).isFile()) throw new DomainError('NOT_FOUND', `No document at ${relativePath}.`);
+  if (!existsSync(path) || !statSync(path).isFile()) throw new DomainError('NOT_FOUND', raw(`No document at ${relativePath}.`));
   const content = readText(path);
   return { content, sha256: sha256(content) };
 }
@@ -130,9 +130,11 @@ export function writeContext(root: string, relativePath: string, content: string
   if (current !== baseSha256) {
     throw new DomainError(
       'CONTEXT_CONFLICT',
-      current === null
-        ? `${relativePath} does not exist; write it without base_sha256.`
-        : `${relativePath} changed since it was read (or base_sha256 is missing). Read it again and merge.`,
+      raw(
+        current === null
+          ? `${relativePath} does not exist; write it without base_sha256.`
+          : `${relativePath} changed since it was read (or base_sha256 is missing). Read it again and merge.`,
+      ),
     );
   }
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -159,5 +161,5 @@ export function appendHandoff(root: string, relativePath: string, entry: string)
       if (!(error instanceof DomainError && error.code === 'CONTEXT_CONFLICT')) throw error;
     }
   }
-  throw new DomainError('CONTEXT_CONFLICT', `${relativePath} kept changing; try again.`);
+  throw new DomainError('CONTEXT_CONFLICT', raw(`${relativePath} kept changing; try again.`));
 }

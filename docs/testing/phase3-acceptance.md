@@ -22,13 +22,15 @@ Exit criteria của Phase 3 (TDD §13): chạy được bảy scenario ở TDD �
 
 ## Kiểm tra thêm
 
-- **Account chính** (`~/.claude`, `~/.codex`): lần đầu mở một project, bảng quyết định hỏi trước khi thêm skill và MCP; thử cả "Mở mà không cài".
+- **Account chính** (`~/.claude`, `~/.codex`): mặc định không tự cài; bảng quyết định chỉ báo thiếu skill/MCP và có nút "Mở Công cụ agent". Cài từng ô ở Cài đặt → Công cụ agent, hoặc bật "Tự cài khi mở" (ADR-020 mục 1).
 - **Thêm handoff** cho task đã chọn (dán từ tab Chat không có MCP): mục mới nằm đầu Handoff log.
+- **Tab Task (ADR-021):** tạo task (tên + mục tiêu) rồi "Nhờ agent" với một account: agent viết acceptance criteria vào file và panel tự cập nhật; sửa theo mục và Markdown cả file; đổi trạng thái sang Xong và kiểm tra `STATUS.md` cùng dòng "Verified by user in AgentHub"; sửa task trong lúc agent đang ghi cùng file thì AgentHub báo và khoá Lưu.
+- **Tab Tài liệu (ADR-021):** xem, sửa, tạo file `.md`; agent ghi file đang mở thì nội dung tự đổi.
 - Không có file nào xuất hiện trong folder project ngoài những gì agent cố ý viết; `~/.agents/skills` không có skill `context-*`.
 
 ## Điểm cần người dùng quyết định khi đánh giá
 
-- Skill và MCP được cài cho account khi mở **mọi** project, kể cả project tắt tài liệu. "Mở mà không cài" không được nhớ, lần sau hỏi lại.
+- Account bật "Tự cài khi mở" được cài skill và MCP khi mở **mọi** project, kể cả project tắt tài liệu. Account riêng mặc định bật, account chính mặc định tắt.
 - Chat rời không thuộc project nên **mọi** account có MCP của AgentHub đều đọc được.
 - Fallback transcript chỉ được đề xuất khi project đã có ít nhất một checkpoint hoặc handoff.
 - Lời nhắc và skill viết bằng tiếng Anh; tài liệu theo ngôn ngữ chọn cho project.

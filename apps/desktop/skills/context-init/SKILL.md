@@ -36,6 +36,8 @@ Use the path from the opening prompt, or the AgentHub MCP tools if available, or
 
 Each task file has: goal, acceptance criteria (testable), notes, and an empty "Handoff log" section where `context-checkpoint` adds entries newest first.
 
+The task table in `STATUS.md` has the task id (with its title) in the first column and its state in the second, one row per task. Use exactly one of four states, in the documents' language: `To do`, `In progress`, `Blocked`, `Done` (Vietnamese: `Chờ`, `Đang làm`, `Bị chặn`, `Xong`; Korean: `대기`, `진행 중`, `막힘`, `완료`). AgentHub shows and edits this table, and the user may change states or add tasks from AgentHub too. Task numbers are unique across all workstreams.
+
 Use lowercase-hyphen slugs and three-digit task numbers. Write in the language the prompt asks for (English by default). Use absolute dates.
 
 ## Instruction files

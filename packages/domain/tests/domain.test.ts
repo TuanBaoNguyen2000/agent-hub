@@ -3,11 +3,11 @@ import { DomainError, folderNameOf, isSamePath, requireLabel } from '../src/inde
 
 describe('requireLabel', () => {
   it('trims the label', () => {
-    expect(requireLabel('  QA-024  ', 'Tên')).toBe('QA-024');
+    expect(requireLabel('  QA-024  ', 'field.projectName')).toBe('QA-024');
   });
 
   it.each(['', '   ', 'x'.repeat(201)])('rejects %j', (value) => {
-    expect(() => requireLabel(value, 'Tên')).toThrow(DomainError);
+    expect(() => requireLabel(value, 'field.projectName')).toThrow(DomainError);
   });
 });
 

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { DomainError } from '@agenthub/domain';
+import { DomainError, raw } from '@agenthub/domain';
 import { MAX_DOCUMENT_BYTES, writeContext } from './context-files';
 
 // Short Markdown notes AgentHub keeps itself (TDD §6.3, §7.5): the handoffs of a project without
@@ -34,7 +34,7 @@ const slug = (title: string): string =>
     .replace(/-+$/, '');
 
 function requireId(id: string): string {
-  if (!ID.test(id)) throw new DomainError('VALIDATION_FAILED', 'Invalid note id.');
+  if (!ID.test(id)) throw new DomainError('VALIDATION_FAILED', raw('Invalid note id.'));
   return id;
 }
 
@@ -51,14 +51,14 @@ function parse(id: string, text: string): NoteWithContent {
 
 export function saveNote(folder: string, input: { title: string; content: string; source: string; now: Date }): Note {
   const title = input.title.replace(/[\r\n]+/g, ' ').trim().slice(0, MAX_TITLE);
-  if (title === '') throw new DomainError('VALIDATION_FAILED', 'The note needs a title.');
-  if (input.content.trim() === '') throw new DomainError('VALIDATION_FAILED', 'The note is empty.');
+  if (title === '') throw new DomainError('VALIDATION_FAILED', raw('The note needs a title.'));
+  if (input.content.trim() === '') throw new DomainError('VALIDATION_FAILED', raw('The note is empty.'));
   const source = input.source.replace(/-->|[\r\n;]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100) || 'unknown';
   const stamp = input.now.toISOString().replace(/[-:.]/g, '');
   const name = slug(title);
   const id = `${stamp}-${randomBytes(3).toString('hex')}${name ? `-${name}` : ''}`;
   const text = `# ${title}\n<!-- agenthub: created=${input.now.toISOString()}; source=${source} -->\n\n${input.content.trim()}\n`;
-  if (Buffer.byteLength(text, 'utf8') > MAX_DOCUMENT_BYTES) throw new DomainError('VALIDATION_FAILED', 'The note is larger than 1 MB.');
+  if (Buffer.byteLength(text, 'utf8') > MAX_DOCUMENT_BYTES) throw new DomainError('VALIDATION_FAILED', raw('The note is larger than 1 MB.'));
   mkdirSync(folder, { recursive: true, mode: 0o700 });
   writeContext(folder, `${id}.md`, text, null);
   return { id, title, createdAt: input.now.toISOString(), source };
@@ -80,16 +80,16 @@ export function listNotes(folder: string, limit = 200): Note[] {
 
 export function readNote(folder: string, id: string): NoteWithContent {
   const path = join(folder, `${requireId(id)}.md`);
-  if (!existsSync(path) || statSync(path).size > MAX_DOCUMENT_BYTES) throw new DomainError('NOT_FOUND', 'No such note.');
+  if (!existsSync(path) || statSync(path).size > MAX_DOCUMENT_BYTES) throw new DomainError('NOT_FOUND', raw('No such note.'));
   return parse(id, readFileSync(path, 'utf8'));
 }
 
 // A loose chat moving into a project keeps its file and id.
 export function moveNote(from: string, id: string, to: string): void {
   const source = join(from, `${requireId(id)}.md`);
-  if (!existsSync(source)) throw new DomainError('NOT_FOUND', 'No such note.');
+  if (!existsSync(source)) throw new DomainError('NOT_FOUND', raw('No such note.'));
   mkdirSync(to, { recursive: true, mode: 0o700 });
   const target = join(to, `${id}.md`);
-  if (existsSync(target)) throw new DomainError('CONTEXT_CONFLICT', 'A note with this id is already there.');
+  if (existsSync(target)) throw new DomainError('CONTEXT_CONFLICT', raw('A note with this id is already there.'));
   renameSync(source, target);
 }

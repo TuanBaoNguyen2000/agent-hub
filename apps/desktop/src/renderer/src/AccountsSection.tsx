@@ -2,6 +2,7 @@ import type { LoginStateDto, MachineAccountDto, ProfileDto, ProfileStatusDto, Pr
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AccountAvatar, PROVIDER_LABELS, useAccountLauncher, windowLabel } from './accounts';
 import { api, unwrap } from './api';
+import { useI18n } from './i18n';
 import { Monitor, More, Plus, Terminal } from './icons';
 import { Disclosure, Menu, MenuItem, MenuSeparator } from './ui';
 import { UsagePanel } from './usage';
@@ -9,11 +10,11 @@ const LOGIN_POLL_MS = 1500;
 const TERMINAL_POLL_MS = 3000;
 const LOGIN_POLL_LIMIT = 100;
 
-function loginText(status: ProfileStatusDto | undefined): string {
-  if (!status) return 'Đang kiểm tra…';
-  if (!status.cliPath) return 'Không tìm thấy CLI';
-  if (status.login === 'logged_in') return status.loginDetail ? `Đã đăng nhập (${status.loginDetail})` : 'Đã đăng nhập';
-  return status.login === 'logged_out' ? 'Chưa đăng nhập' : 'Không rõ trạng thái đăng nhập';
+function loginText({ t }: ReturnType<typeof useI18n>, status: ProfileStatusDto | undefined): string {
+  if (!status) return t('accounts.checking');
+  if (!status.cliPath) return t('accounts.noCli');
+  if (status.login === 'logged_in') return status.loginDetail ? t('accounts.signedInAs', { detail: status.loginDetail }) : t('accounts.signedIn');
+  return t(status.login === 'logged_out' ? 'accounts.signedOut' : 'accounts.loginUnknown');
 }
 
 function LoginProgress({
@@ -27,39 +28,38 @@ function LoginProgress({
   onCopy: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useI18n();
   if (state.phase === 'terminal') {
     return (
       <p className="hint" role="status">
-        Hãy đăng nhập trong cửa sổ Terminal vừa mở. Nếu trình duyệt tự dùng account khác, hãy mở đường link trong cửa sổ riêng tư. Trạng thái ở đây sẽ tự cập nhật.
+        {t('login.terminal')}
       </p>
     );
   }
   if (state.phase === 'failed') {
     return (
       <p className="banner warning" role="status">
-        Đăng nhập chưa hoàn tất. Bạn có thể bấm Đăng nhập để thử lại.
+        {t('login.failed')}
       </p>
     );
   }
   return (
-    <div className="stack" role="group" aria-label="Đang đăng nhập">
+    <div className="stack" role="group" aria-label={t('login.inProgress')}>
       <p className="hint" role="status">
-        {state.privateBrowser
-          ? `Đã mở cửa sổ riêng tư của ${state.privateBrowser}. Hãy đăng nhập đúng account bạn muốn thêm; AgentHub sẽ tự cập nhật khi xong. Nếu vẫn thấy account cũ, hãy đóng hết cửa sổ riêng tư rồi bấm Mở lại.`
-          : 'Không tự mở được cửa sổ riêng tư. Hãy sao chép link rồi dán vào một cửa sổ riêng tư của trình duyệt; AgentHub sẽ tự cập nhật khi xong.'}
+        {state.privateBrowser ? t('login.privateOpened', { browser: state.privateBrowser }) : t('login.privateFailed')}
       </p>
       <div className="row">
         <button type="button" onClick={() => onReopen('private')}>
-          Mở lại
+          {t('login.reopen')}
         </button>
         <button type="button" onClick={() => onReopen('normal')}>
-          Dùng trình duyệt thường
+          {t('login.normalBrowser')}
         </button>
         <button type="button" onClick={onCopy}>
-          Sao chép link
+          {t('login.copyLink')}
         </button>
         <button type="button" onClick={onCancel}>
-          Huỷ
+          {t('common.cancel')}
         </button>
       </div>
     </div>
@@ -95,6 +95,8 @@ function AccountRow({
   onCancel: () => void;
   onRemove: () => void;
 }) {
+  const i18n = useI18n();
+  const { t, tr } = i18n;
   const signedIn = status?.login === 'logged_in';
   const inProgress = starting || login?.phase === 'waiting' || login?.phase === 'terminal';
   return (
@@ -103,30 +105,30 @@ function AccountRow({
         <AccountAvatar account={account} />
         <div className="grow account-row-text">
           <strong className="truncate" data-testid="account-identity">
-            {account.accountEmail ?? 'Chưa rõ account'}
+            {account.accountEmail ?? t('accounts.unknown')}
           </strong>
           <span className="account-row-meta">
-            {PROVIDER_LABELS[account.provider]} · {windowLabel(account)} ·{' '}
+            {PROVIDER_LABELS[account.provider]} · {windowLabel(t, account)} ·{' '}
             <span className={signedIn ? 'login-state ok' : 'login-state'} data-testid="login-state">
-              {loginText(status)}
+              {loginText(i18n, status)}
             </span>
           </span>
         </div>
         {!inProgress && (
           <button type="button" onClick={onLogin}>
-            {signedIn ? 'Đăng nhập lại' : 'Đăng nhập'}
+            {t(signedIn ? 'accounts.signInAgain' : 'accounts.signIn')}
           </button>
         )}
-        <Menu label={`Thao tác với ${account.name}`} triggerClassName="icon-button" align="end" trigger={<More />}>
+        <Menu label={t('accounts.actions', { account: tr(account.name) })} triggerClassName="icon-button" align="end" trigger={<More />}>
           <MenuItem icon={<Monitor />} onSelect={() => onOpen('desktop')}>
-            Mở trong Desktop
+            {t('launch.openDesktop')}
           </MenuItem>
           <MenuItem icon={<Terminal />} onSelect={() => onOpen('cli')}>
-            Mở trong Terminal
+            {t('launch.openTerminal')}
           </MenuItem>
           <MenuSeparator />
           <MenuItem tone="danger" onSelect={onRemove}>
-            Gỡ khỏi AgentHub
+            {t('project.remove')}
           </MenuItem>
         </Menu>
       </div>
@@ -137,7 +139,7 @@ function AccountRow({
       )}
       {starting && (
         <p className="hint account-row-detail" role="status">
-          Đang chuẩn bị đăng nhập…
+          {t('login.preparing')}
         </p>
       )}
       {login && (
@@ -147,21 +149,24 @@ function AccountRow({
       )}
       {status && status.sameAccountAs.length > 0 && (
         <p className="banner warning account-row-detail">
-          Account này đang đăng nhập cùng tài khoản với "{status.sameAccountAs.join(', ')}". Có thể trình duyệt đã tự dùng phiên cũ; hãy bấm Đăng nhập lại và chọn account khác trong cửa sổ riêng tư.
+          {t('accounts.sameLogin', { accounts: status.sameAccountAs.map(tr).join(', ') })}
         </p>
       )}
-      <Disclosure summary="Thông tin kỹ thuật" className="account-row-detail">
+      <Disclosure summary={t('accounts.details')} className="account-row-detail">
         <dl className="facts">
           <dt>Email</dt>
-          <dd>Do CLI báo. {account.provider === 'claude' && account.desktopDataDir ? 'Cửa sổ Desktop của account này có đăng nhập riêng.' : ''}</dd>
-          <dt>Cấu hình CLI</dt>
-          <dd>{account.cliConfigRoot ?? 'Mặc định của máy'}</dd>
-          <dt>Dữ liệu Desktop</dt>
-          <dd>{account.desktopDataDir ?? 'App chính'}</dd>
+          <dd>
+            {t('accounts.emailFromCli')}
+            {account.provider === 'claude' && account.desktopDataDir ? ` ${t('accounts.desktopOwnLogin')}` : ''}
+          </dd>
+          <dt>{t('accounts.cliConfig')}</dt>
+          <dd>{account.cliConfigRoot ?? t('accounts.machineDefault')}</dd>
+          <dt>{t('accounts.desktopData')}</dt>
+          <dd>{account.desktopDataDir ?? t('account.mainApp')}</dd>
           <dt>CLI</dt>
-          <dd>{status?.cliPath ? `${status.cliVersion ?? 'không rõ version'} — ${status.cliPath}` : 'Không tìm thấy'}</dd>
+          <dd>{status?.cliPath ? `${status.cliVersion ?? t('launch.unknownVersion')} — ${status.cliPath}` : t('accounts.notFound')}</dd>
           <dt>Desktop</dt>
-          <dd>{status?.desktopInstalled ? (status.desktopVersion ?? 'không rõ version') : 'Chưa cài'}</dd>
+          <dd>{status?.desktopInstalled ? (status.desktopVersion ?? t('launch.unknownVersion')) : t('accounts.notInstalled')}</dd>
         </dl>
       </Disclosure>
     </li>
@@ -169,6 +174,7 @@ function AccountRow({
 }
 
 export function AccountsSection({ onError, onChanged }: { onError: (message: string | undefined) => void; onChanged: () => void }) {
+  const { t, tr } = useI18n();
   const [accounts, setLoadedAccounts] = useState<ProfileDto[]>();
   const [statuses, setStatuses] = useState<Record<string, ProfileStatusDto>>({});
   const [usages, setUsages] = useState<Record<string, UsageDto>>({});
@@ -280,9 +286,7 @@ export function AccountsSection({ onError, onChanged }: { onError: (message: str
   async function requestLogin(account: ProfileDto): Promise<void> {
     // Signing in again here replaces what `claude` or `codex` uses everywhere on this machine.
     if (account.cliConfigRoot === null && statuses[account.id]?.login === 'logged_in') {
-      const accepted = window.confirm(
-        `Đây là account mặc định của ${PROVIDER_LABELS[account.provider]} CLI trên máy. Đăng nhập lại sẽ đổi account mà CLI dùng ở mọi nơi. Tiếp tục?`,
-      );
+      const accepted = window.confirm(t('accounts.reloginMachine', { provider: PROVIDER_LABELS[account.provider] }));
       if (!accepted) return;
     }
     justAdded.current = undefined;
@@ -354,9 +358,7 @@ export function AccountsSection({ onError, onChanged }: { onError: (message: str
   }
 
   async function remove(account: ProfileDto): Promise<void> {
-    const accepted = window.confirm(
-      `Gỡ "${account.name}" khỏi AgentHub?\n\nAgentHub chỉ quên account này. Đăng nhập và dữ liệu của ${PROVIDER_LABELS[account.provider]} không bị xoá, lịch sử mở vẫn được giữ.`,
-    );
+    const accepted = window.confirm(t('accounts.removeConfirm', { account: tr(account.name), provider: PROVIDER_LABELS[account.provider] }));
     if (!accepted) return;
     try {
       await unwrap(api.removeProfile({ id: account.id }));
@@ -371,29 +373,29 @@ export function AccountsSection({ onError, onChanged }: { onError: (message: str
       <div className="settings-group-header">
         <div className="grow">
           <h2>Accounts</h2>
-          <p className="hint">Đăng nhập do Claude và Codex xử lý trong trình duyệt; AgentHub không thấy và không lưu mật khẩu hay token.</p>
+          <p className="hint">{t('accounts.hint')}</p>
         </div>
         {!offer && !checking && (
           <Menu
-            label="Thêm account"
+            label={t('accounts.add')}
             align="end"
             trigger={
               <>
                 <Plus />
-                Thêm account
+                {t('accounts.add')}
               </>
             }
           >
-            <MenuItem icon={<span className="avatar claude sm" aria-hidden="true">C</span>} description="Claude Desktop và Claude Code" onSelect={() => void choose('claude')}>
+            <MenuItem icon={<span className="avatar claude sm" aria-hidden="true">C</span>} description={t('accounts.claudeApps')} onSelect={() => void choose('claude')}>
               Claude
             </MenuItem>
-            <MenuItem icon={<span className="avatar codex sm" aria-hidden="true">C</span>} description="Codex Desktop và Codex CLI" onSelect={() => void choose('codex')}>
+            <MenuItem icon={<span className="avatar codex sm" aria-hidden="true">C</span>} description={t('accounts.codexApps')} onSelect={() => void choose('codex')}>
               Codex
             </MenuItem>
           </Menu>
         )}
       </div>
-      {accounts?.length === 0 && !offer && !checking && <p className="hint settings-empty">Chưa có account nào.</p>}
+      {accounts?.length === 0 && !offer && !checking && <p className="hint settings-empty">{t('accounts.empty')}</p>}
       <ul className="settings-list">
         {accounts?.map((account) => (
           <AccountRow
@@ -416,25 +418,27 @@ export function AccountsSection({ onError, onChanged }: { onError: (message: str
       </ul>
       {checking && (
         <p className="hint settings-empty" role="status">
-          Đang kiểm tra account trên máy…
+          {t('accounts.checkingMachine')}
         </p>
       )}
       {offer && (
-        <div className="card offer" role="group" aria-label="Chọn account để thêm">
+        <div className="card offer" role="group" aria-label={t('accounts.offer')}>
           <p>
-            {PROVIDER_LABELS[offer.provider]} trên máy này đang đăng nhập bằng{' '}
-            <strong>{offer.machine.accountEmail ?? 'một account chưa rõ email'}</strong>
-            {offer.machine.loginDetail ? ` (${offer.machine.loginDetail})` : ''}.
+            {t('accounts.machineSignedIn', {
+              provider: PROVIDER_LABELS[offer.provider],
+              email: offer.machine.accountEmail ?? t('accounts.unknownEmail'),
+            })}
+            {offer.machine.loginDetail ? ` (${tr(offer.machine.loginDetail)})` : ''}.
           </p>
           <div className="row">
             <button type="button" className="primary" onClick={() => void add(offer.provider, 'machine')}>
-              Dùng account này
+              {t('accounts.useThis')}
             </button>
             <button type="button" onClick={() => void add(offer.provider, 'separate')}>
-              Đăng nhập account khác
+              {t('accounts.signInOther')}
             </button>
             <button type="button" onClick={() => setOffer(undefined)}>
-              Huỷ
+              {t('common.cancel')}
             </button>
           </div>
         </div>

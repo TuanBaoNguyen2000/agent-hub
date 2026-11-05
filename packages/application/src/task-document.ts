@@ -1,0 +1,263 @@
+import type { ContextLanguage } from '@agenthub/domain';
+
+// ADR-021: AgentHub edits task files and the STATUS table that agents write. The files are
+// free-form Markdown, so editing works on spans of the original text: whatever the user does not
+// touch stays byte for byte, including sections AgentHub does not know.
+
+export type TaskSectionKind = 'goal' | 'criteria' | 'notes' | 'handoff' | 'other';
+
+export interface TaskSection {
+  // Position among the sections; what an edit refers to.
+  id: number;
+  heading: string;
+  level: number;
+  kind: TaskSectionKind;
+  body: string;
+}
+
+export interface TaskDocument {
+  title: string;
+  sections: TaskSection[];
+}
+
+interface Span {
+  start: number;
+  end: number;
+}
+
+interface ParsedSection extends TaskSection {
+  headingLine: Span;
+  bodySpan: Span;
+}
+
+interface Parsed {
+  title: string;
+  titleLine: Span | null;
+  sections: ParsedSection[];
+}
+
+const KINDS: [TaskSectionKind, RegExp][] = [
+  ['handoff', /^handoff log$/i],
+  ['criteria', /acceptance|criteria|tiêu chí|điều kiện hoàn thành|완료 조건|수락 기준|인수 조건/i],
+  ['goal', /^(goal|goals|objective|mục tiêu|목표)(?![\p{L}\p{N}])/iu],
+  ['notes', /^(notes?|ghi chú|메모|참고)(?![\p{L}\p{N}])/iu],
+];
+
+export const sectionKind = (heading: string): TaskSectionKind => KINDS.find(([, pattern]) => pattern.test(heading.trim()))?.[0] ?? 'other';
+
+const HEADING = /^(#{1,6})[ \t]+(.+?)[ \t#]*$/;
+
+function lines(text: string): { text: string; start: number; end: number }[] {
+  const result: { text: string; start: number; end: number }[] = [];
+  let start = 0;
+  while (start <= text.length) {
+    const newline = text.indexOf('\n', start);
+    const end = newline < 0 ? text.length : newline + 1;
+    result.push({ text: text.slice(start, newline < 0 ? text.length : newline).replace(/\r$/, ''), start, end });
+    if (newline < 0) break;
+    start = end;
+  }
+  return result;
+}
+
+function parse(text: string): Parsed {
+  const all = lines(text);
+  let fence = false;
+  const headings: { level: number; text: string; line: (typeof all)[number] }[] = [];
+  for (const line of all) {
+    if (/^\s*(```|~~~)/.test(line.text)) fence = !fence;
+    if (fence) continue;
+    const match = HEADING.exec(line.text);
+    if (match) headings.push({ level: (match[1] as string).length, text: (match[2] as string).trim(), line });
+  }
+  const titleHeading = headings.find((heading) => heading.level === 1) ?? null;
+  const rest = headings.filter((heading) => heading !== titleHeading && (!titleHeading || heading.line.start > titleHeading.line.start));
+  // Sections are the top level below the title; deeper headings belong to them (handoff entries).
+  const sectionLevel = rest.length > 0 ? Math.min(...rest.map((heading) => heading.level)) : 2;
+  const tops = rest.filter((heading) => heading.level === sectionLevel);
+  const sections = tops.map((heading, index): ParsedSection => {
+    const bodyStart = heading.line.end;
+    const bodyEnd = tops[index + 1]?.line.start ?? text.length;
+    return {
+      id: index,
+      heading: heading.text,
+      level: heading.level,
+      kind: sectionKind(heading.text),
+      body: text.slice(bodyStart, bodyEnd).replace(/^\s*\n/, '').replace(/\s+$/, ''),
+      headingLine: { start: heading.line.start, end: heading.line.end },
+      bodySpan: { start: bodyStart, end: bodyEnd },
+    };
+  });
+  return {
+    title: titleHeading?.text ?? '',
+    titleLine: titleHeading ? { start: titleHeading.line.start, end: titleHeading.line.end } : null,
+    sections,
+  };
+}
+
+export function parseTaskDocument(text: string): TaskDocument {
+  const { title, sections } = parse(text);
+  return { title, sections: sections.map(({ id, heading, level, kind, body }) => ({ id, heading, level, kind, body })) };
+}
+
+export interface TaskEdit {
+  title: string;
+  // Bodies of existing sections, by id; the handoff log is never changed here.
+  bodies: { id: number; body: string }[];
+  // Sections the task did not have yet, such as Notes; added before the handoff log.
+  added: { kind: Exclude<TaskSectionKind, 'handoff' | 'other'>; body: string }[];
+}
+
+const block = (body: string): string => (body.trim() === '' ? '\n' : `\n${body.trim()}\n\n`);
+
+export function applyTaskEdit(text: string, edit: TaskEdit, language: ContextLanguage): string {
+  const parsed = parse(text);
+  const replacements: { span: Span; text: string }[] = [];
+  const title = edit.title.replace(/\s+/g, ' ').trim();
+  if (title !== '' && title !== parsed.title) {
+    if (parsed.titleLine) {
+      const newline = text.slice(parsed.titleLine.start, parsed.titleLine.end).endsWith('\n') ? '\n' : '';
+      replacements.push({ span: parsed.titleLine, text: `# ${title}${newline}` });
+    } else {
+      replacements.push({ span: { start: 0, end: 0 }, text: `# ${title}\n\n` });
+    }
+  }
+  for (const { id, body } of edit.bodies) {
+    const section = parsed.sections.find((item) => item.id === id);
+    if (!section || section.kind === 'handoff' || body.trim() === section.body.trim()) continue;
+    const isLast = section.bodySpan.end === text.length;
+    replacements.push({ span: section.bodySpan, text: isLast ? `\n${body.trim()}\n` : block(body) });
+  }
+  const additions = edit.added.filter((item) => !parsed.sections.some((section) => section.kind === item.kind));
+  if (additions.length > 0) {
+    const level = parsed.sections[0]?.level ?? 2;
+    const added = additions.map((item) => `${'#'.repeat(level)} ${SECTION_HEADINGS[language][item.kind]}\n${block(item.body)}`).join('');
+    const handoff = parsed.sections.find((section) => section.kind === 'handoff');
+    if (handoff) replacements.push({ span: { start: handoff.headingLine.start, end: handoff.headingLine.start }, text: added });
+    else replacements.push({ span: { start: text.length, end: text.length }, text: `${text === '' || text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n'}${added.replace(/\n+$/, '\n')}` });
+  }
+  let result = text;
+  for (const { span, text: replacement } of replacements.sort((a, b) => b.span.start - a.span.start)) {
+    result = result.slice(0, span.start) + replacement + result.slice(span.end);
+  }
+  return result;
+}
+
+// Headings of a new task, in the documents' language. "Handoff log" stays English: the skills,
+// the MCP server and the overview all look for it by that name.
+const SECTION_HEADINGS: Record<ContextLanguage, Record<'goal' | 'criteria' | 'notes', string>> = {
+  en: { goal: 'Goal', criteria: 'Acceptance criteria', notes: 'Notes' },
+  vi: { goal: 'Mục tiêu', criteria: 'Tiêu chí hoàn thành (acceptance criteria)', notes: 'Ghi chú' },
+  ko: { goal: '목표', criteria: '완료 조건 (acceptance criteria)', notes: '메모' },
+};
+
+export function newTaskDocument(input: { id: string; title: string; goal: string; language: ContextLanguage }): string {
+  const headings = SECTION_HEADINGS[input.language];
+  return [
+    `# ${input.id} ${input.title.replace(/\s+/g, ' ').trim()}`,
+    '',
+    `## ${headings.goal}`,
+    '',
+    input.goal.trim(),
+    '',
+    `## ${headings.criteria}`,
+    '',
+    `## ${headings.notes}`,
+    '',
+    '## Handoff log',
+    '',
+  ].join('\n');
+}
+
+// --- Task states (ADR-021 item 4): four fixed values, written in the documents' language. ---
+
+export const TASK_STATES = ['todo', 'active', 'blocked', 'done'] as const;
+export type TaskState = (typeof TASK_STATES)[number];
+
+export const STATE_WORDS: Record<ContextLanguage, Record<TaskState, string>> = {
+  en: { todo: 'To do', active: 'In progress', blocked: 'Blocked', done: 'Done' },
+  vi: { todo: 'Chờ', active: 'Đang làm', blocked: 'Bị chặn', done: 'Xong' },
+  ko: { todo: '대기', active: '진행 중', blocked: '막힘', done: '완료' },
+};
+
+// Whole words only; \b would not see Vietnamese or Korean letters.
+const word = (alternatives: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}])(?:${alternatives})(?![\\p{L}\\p{N}])`, 'iu');
+const DONE = word('done|xong|complete|completed|hoàn thành|closed|cancell?ed|huỷ|hủy|archived|완료|종료');
+const BLOCKED = word('blocked|blocker|on hold|bị chặn|chặn|tạm dừng|막힘|보류|차단');
+const ACTIVE = word('in[ -]progress|doing|active|wip|đang làm|đang|진행 중|진행');
+
+// The nearest of the four for whatever words an agent wrote; null when STATUS has no state.
+export function stateGroup(state: string | null): TaskState | null {
+  if (state === null || state.trim() === '') return null;
+  if (DONE.test(state)) return 'done';
+  if (BLOCKED.test(state)) return 'blocked';
+  if (ACTIVE.test(state)) return 'active';
+  return 'todo';
+}
+
+function escapeCell(text: string): string {
+  return text.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
+}
+
+// Rewrites only the state cell of the task's row; adds a row, or a table, when there is none.
+export function setStatusState(status: string | null, task: { id: string; title: string }, word: string, workstreamTitle: string): string {
+  const text = status ?? `# ${workstreamTitle}\n`;
+  const all = lines(text);
+  const idPattern = new RegExp(`(?<![\\w-])${task.id}(?![\\d])`, 'i');
+  for (const line of all) {
+    if (!line.text.trim().startsWith('|')) continue;
+    const cells = line.text.split('|');
+    // cells[0] is before the first pipe; the task id is in the first real cell.
+    if (cells.length < 4 || !idPattern.test(cells[1] ?? '')) continue;
+    const cell = cells[2] ?? '';
+    const leading = /^\s*/.exec(cell)?.[0] ?? ' ';
+    const trailing = /\s*$/.exec(cell)?.[0] ?? ' ';
+    cells[2] = `${leading || ' '}${escapeCell(word)}${trailing || ' '}`;
+    const newline = text.slice(line.start, line.end).endsWith('\n') ? (text.slice(line.start, line.end).endsWith('\r\n') ? '\r\n' : '\n') : '';
+    return text.slice(0, line.start) + cells.join('|') + newline + text.slice(line.end);
+  }
+  const row = `| ${escapeCell(`${task.id} ${task.title.replace(new RegExp(`^${task.id}\\s*`, 'i'), '')}`)} | ${escapeCell(word)} |`;
+  // After the last row of a table that already lists tasks.
+  const taskRows = all.filter((line) => line.text.trim().startsWith('|') && /TASK-\d+/i.test(line.text));
+  const lastRow = taskRows.at(-1);
+  if (lastRow) {
+    const insertAt = lastRow.end;
+    const prefix = text.slice(lastRow.start, lastRow.end).endsWith('\n') ? '' : '\n';
+    return `${text.slice(0, insertAt)}${prefix}${row}\n${text.slice(insertAt)}`;
+  }
+  const base = text.replace(/\s*$/, '');
+  return `${base}\n\n## Tasks\n\n| Task | Status |\n|---|---|\n${row}\n`;
+}
+
+// The next free TASK number across every workstream, so ids never repeat in a project.
+export function nextTaskId(existing: readonly string[]): string {
+  const highest = existing.reduce((max, id) => Math.max(max, Number(/TASK-(\d+)/i.exec(id)?.[1] ?? 0)), 0);
+  return `TASK-${String(highest + 1).padStart(3, '0')}`;
+}
+
+export function taskSlug(title: string): string {
+  const slug = title
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[đĐ]/g, 'd')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/, '');
+  return slug || 'task';
+}
+
+export const VERIFIED_LINES: Record<ContextLanguage, string> = {
+  en: '- **Verified by user in AgentHub:** marked Done.',
+  vi: '- **Người dùng xác nhận trong AgentHub (verified):** chuyển sang Xong.',
+  ko: '- **AgentHub에서 사용자가 확인함 (verified):** 완료로 변경.',
+};
+
+const pad = (value: number): string => String(value).padStart(2, '0');
+
+// A handoff entry with an absolute local time, in the shape the overview reads back.
+export function verifiedHandoff(at: Date, language: ContextLanguage): string {
+  const stamp = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  return `### ${stamp} — AgentHub\n${VERIFIED_LINES[language]}`;
+}

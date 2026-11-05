@@ -1,6 +1,6 @@
 # Desktop application
 
-**Status:** Có danh sách Project, cài đặt tài liệu context theo project, settings, account, launch và lịch sử mở theo project; bốn skill `context-*` ở `skills/` (đóng gói ra `Contents/Resources/skills`); MCP server ở `src/mcp/` (build ra `out/main/mcp.js`); trang project có task đọc từ tài liệu, cảnh báo và "Thêm handoff"; handoff cho project không có tài liệu và màn Chat rời. `tests/` có integration test nối các adapter thật, `tests/e2e/` có E2E trên cửa sổ Electron. Lệnh chạy ở [Development guide](../../docs/DEVELOPMENT.md#lệnh-phát-triển).
+**Status:** Có danh sách Project, cài đặt tài liệu context theo project, settings, account, launch và lịch sử mở theo project; bốn skill `context-*` ở `skills/` (đóng gói ra `Contents/Resources/skills`); MCP server ở `src/mcp/` (build ra `out/main/mcp.js`); trang project có task đọc từ tài liệu, cảnh báo và "Thêm handoff"; handoff cho project không có tài liệu và màn Chat rời; mục Công cụ agent trong Cài đặt; tab Task (xem, sửa, tạo, đổi trạng thái, "Nhờ agent") và tab Tài liệu (ADR-021). `tests/` có integration test nối các adapter thật, `tests/e2e/` có E2E trên cửa sổ Electron. Lệnh chạy ở [Development guide](../../docs/DEVELOPMENT.md#lệnh-phát-triển).
 
 Đây là entrypoint ứng dụng desktop cho macOS/Windows, dùng các package nghiệp vụ và hạ tầng trong repository.
 

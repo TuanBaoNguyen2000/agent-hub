@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase, schemaVersion } from '../src/database';
+import { raw } from '@agenthub/domain';
 import { openMetadataStore } from '../src/index';
 import { MIGRATIONS } from '../src/migrations';
 
@@ -76,7 +77,7 @@ describe('migrations', () => {
     store.close();
 
     expect(launch).toMatchObject({ id: 'x1', projectId: 'p1', taskRef: null, profileId: 'a1', accountConfirmedAt: '2026-11-02' });
-    expect(project).toMatchObject({ context: { enabled: false, language: 'en' }, contextPath: null, path: '/a/game' });
+    expect(project).toMatchObject({ context: { enabled: false, language: 'en' }, chatLanguage: null, contextPath: null, path: '/a/game' });
     const db = openDatabase(databasePath, MIGRATIONS);
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tasks'").get()).toBeUndefined();
     expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -105,10 +106,30 @@ describe('migrations', () => {
     expect(versionAfterOpening([noteTable, { version: 2, up: 'CREATE TABLE half (id INTEGER)' }])).toBe(2);
   });
 
+  it('shows launches recorded before ADR-020 item 6 with their texts as they were', () => {
+    const database = join(dir, 'legacy.sqlite');
+    const store = openMetadataStore(database);
+    const project = { id: 'p1', name: 'P', context: { enabled: false, language: 'en' as const }, chatLanguage: null, createdAt: 't', updatedAt: 't' };
+    store.projects.insert(project, { id: 'l1', deviceId: 'd', path: '/p' });
+    store.profiles.insert({ id: 'a1', provider: 'claude', alias: '', accountEmail: null, cliConfigRoot: null, desktopDataDir: null, createdAt: 't' });
+    store.launches.insert({ id: 'x1', projectId: 'p1', taskRef: null, profileId: 'a1', mode: 'cli', status: 'planned', createdAt: 't' });
+    store.close();
+    const db = openDatabase(database, MIGRATIONS);
+    db.prepare('UPDATE launch_attempts SET outcome = ? WHERE id = ?').run(
+      JSON.stringify({ appOpened: true, workspace: 'manual', sessionStarted: false, userActionRequired: ['Chọn folder'], warnings: ['Cũ'] }),
+      'x1',
+    );
+    db.close();
+
+    const reopened = openMetadataStore(database);
+    expect(reopened.launches.get('x1')?.outcome).toMatchObject({ userActionRequired: [raw('Chọn folder')], warnings: [raw('Cũ')] });
+    reopened.close();
+  });
+
   it('refuses a database newer than the app and leaves it unchanged', () => {
     versionAfterOpening([noteTable, { version: 2, up: 'CREATE TABLE later (id INTEGER)' }]);
 
-    expect(() => versionAfterOpening([noteTable])).toThrow(/mới hơn/);
+    expect(() => versionAfterOpening([noteTable])).toThrow(/newer than this app/);
     expect(versionAfterOpening([noteTable, { version: 2, up: 'SELECT 1' }])).toBe(2);
   });
 
@@ -125,7 +146,7 @@ describe('migrations', () => {
 
 describe('openMetadataStore', () => {
   const timestamp = '2026-11-01T00:00:00.000Z';
-  const project = { id: projectId, name: 'Dự án', context: { enabled: false, language: 'en' as const }, createdAt: timestamp, updatedAt: timestamp };
+  const project = { id: projectId, name: 'Dự án', context: { enabled: false, language: 'en' as const }, chatLanguage: null, createdAt: timestamp, updatedAt: timestamp };
   const location = { id: locationId, deviceId: 'device-a', path: '/a/Dự án thử' };
 
   it('keeps projects, context settings and settings after reopening', () => {

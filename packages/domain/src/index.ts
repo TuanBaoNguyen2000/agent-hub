@@ -1,3 +1,5 @@
+import { type Locale, type Message, type MessageKey, type Params, msg, raw, translate } from '@agenthub/i18n';
+
 export type ErrorCode =
   | 'VALIDATION_FAILED'
   | 'NOT_FOUND'
@@ -14,19 +16,30 @@ export type ErrorCode =
   | 'APP_NOT_FOUND'
   | 'LAUNCH_UNSUPPORTED'
   | 'LAUNCH_FAILED'
+  | 'SKILL_INVALID'
+  | 'SKILL_EXISTS'
+  | 'SKILL_MISSING'
+  | 'MCP_UNAVAILABLE'
   | 'UNEXPECTED';
 
+// The key and params travel to the UI, which shows them in its own language (ADR-020 item 6);
+// the English text is for logs.
 export class DomainError extends Error {
+  readonly detail: Message;
+
   constructor(
     readonly code: ErrorCode,
-    message: string,
+    key: MessageKey | Message,
+    params?: Params,
   ) {
-    super(message);
+    const detail = typeof key === 'string' ? msg(key, params) : key;
+    super(translate('en', detail));
+    this.detail = detail;
     this.name = 'DomainError';
   }
 }
 
-export const CONTEXT_LANGUAGES = ['en', 'vi'] as const;
+export const CONTEXT_LANGUAGES = ['en', 'vi', 'ko'] as const;
 export type ContextLanguage = (typeof CONTEXT_LANGUAGES)[number];
 
 // Context documents are optional per project (ADR-019). AgentHub only keeps where they live;
@@ -40,6 +53,8 @@ export interface Project {
   id: string;
   name: string;
   context: ProjectContextSettings;
+  // The language AgentHub writes prompts in for this project; null follows the app (ADR-020 item 6).
+  chatLanguage: Locale | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -68,9 +83,12 @@ export interface AccountProfile {
 const PROVIDER_LABELS: Record<Provider, string> = { claude: 'Claude', codex: 'Codex' };
 
 // The email is the name: a nickname added nothing the email did not already say (ADR-018 note).
-export function accountName({ provider, accountEmail }: Pick<AccountProfile, 'provider' | 'accountEmail'>): string {
-  return accountEmail ?? `${PROVIDER_LABELS[provider]} (chưa rõ account)`;
+export function accountName({ provider, accountEmail }: Pick<AccountProfile, 'provider' | 'accountEmail'>): Message {
+  return accountEmail === null ? msg('account.unnamed', { provider: PROVIDER_LABELS[provider] }) : raw(accountEmail);
 }
+
+export type { Locale, Message, MessageKey, Params } from '@agenthub/i18n';
+export { msg, raw } from '@agenthub/i18n';
 
 export const LAUNCH_STATUSES = ['planned', 'launched', 'manual_step', 'failed'] as const;
 export type LaunchStatus = (typeof LAUNCH_STATUSES)[number];
@@ -83,8 +101,8 @@ export interface LaunchOutcome {
   // result is not observable. 'manual': the user has to choose the folder.
   workspace: 'opened' | 'requested' | 'manual' | 'none';
   sessionStarted: false;
-  userActionRequired: string[];
-  warnings: string[];
+  userActionRequired: Message[];
+  warnings: Message[];
 }
 
 export interface LaunchAttempt {
@@ -104,11 +122,11 @@ export interface LaunchAttempt {
 
 const MAX_LABEL_LENGTH = 200;
 
-export function requireLabel(value: string, field: string): string {
+export function requireLabel(value: string, field: MessageKey): string {
   const label = value.trim();
-  if (label.length === 0) throw new DomainError('VALIDATION_FAILED', `${field} không được để trống.`);
+  if (label.length === 0) throw new DomainError('VALIDATION_FAILED', 'error.labelEmpty', { field: msg(field) });
   if (label.length > MAX_LABEL_LENGTH) {
-    throw new DomainError('VALIDATION_FAILED', `${field} không được dài quá ${MAX_LABEL_LENGTH} ký tự.`);
+    throw new DomainError('VALIDATION_FAILED', 'error.labelTooLong', { field: msg(field), max: MAX_LABEL_LENGTH });
   }
   return label;
 }

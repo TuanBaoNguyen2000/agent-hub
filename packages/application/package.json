@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@agenthub/domain": "*"
+    "@agenthub/domain": "*",
+    "@agenthub/i18n": "*"
   }
 }

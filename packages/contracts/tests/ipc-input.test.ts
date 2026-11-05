@@ -62,6 +62,33 @@ describe('ipcInput', () => {
     expect(ipcInput[IpcChannel.launchPlan].safeParse(request).success).toBe(false);
   });
 
+  it('no longer takes a way to skip the tools at launch (ADR-020 item 1)', () => {
+    const request = { projectId: id, profileId: id, mode: 'cli', skipContextTools: true };
+    expect(ipcInput[IpcChannel.launchPlan].safeParse(request).success).toBe(false);
+  });
+
+  it('accepts only a skill name or MCP as a tool, and a skill name in Agent Skills form', () => {
+    const install = ipcInput[IpcChannel.toolsInstall];
+    expect(install.safeParse({ profileId: id, tool: { kind: 'skill', name: 'context-init' } }).success).toBe(true);
+    expect(install.safeParse({ profileId: id, tool: { kind: 'mcp' } }).success).toBe(true);
+    expect(install.safeParse({ profileId: id, tool: { kind: 'mcp', name: 'x' } }).success).toBe(false);
+    expect(install.safeParse({ profileId: id, tool: { kind: 'other' } }).success).toBe(false);
+    for (const name of ['../etc', 'Context', 'a--b', '-a', 'a/b', 'x'.repeat(65)]) {
+      expect(install.safeParse({ profileId: id, tool: { kind: 'skill', name } }).success).toBe(false);
+      expect(ipcInput[IpcChannel.toolsRemoveSkill].safeParse({ name }).success).toBe(false);
+    }
+    expect(ipcInput[IpcChannel.toolsAddSkill].safeParse({ path: '/a\0b' }).success).toBe(false);
+  });
+
+  it('takes the three interface languages, and null to follow the interface for chat (ADR-020 item 6)', () => {
+    const update = ipcInput[IpcChannel.settingsUpdate];
+    expect(update.safeParse({ uiLanguage: 'ko', chatLanguage: null }).success).toBe(true);
+    expect(update.safeParse({ uiLanguage: 'fr' }).success).toBe(false);
+    expect(update.safeParse({ uiLanguage: null }).success).toBe(false);
+    expect(ipcInput[IpcChannel.projectsUpdateContext].safeParse({ id, chatLanguage: 'vi', language: 'ko' }).success).toBe(true);
+    expect(ipcInput[IpcChannel.projectsUpdateContext].safeParse({ id, chatLanguage: 'de' }).success).toBe(false);
+  });
+
   it('rejects any payload on a channel that takes none', () => {
     expect(ipcInput[IpcChannel.projectsList].safeParse({ any: 'thing' }).success).toBe(false);
   });

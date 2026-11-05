@@ -1,6 +1,6 @@
 # Integrations
 
-**Status:** Có launcher cho Claude/Codex Desktop/CLI, capability theo version, lời nhắc ban đầu cho CLI (`--add-dir=`), thư mục skill theo account, đăng ký MCP cho Claude, Codex và cửa sổ Desktop riêng, và fake-platform tests; chạy với account thật chưa được xác nhận.
+**Status:** Có launcher cho Claude/Codex Desktop/CLI, capability theo version, lời nhắc ban đầu cho CLI (`--add-dir=`), thư mục skill theo account, đăng ký và gỡ MCP cho Claude, Codex và cửa sổ Desktop riêng, và fake-platform tests; chạy với account thật chưa được xác nhận.
 
 ## Trách nhiệm
 

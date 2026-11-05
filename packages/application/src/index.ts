@@ -7,15 +7,35 @@ import {
   type LaunchOutcome,
   type LaunchStatus,
   type Project,
+  type Locale,
   folderNameOf,
   isSamePath,
   requireLabel,
 } from '@agenthub/domain';
+import { LOCALES, formatDateTime, isLocale } from '@agenthub/i18n';
 
 import { type ContextWarning, contextWarnings, findTask } from './context-view';
+import { CHAT_LANGUAGE_KEY, UI_LANGUAGE_KEY, chatLanguageOf, promptIn, uiLanguageOf } from './languages';
+import {
+  STATE_WORDS,
+  type TaskDocument,
+  type TaskEdit,
+  type TaskState,
+  applyTaskEdit,
+  newTaskDocument,
+  nextTaskId,
+  parseTaskDocument,
+  setStatusState,
+  stateGroup,
+  taskSlug,
+  verifiedHandoff,
+} from './task-document';
 import { CLI_PATH_KEYS, isInside } from './launching';
 
+export * from './agent-tools';
 export * from './context-view';
+export * from './languages';
+export * from './task-document';
 export * from './launching';
 
 export interface StorageStatus {
@@ -35,6 +55,7 @@ export interface ProjectRepository {
   rename(id: string, name: string, updatedAt: string): void;
   setLocation(projectId: string, location: { id: string; deviceId: string; path: string }, updatedAt: string): void;
   setContext(id: string, deviceId: string, context: Project['context'], contextPath: string | null, updatedAt: string): void;
+  setChatLanguage(id: string, language: Locale | null, updatedAt: string): void;
   markContextDetected(id: string, deviceId: string, at: string): void;
   markRemoved(id: string, removedAt: string): void;
 }
@@ -65,12 +86,34 @@ export interface LaunchRepository {
   confirmAccount(id: string, at: string): void;
 }
 
+// A skill the user added (ADR-020 item 1); AgentHub keeps its own copy under the same name.
+export interface CustomSkill {
+  id: string;
+  name: string;
+  sourcePath: string;
+  addedAt: string;
+}
+
+export interface SkillRepository {
+  list(): CustomSkill[];
+  insert(skill: CustomSkill): void;
+  remove(name: string): void;
+}
+
+export interface ProfileToolsRepository {
+  // undefined until the user sets it.
+  autoInstall(profileId: string): boolean | undefined;
+  setAutoInstall(profileId: string, on: boolean): void;
+}
+
 export interface MetadataStore {
   readonly projects: ProjectRepository;
   readonly settings: SettingsRepository;
   readonly profiles: ProfileRepository;
   readonly permissions: PermissionRepository;
   readonly launches: LaunchRepository;
+  readonly skills: SkillRepository;
+  readonly profileTools: ProfileToolsRepository;
   status(): StorageStatus;
   close(): void;
 }
@@ -136,6 +179,30 @@ export interface ContextDocuments {
   conflicts(folder: string, files: readonly string[]): string[];
   copy(from: string, to: string, files: readonly string[]): void;
   appendHandoff(folder: string, taskRef: string, entry: string): void;
+  // ADR-021: AgentHub reads and writes the documents with the same limits and checks as MCP.
+  list(folder: string): DocumentEntry[];
+  read(folder: string, path: string): { content: string; sha256: string };
+  // baseSha256 null only for a new file; a changed file throws CONTEXT_CONFLICT.
+  write(folder: string, path: string, content: string, baseSha256: string | null): { sha256: string };
+}
+
+export interface DocumentEntry {
+  // Relative to the documents folder; folders end with "/".
+  path: string;
+  kind: 'file' | 'folder';
+}
+
+export interface TaskView {
+  ref: string;
+  id: string;
+  // The workstream folder, such as Workstreams/combo.
+  workstream: string;
+  sha256: string;
+  content: string;
+  document: TaskDocument;
+  // As STATUS writes it, and the nearest of the four states.
+  state: string | null;
+  group: TaskState | null;
 }
 
 // Handoffs of a project without documents, and loose chats (TDD §7.5). One file per note.
@@ -190,6 +257,8 @@ export interface ProjectContextView {
 export type ProjectView = Omit<StoredProject, 'context' | 'contextPath' | 'contextDetectedAt'> & {
   pathStatus: PathStatus | 'unset';
   context: ProjectContextView;
+  // The language prompts for this project are written in: its own, else the app's.
+  chatLocale: Locale;
 };
 
 export type ContextFolderChange =
@@ -207,10 +276,8 @@ export interface ProjectContextState {
   checkpointPrompt: string;
 }
 
-export function checkpointPrompt(project: { name: string; context: { enabled: boolean } }): string {
-  return project.context.enabled
-    ? `Use the context-checkpoint skill now, so another account can continue this work on "${project.name}".`
-    : `Write a handoff for this session so another account can continue: goal, what is done (verified, observed or reported), what remains, gotchas, how to verify, and the Git branch and last commit. Save it with the agenthub MCP tool context_save_handoff for project "${project.name}". If that tool is not available, print the handoff as one Markdown block so I can paste it into AgentHub.`;
+export function checkpointPrompt(project: { name: string; context: { enabled: boolean } }, locale: Locale = 'en'): string {
+  return promptIn(locale, project.context.enabled ? 'prompt.checkpoint' : 'prompt.writeHandoff', { project: project.name });
 }
 
 export const THEMES = ['system', 'light', 'dark'] as const;
@@ -219,6 +286,9 @@ export type Theme = (typeof THEMES)[number];
 export interface Settings {
   deviceId: string;
   theme: Theme;
+  uiLanguage: Locale;
+  // null: prompts follow the interface language.
+  chatLanguage: Locale | null;
   claudeCliPath: string | null;
   codexCliPath: string | null;
 }
@@ -239,6 +309,8 @@ export interface WorkspaceDependencies {
   looseChatDirectory: string;
   newId: () => string;
   now: () => string;
+  // The system's language, used until the user picks one (ADR-020 item 6).
+  defaultLocale?: Locale;
 }
 
 const DEVICE_ID_KEY = 'device_id';
@@ -259,6 +331,7 @@ export function createWorkspace({
   looseChatDirectory,
   newId,
   now,
+  defaultLocale = 'en',
 }: WorkspaceDependencies) {
   function deviceId(): string {
     const existing = store.settings.get(DEVICE_ID_KEY);
@@ -270,20 +343,20 @@ export function createWorkspace({
 
   function requireDirectory(path: string): void {
     const status = paths.inspect(path);
-    if (status === 'missing') throw new DomainError('PROJECT_PATH_MISSING', 'Không tìm thấy folder này.');
-    if (status !== 'directory') throw new DomainError('PROJECT_PATH_INVALID', 'Đường dẫn này không phải là một folder.');
+    if (status === 'missing') throw new DomainError('PROJECT_PATH_MISSING', 'project.folderMissing');
+    if (status !== 'directory') throw new DomainError('PROJECT_PATH_INVALID', 'project.notAFolder');
   }
 
   function requireUnusedPath(path: string, ownProjectId?: string): void {
     const taken = store.projects
       .listActive(deviceId())
       .some((project) => project.id !== ownProjectId && project.path !== null && isSamePath(project.path, path));
-    if (taken) throw new DomainError('PROJECT_PATH_DUPLICATE', 'Folder này đã được thêm vào một project khác.');
+    if (taken) throw new DomainError('PROJECT_PATH_DUPLICATE', 'project.folderTaken');
   }
 
   function requireProject(id: string): StoredProject {
     const project = store.projects.get(id, deviceId());
-    if (!project) throw new DomainError('NOT_FOUND', 'Không tìm thấy project.');
+    if (!project) throw new DomainError('NOT_FOUND', 'error.projectNotFound');
     return project;
   }
 
@@ -293,17 +366,68 @@ export function createWorkspace({
       ...project,
       pathStatus: project.path === null ? 'unset' : paths.inspect(project.path),
       context: { ...context, path, custom: contextPath !== null, pathStatus: paths.inspect(path), detected: contextDetectedAt !== null },
+      chatLocale: chatLanguageOf(store, project, defaultLocale),
     };
   }
 
   function contextFolder(id: string): string {
     const view = toView(requireProject(id));
-    if (!view.context.enabled) throw new DomainError('VALIDATION_FAILED', 'Project này chưa bật tài liệu context.');
+    if (!view.context.enabled) throw new DomainError('VALIDATION_FAILED', 'project.docsOff');
     if (!view.context.custom) ensureDirectory(view.context.path);
     else if (view.context.pathStatus !== 'directory') {
-      throw new DomainError('PROJECT_PATH_MISSING', 'Không tìm thấy folder tài liệu. Hãy chọn lại nơi lưu.');
+      throw new DomainError('PROJECT_PATH_MISSING', 'project.docsFolderMissing');
     }
     return view.context.path;
+  }
+
+  // The persistence layer speaks English to agents; the user gets a message in their language.
+  function guardedWrite(folder: string, path: string, content: string, baseSha256: string | null): { sha256: string } {
+    try {
+      return documents.write(folder, path, content, baseSha256);
+    } catch (error) {
+      if (error instanceof DomainError && error.code === 'CONTEXT_CONFLICT') {
+        throw new DomainError('CONTEXT_CONFLICT', baseSha256 === null ? 'documents.exists' : 'documents.changed', { path });
+      }
+      throw error;
+    }
+  }
+
+  function readTask(id: string, ref: string): TaskView {
+    const folder = contextFolder(id);
+    const found = findTask(documents.overview(folder), ref);
+    if (!found) throw new DomainError('NOT_FOUND', 'project.taskNotFound');
+    const { content, sha256 } = documents.read(folder, ref);
+    const workstream = ref.slice(0, ref.lastIndexOf('/Tasks/'));
+    return {
+      ref,
+      id: found.task.id,
+      workstream,
+      sha256,
+      content,
+      document: parseTaskDocument(content),
+      state: found.task.state,
+      group: stateGroup(found.task.state),
+    };
+  }
+
+  function writeStatus(folder: string, workstream: string, title: string, task: { id: string; title: string }, word: string): void {
+    const path = `${workstream}/STATUS.md`;
+    // Agents may write STATUS at the same time; a changed file is read again, never overwritten.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      let current: { content: string; sha256: string } | null = null;
+      try {
+        current = documents.read(folder, path);
+      } catch (error) {
+        if (!(error instanceof DomainError && error.code === 'NOT_FOUND')) throw error;
+      }
+      try {
+        documents.write(folder, path, setStatusState(current?.content ?? null, task, word, title), current?.sha256 ?? null);
+        return;
+      } catch (error) {
+        if (!(error instanceof DomainError && error.code === 'CONTEXT_CONFLICT')) throw error;
+      }
+    }
+    throw new DomainError('CONTEXT_CONFLICT', 'documents.changed', { path });
   }
 
   function getSettings(): Settings {
@@ -311,6 +435,8 @@ export function createWorkspace({
     return {
       deviceId: deviceId(),
       theme: THEMES.find((known) => known === theme) ?? 'system',
+      uiLanguage: uiLanguageOf(store, defaultLocale),
+      chatLanguage: isLocale(store.settings.get(CHAT_LANGUAGE_KEY)) ? (store.settings.get(CHAT_LANGUAGE_KEY) as Locale) : null,
       claudeCliPath: store.settings.get(CLI_PATH_KEYS.claude) || null,
       codexCliPath: store.settings.get(CLI_PATH_KEYS.codex) || null,
     };
@@ -327,8 +453,9 @@ export function createWorkspace({
       const timestamp = now();
       const project: Project = {
         id: newId(),
-        name: requireLabel(input.name ?? folderNameOf(input.path), 'Tên project'),
+        name: requireLabel(input.name ?? folderNameOf(input.path), 'field.projectName'),
         context: { enabled: false, language: 'en' },
+        chatLanguage: null,
         createdAt: timestamp,
         updatedAt: timestamp,
       };
@@ -339,7 +466,7 @@ export function createWorkspace({
     updateProject(input: { id: string; name?: string | undefined; path?: string | undefined }): ProjectView {
       requireProject(input.id);
       const timestamp = now();
-      const name = input.name === undefined ? undefined : requireLabel(input.name, 'Tên project');
+      const name = input.name === undefined ? undefined : requireLabel(input.name, 'field.projectName');
       if (input.path !== undefined) {
         requireDirectory(input.path);
         requireUnusedPath(input.path, input.id);
@@ -361,14 +488,20 @@ export function createWorkspace({
       enabled?: boolean | undefined;
       language?: ContextLanguage | undefined;
       customPath?: string | null | undefined;
+      // null goes back to the app's chat language.
+      chatLanguage?: Locale | null | undefined;
     }): ProjectView {
       const project = requireProject(input.id);
       if (project.path === null) {
-        throw new DomainError('PROJECT_PATH_MISSING', 'Hãy chọn folder của project trên máy này trước.');
+        throw new DomainError('PROJECT_PATH_MISSING', 'project.pickFolderFirst');
       }
       if (input.language !== undefined && !CONTEXT_LANGUAGES.includes(input.language)) {
-        throw new DomainError('VALIDATION_FAILED', 'Ngôn ngữ không hợp lệ.');
+        throw new DomainError('VALIDATION_FAILED', 'project.badLanguage');
       }
+      if (input.chatLanguage !== undefined && input.chatLanguage !== null && !LOCALES.includes(input.chatLanguage)) {
+        throw new DomainError('VALIDATION_FAILED', 'project.badLanguage');
+      }
+      if (input.chatLanguage !== undefined) store.projects.setChatLanguage(project.id, input.chatLanguage, now());
       const contextPath = input.customPath === undefined ? project.contextPath : input.customPath;
       if (contextPath !== null && input.customPath !== undefined) requireDirectory(contextPath);
       const context = { enabled: input.enabled ?? project.context.enabled, language: input.language ?? project.context.language };
@@ -391,7 +524,7 @@ export function createWorkspace({
       if (input.customPath !== null) requireDirectory(input.customPath);
       if (isSamePath(from, to)) return { status: 'done', project: view, moved: 0, kept: null };
       if (isInside(to, from) || isInside(from, to)) {
-        throw new DomainError('VALIDATION_FAILED', 'Folder mới và folder cũ nằm trong nhau. Hãy chọn một folder khác.');
+        throw new DomainError('VALIDATION_FAILED', 'project.foldersNested');
       }
       const files = paths.inspect(from) === 'directory' ? documents.files(from) : [];
       if (files.length > 0 && input.move === 'ask') return { status: 'needs_decision', project: view, files: files.length };
@@ -444,7 +577,7 @@ export function createWorkspace({
         git: observation,
         warnings: readable ? contextWarnings(overview, observation, new Date(now())) : [],
         handoffs: view.context.enabled ? [] : notes.list(handoffDirectory(view.id)),
-        checkpointPrompt: checkpointPrompt(view),
+        checkpointPrompt: checkpointPrompt(view, view.chatLocale),
       };
     },
 
@@ -455,10 +588,10 @@ export function createWorkspace({
     // A summary written in a chat that could not save it, pasted by the user (§7.5).
     saveProjectHandoff(input: { id: string; title?: string | undefined; content: string }): Note[] {
       const project = requireProject(input.id);
-      if (project.context.enabled) throw new DomainError('VALIDATION_FAILED', 'Project này có tài liệu context; hãy thêm handoff vào một task.');
+      if (project.context.enabled) throw new DomainError('VALIDATION_FAILED', 'project.handoffNeedsTask');
       const at = new Date(now());
       notes.save(handoffDirectory(project.id), {
-        title: input.title?.trim() || `Handoff ${at.toLocaleString('vi-VN')}`,
+        title: input.title?.trim() || `Handoff ${formatDateTime(uiLanguageOf(store, defaultLocale), at)}`,
         content: input.content,
         source: 'AgentHub (dán)',
         now: at,
@@ -487,19 +620,96 @@ export function createWorkspace({
     // the only write AgentHub makes to the documents (ADR-019 item 4).
     addHandoff(input: { id: string; taskRef: string; entry: string }): ProjectContextState['overview'] {
       const folder = contextFolder(input.id);
-      if (!findTask(documents.overview(folder), input.taskRef)) throw new DomainError('NOT_FOUND', 'Không tìm thấy task này trong tài liệu.');
+      if (!findTask(documents.overview(folder), input.taskRef)) throw new DomainError('NOT_FOUND', 'project.taskNotFound');
       documents.appendHandoff(folder, input.taskRef, input.entry);
       return documents.overview(folder);
+    },
+
+    // --- Documents and tasks (ADR-021) ---
+
+    listDocuments(id: string): DocumentEntry[] {
+      return documents.list(contextFolder(id));
+    },
+
+    readDocument(id: string, path: string): { path: string; content: string; sha256: string } {
+      return { path, ...documents.read(contextFolder(id), path) };
+    },
+
+    // For noticing a change made outside while the user reads or edits (ADR-021 item 9).
+    documentChecksum(id: string, path: string): string | null {
+      try {
+        return documents.read(contextFolder(id), path).sha256;
+      } catch (error) {
+        if (error instanceof DomainError && error.code === 'NOT_FOUND') return null;
+        throw error;
+      }
+    },
+
+    writeDocument(input: { id: string; path: string; content: string; baseSha256: string | null }): { path: string; sha256: string } {
+      const folder = contextFolder(input.id);
+      return { path: input.path, ...guardedWrite(folder, input.path, input.content, input.baseSha256) };
+    },
+
+    // The absolute path, for opening a document in the user's own editor; it must exist there.
+    documentPath(id: string, path: string): string {
+      const folder = contextFolder(id);
+      documents.read(folder, path);
+      return `${folder.replace(/\/+$/, '')}/${path.split(/[\\/]/).filter(Boolean).join('/')}`;
+    },
+
+    readTask,
+
+    saveTask(input: { id: string; ref: string; baseSha256: string; edit: TaskEdit }): TaskView {
+      const project = requireProject(input.id);
+      const folder = contextFolder(input.id);
+      const current = readTask(input.id, input.ref);
+      if (current.sha256 !== input.baseSha256) throw new DomainError('CONTEXT_CONFLICT', 'documents.changed');
+      const updated = applyTaskEdit(current.content, input.edit, project.context.language);
+      if (updated !== current.content) guardedWrite(folder, input.ref, updated, current.sha256);
+      return readTask(input.id, input.ref);
+    },
+
+    setTaskState(input: { id: string; ref: string; state: TaskState }): TaskView {
+      const project = requireProject(input.id);
+      const folder = contextFolder(input.id);
+      const task = readTask(input.id, input.ref);
+      const language = project.context.language;
+      const word = STATE_WORDS[language][input.state];
+      const workstream = documents.overview(folder).workstreams.find((item) => item.slug === task.workstream);
+      writeStatus(folder, task.workstream, workstream?.title ?? task.workstream, { id: task.id, title: task.document.title || task.id }, word);
+      // Done in AgentHub is the user's confirmation, kept where the next agent reads it (item 5).
+      if (input.state === 'done' && task.group !== 'done') documents.appendHandoff(folder, input.ref, verifiedHandoff(new Date(now()), language));
+      return readTask(input.id, input.ref);
+    },
+
+    createTask(input: { id: string; workstream: string; title: string; goal: string }): TaskView {
+      const project = requireProject(input.id);
+      const folder = contextFolder(input.id);
+      const overview = documents.overview(folder);
+      const workstream = overview.workstreams.find((item) => item.slug === input.workstream);
+      if (!workstream) throw new DomainError('NOT_FOUND', 'tasks.noWorkstream');
+      const title = requireLabel(input.title, 'field.taskTitle');
+      const taskId = nextTaskId(overview.workstreams.flatMap((item) => item.tasks.map((task) => task.id)));
+      const ref = `${workstream.slug}/Tasks/${taskId}-${taskSlug(title)}.md`;
+      const language = project.context.language;
+      guardedWrite(folder, ref, newTaskDocument({ id: taskId, title, goal: input.goal, language }), null);
+      writeStatus(folder, workstream.slug, workstream.title, { id: taskId, title }, STATE_WORDS[language].todo);
+      return readTask(input.id, ref);
     },
 
     getSettings,
 
     updateSettings(input: {
       theme?: Theme | undefined;
+      uiLanguage?: Locale | undefined;
+      chatLanguage?: Locale | null | undefined;
       claudeCliPath?: string | null | undefined;
       codexCliPath?: string | null | undefined;
     }): Settings {
       if (input.theme !== undefined) store.settings.set(THEME_KEY, input.theme);
+      if (input.uiLanguage !== undefined) store.settings.set(UI_LANGUAGE_KEY, input.uiLanguage);
+      // Empty follows the interface language.
+      if (input.chatLanguage !== undefined) store.settings.set(CHAT_LANGUAGE_KEY, input.chatLanguage ?? '');
       // An empty value goes back to automatic discovery.
       if (input.claudeCliPath !== undefined) store.settings.set(CLI_PATH_KEYS.claude, input.claudeCliPath ?? '');
       if (input.codexCliPath !== undefined) store.settings.set(CLI_PATH_KEYS.codex, input.codexCliPath ?? '');

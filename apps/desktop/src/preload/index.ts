@@ -45,6 +45,21 @@ const api: AgentHubApi = {
   confirmLaunchAccount: (input) => ipcRenderer.invoke(IpcChannel.launchConfirmAccount, input),
   planAccountLaunch: (input) => ipcRenderer.invoke(IpcChannel.launchAccountPlan, input),
   openAccount: (input) => ipcRenderer.invoke(IpcChannel.launchAccountExecute, input),
+  getAgentTools: () => ipcRenderer.invoke(IpcChannel.toolsOverview),
+  installTool: (input) => ipcRenderer.invoke(IpcChannel.toolsInstall, input),
+  uninstallTool: (input) => ipcRenderer.invoke(IpcChannel.toolsUninstall, input),
+  setToolsAutoInstall: (input) => ipcRenderer.invoke(IpcChannel.toolsSetAutoInstall, input),
+  addSkill: (input) => ipcRenderer.invoke(IpcChannel.toolsAddSkill, input),
+  removeSkill: (input) => ipcRenderer.invoke(IpcChannel.toolsRemoveSkill, input),
+  listDocuments: (input) => ipcRenderer.invoke(IpcChannel.documentsList, input),
+  readDocument: (input) => ipcRenderer.invoke(IpcChannel.documentsRead, input),
+  documentChecksum: (input) => ipcRenderer.invoke(IpcChannel.documentsChecksum, input),
+  writeDocument: (input) => ipcRenderer.invoke(IpcChannel.documentsWrite, input),
+  openDocument: (input) => ipcRenderer.invoke(IpcChannel.documentsOpen, input),
+  readTask: (input) => ipcRenderer.invoke(IpcChannel.tasksRead, input),
+  saveTask: (input) => ipcRenderer.invoke(IpcChannel.tasksSave, input),
+  setTaskState: (input) => ipcRenderer.invoke(IpcChannel.tasksSetState, input),
+  createTask: (input) => ipcRenderer.invoke(IpcChannel.tasksCreate, input),
 };
 
 contextBridge.exposeInMainWorld('agentHub', api);

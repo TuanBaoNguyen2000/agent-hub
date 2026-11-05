@@ -16,11 +16,12 @@ let browserDir: string;
 let trashDir: string;
 let app: ElectronApplication | undefined;
 
+// The interface follows the system language until the user picks one; the tests read Vietnamese.
 function launchArguments(): { executablePath?: string; args: string[] } {
-  const dataSwitch = `--user-data-dir=${userData}`;
+  const switches = [`--user-data-dir=${userData}`, '--lang=vi'];
   return packagedExecutable
-    ? { executablePath: packagedExecutable, args: [dataSwitch] }
-    : { args: [appDirectory, dataSwitch] };
+    ? { executablePath: packagedExecutable, args: switches }
+    : { args: [appDirectory, ...switches] };
 }
 
 async function launch(): Promise<Page> {
@@ -57,7 +58,7 @@ async function addProject(page: Page, path = projectDir): Promise<void> {
 
 const tree = (page: Page) => page.getByRole('navigation', { name: 'Điều hướng' });
 
-const openTab = (page: Page, name: 'Tổng quan' | 'Task' | 'Handoff' | 'Lịch sử' | 'Cài đặt') =>
+const openTab = (page: Page, name: 'Tổng quan' | 'Task' | 'Tài liệu' | 'Handoff' | 'Lịch sử' | 'Cài đặt') =>
   page.getByRole('tablist', { name: 'Trang project' }).getByRole('tab', { name, exact: true }).click();
 
 const docsCard = (page: Page) => page.getByRole('region', { name: 'Tài liệu context' });
@@ -157,7 +158,9 @@ test('tasks and handoffs come from the documents, and a pasted handoff lands at 
   await expect(row).toContainText('TASK-001 Combo counter');
   await expect(row).toContainText('in progress');
   await expect(row).toContainText('chưa có handoff');
-  await row.getByRole('radio').check();
+  await row.click();
+  await page.getByRole('region', { name: 'Chi tiết task' }).getByRole('button', { name: 'Dùng cho lần mở' }).click();
+  await expect(row).toContainText('cho lần mở');
 
   await openTab(page, 'Tổng quan');
   await expect(page.getByTestId('launch-task')).toContainText('TASK-001 Combo counter');
@@ -172,6 +175,113 @@ test('tasks and handoffs come from the documents, and a pasted handoff lands at 
   await expect(row).not.toContainText('chưa có handoff');
   expect(readFileSync(join(folder, ref), 'utf8')).toBe('# TASK-001 Combo counter\n\n## Handoff log\n\n### 2026-11-05 10:00 — Chat / Claude\n- **Done:** pasted\n');
   expect(readdirSync(projectDir)).toEqual([]);
+});
+
+test('tasks are read, created, edited and moved between states in AgentHub, and an agent can be asked to fill one in (ADR-021)', async () => {
+  const page = await launch();
+  await addProject(page);
+  const folder = await createDocs(page);
+  const ref = join('Workstreams', 'combo', 'Tasks', 'TASK-001-combo-counter.md');
+  mkdirSync(join(folder, 'Workstreams', 'combo', 'Tasks'), { recursive: true });
+  writeFileSync(join(folder, 'README.md'), '# Context');
+  writeFileSync(join(folder, 'PROJECT_CONTEXT.md'), '# Project');
+  writeFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), '# Combo\n\n| Task | State |\n|---|---|\n| TASK-001 | in progress |\n');
+  writeFileSync(join(folder, ref), '# TASK-001 Combo counter\n\n## Goal\n\nCount **combos**.\n\n## Risks\n\nKeep me.\n\n## Handoff log\n');
+  await docsCard(page).getByRole('button', { name: 'Kiểm tra tài liệu' }).click();
+
+  await openTab(page, 'Task');
+  const detail = page.getByRole('region', { name: 'Chi tiết task' });
+  await expect(detail.getByRole('heading', { name: 'TASK-001 Combo counter' })).toBeVisible();
+  await expect(detail.locator('.markdown strong')).toHaveText('combos');
+
+  // Create, then the list and STATUS show it as To do.
+  const tasks = page.getByRole('region', { name: 'Task trong tài liệu' });
+  await tasks.getByRole('button', { name: 'Tạo task' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Tạo task' });
+  await dialog.getByLabel('Tên task').fill('Hiện combo');
+  await dialog.getByLabel('Mục tiêu').fill('Show the combo count.');
+  await dialog.getByRole('button', { name: 'Tạo task', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(tasks.getByTestId('context-task').filter({ hasText: 'TASK-002 Hiện combo' })).toContainText('To do');
+  const created = join(folder, 'Workstreams', 'combo', 'Tasks', 'TASK-002-hien-combo.md');
+  expect(readFileSync(created, 'utf8')).toBe('# TASK-002 Hiện combo\n\n## Goal\n\nShow the combo count.\n\n## Acceptance criteria\n\n## Notes\n\n## Handoff log\n');
+  expect(readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toContain('| TASK-002 Hiện combo | To do |');
+
+  // Edit by section: a checklist for the criteria, the rest of the file untouched.
+  await tasks.getByTestId('context-task').filter({ hasText: 'TASK-001' }).click();
+  await detail.getByRole('button', { name: 'Sửa', exact: true }).click();
+  await detail.getByRole('button', { name: '+ Thêm tiêu chí' }).click();
+  await detail.getByLabel('Tiêu chí 1', { exact: true }).fill('Shows x2 after two hits');
+  await detail.getByLabel('Tiêu chí 1 đã đạt').check();
+  await detail.getByRole('button', { name: 'Lưu' }).click();
+  await expect(detail.getByRole('button', { name: 'Sửa', exact: true })).toBeVisible();
+  expect(readFileSync(join(folder, ref), 'utf8')).toBe(
+    '# TASK-001 Combo counter\n\n## Goal\n\nCount **combos**.\n\n## Risks\n\nKeep me.\n\n## Acceptance criteria\n\n- [x] Shows x2 after two hits\n\n## Handoff log\n',
+  );
+
+  // A change from outside while editing stops the save until the user reloads.
+  await detail.getByRole('button', { name: 'Sửa', exact: true }).click();
+  await detail.getByLabel('Tên task').fill('TASK-001 Mine');
+  writeFileSync(join(folder, ref), `${readFileSync(join(folder, ref), 'utf8')}\n### 2026-11-06 10:00 — Claude\n- agent was here\n`);
+  await expect(detail.getByRole('alert')).toContainText('vừa được sửa bên ngoài');
+  await expect(detail.getByRole('button', { name: 'Lưu' })).toBeDisabled();
+  await detail.getByRole('button', { name: 'Tải lại' }).click();
+  await expect(detail.getByText('agent was here')).toBeVisible();
+  expect(readFileSync(join(folder, ref), 'utf8')).not.toContain('Mine');
+
+  // Done writes the state and the user's confirmation.
+  await detail.getByRole('button', { name: 'Trạng thái' }).click();
+  await page.getByRole('menuitemradio', { name: 'Xong' }).click();
+  await expect(tasks.getByTestId('context-task').filter({ hasText: 'TASK-001' })).toContainText('Done');
+  expect(readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toContain('| TASK-001 | Done |');
+  expect(readFileSync(join(folder, ref), 'utf8')).toMatch(/## Handoff log\n\n### \d{4}-\d{2}-\d{2} \d{2}:\d{2} — AgentHub\n- \*\*Verified by user in AgentHub:\*\* marked Done\./);
+
+  // Asking an agent opens an account the usual way; nothing runs in the background.
+  await detail.getByRole('button', { name: 'Nhờ agent' }).click();
+  const ask = detail.getByRole('group', { name: 'Nhờ agent' });
+  await expect(ask.getByText('Chưa có account nào để mở project này.')).toBeVisible();
+});
+
+test('every Markdown document can be read, edited and created in AgentHub, and shows what an agent writes (ADR-021 item 8)', async () => {
+  const page = await launch();
+  await addProject(page);
+  const folder = await createDocs(page);
+  writeFileSync(join(folder, 'README.md'), '# Context\n\n| File | Use |\n|---|---|\n| STATUS | entry |\n\n<script>window.hacked = true</script>\n');
+  writeFileSync(join(folder, 'PROJECT_CONTEXT.md'), '# Project\n');
+
+  await openTab(page, 'Tài liệu');
+  const files = page.getByRole('list', { name: 'Các file tài liệu' });
+  await files.getByRole('button', { name: 'README.md' }).click();
+  const viewer = page.getByRole('region', { name: 'Nội dung tài liệu' });
+  await expect(viewer.getByRole('heading', { name: 'Context' })).toBeVisible();
+  await expect(viewer.getByRole('table')).toContainText('entry');
+  // HTML in a document is text, never markup.
+  await expect(viewer.getByText('<script>window.hacked = true</script>')).toBeVisible();
+  expect(await page.evaluate(() => (globalThis as unknown as { hacked?: boolean }).hacked)).toBeUndefined();
+
+  // An agent writing the file shows up without a click.
+  writeFileSync(join(folder, 'README.md'), '# Context v2\n');
+  await expect(viewer.getByRole('heading', { name: 'Context v2' })).toBeVisible();
+
+  await viewer.getByRole('button', { name: 'Sửa', exact: true }).click();
+  await viewer.getByLabel('Nội dung Markdown').fill('# Context v3\n\nEdited in AgentHub.\n');
+  await viewer.getByRole('button', { name: 'Lưu' }).click();
+  await expect(viewer.getByText('Edited in AgentHub.')).toBeVisible();
+  expect(readFileSync(join(folder, 'README.md'), 'utf8')).toBe('# Context v3\n\nEdited in AgentHub.\n');
+
+  await page.getByRole('button', { name: 'Tài liệu mới' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Tài liệu mới' });
+  await dialog.getByLabel('Đường dẫn trong folder tài liệu').fill('Notes/ý tưởng');
+  await dialog.getByRole('button', { name: 'Tạo' }).click();
+  await expect(viewer.getByTestId('document-path')).toHaveText('Notes/ý tưởng.md');
+  expect(readFileSync(join(folder, 'Notes', 'ý tưởng.md'), 'utf8')).toBe('# ý tưởng\n');
+
+  // A name that exists is refused, nothing is overwritten.
+  await page.getByRole('button', { name: 'Tài liệu mới' }).click();
+  await dialog.getByLabel('Đường dẫn trong folder tài liệu').fill('README.md');
+  await dialog.getByRole('button', { name: 'Tạo' }).click();
+  await expect(page.getByRole('alert').first()).toContainText('đã có');
+  expect(readFileSync(join(folder, 'README.md'), 'utf8')).toBe('# Context v3\n\nEdited in AgentHub.\n');
 });
 
 test('a project without documents keeps pasted handoffs, newest first, and a loose chat can move into it', async () => {
@@ -400,6 +510,9 @@ if [ "$1" = "auth" ] && [ "$2" = "login" ]; then
   exit 0
 fi
 if [ "$1" = "--version" ]; then echo '9.9.9 (Claude Code)'; exit 0; fi
+# The user-scope MCP config, written where the real CLI keeps it for an account's own folder.
+if [ "$1" = "mcp" ] && [ "$2" = "add-json" ]; then printf '{"mcpServers":{"%s":%s}}' "$5" "$6" > "$state/.claude.json"; exit 0; fi
+if [ "$1" = "mcp" ] && [ "$2" = "remove" ]; then printf '{"mcpServers":{}}' > "$state/.claude.json"; exit 0; fi
 if [ "$1" = "-p" ] && [ "$2" = "/usage" ]; then
   used=42; [ -f "$state/used" ] && used="$(cat "$state/used")"
   sed "s/USED/$used/" ${JSON.stringify(join(root, 'claude-usage.json'))}
@@ -592,7 +705,7 @@ test('a first launch asks about the project once, and a denied pair stays blocke
   await expect(decision.getByRole('button', { name: 'Huỷ' })).toBeVisible();
 });
 
-test('with context documents on, the main account is asked before skills and MCP go into its config', async () => {
+test('opening never installs tools into the main account; the plan points to Agent tools instead (ADR-020 item 1)', async () => {
   const page = await launch();
   await setCli(page, 'Claude CLI', fakeClaude());
   await addAccount(page, 'Claude');
@@ -603,15 +716,91 @@ test('with context documents on, the main account is asked before skills and MCP
   const decision = page.getByRole('group', { name: 'Cần bạn quyết định' });
   await decision.getByRole('button', { name: 'Cho phép', exact: true }).click();
 
-  // Nothing is linked until the box is ticked; this test stops before that.
-  const consent = decision.getByRole('checkbox', { name: /cấu hình chính/ });
-  await expect(consent).toBeVisible();
-  // Skills already linked by an earlier run on this machine are not asked about again.
-  await expect(consent).toHaveAccessibleName(/MCP "agenthub"/);
-  await expect(decision.getByRole('button', { name: 'Tiếp tục mở' })).toBeDisabled();
-  // Declining is an option too: the account opens, just without the tools.
-  await expect(decision.getByRole('button', { name: 'Mở mà không cài' })).toBeEnabled();
-  await decision.getByRole('button', { name: 'Huỷ' }).click();
+  // Skills already linked by an earlier run on this machine are not named again; MCP always is.
+  await expect(decision).toContainText(/chưa có .*MCP "agenthub".*Công cụ agent/);
+  await expect(decision.getByRole('checkbox')).toHaveCount(0);
+  await expect(decision.getByRole('button', { name: 'Mở mà không cài' })).toHaveCount(0);
+  await expect(decision.getByRole('button', { name: 'Tiếp tục mở' })).toBeEnabled();
+
+  // This test stops before opening, and never installs into the machine's real config.
+  await decision.getByRole('button', { name: 'Mở Công cụ agent' }).click();
+  const tools = page.getByRole('region', { name: 'Công cụ agent' });
+  await expect(tools).toBeInViewport();
+  await expect(tools.getByRole('checkbox', { name: 'Tự cài khi mở cho someone@example.com' })).not.toBeChecked();
+});
+
+async function addSeparateClaude(page: Page, email: string): Promise<string> {
+  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
+  await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
+  await accounts(page).getByRole('button', { name: 'Đăng nhập account khác' }).click();
+  await expect(accountRows(page).first().getByRole('group', { name: 'Đang đăng nhập' })).toBeVisible();
+  approveLogin(email);
+  await expect(accountRows(page).first().getByTestId('account-identity')).toHaveText(email);
+  const [id] = readdirSync(join(userData, 'accounts'));
+  return join(userData, 'accounts', id as string, 'cli');
+}
+
+test('agent tools are installed and removed per account, and a skill of your own goes to the accounts you pick (ADR-020 item 1)', async () => {
+  let page = await launch();
+  await setCli(page, 'Claude CLI', fakeClaude());
+  const email = 'second@example.com';
+  const folder = await addSeparateClaude(page, email);
+  // Read from the current page, as a restart opens a new one.
+  const toolsOf = () => page.getByRole('region', { name: 'Công cụ agent' });
+  const cell = (tool: string) => toolsOf().getByRole('cell', { name: `${tool} · ${email}:` });
+  let tools = toolsOf();
+
+  await expect(cell('context-init')).toContainText('Chưa cài');
+  await expect(tools.getByRole('checkbox', { name: `Tự cài khi mở cho ${email}` })).toBeChecked();
+
+  await tools.getByRole('button', { name: `Cài context-init cho ${email}` }).click();
+  await expect(cell('context-init')).toContainText('Đã cài');
+  await expect(cell('context-resume')).toContainText('Chưa cài');
+  expect(realpathSync(join(folder, 'skills', 'context-init'))).toBe(join(userData, 'skills', 'context-init'));
+
+  await tools.getByRole('button', { name: `Cài MCP "agenthub" cho ${email}` }).click();
+  await expect(cell('MCP "agenthub"')).toContainText('Đã cài');
+  expect(readFileSync(join(folder, '.claude.json'), 'utf8')).toContain('agenthub-mcp');
+  await tools.getByRole('button', { name: `Gỡ MCP "agenthub" khỏi ${email}` }).click();
+  await expect(cell('MCP "agenthub"')).toContainText('Chưa cài');
+
+  await tools.getByRole('button', { name: `Gỡ context-init khỏi ${email}` }).click();
+  await expect(cell('context-init')).toContainText('Chưa cài');
+  expect(existsSync(join(folder, 'skills', 'context-init'))).toBe(false);
+
+  // A folder of the user's own under the same name is shown, never touched.
+  mkdirSync(join(folder, 'skills', 'context-resume'), { recursive: true });
+  // Saved first, then shown: the box changes once Main answers.
+  await tools.getByRole('checkbox', { name: `Tự cài khi mở cho ${email}` }).click();
+  await expect(tools.getByRole('checkbox', { name: `Tự cài khi mở cho ${email}` })).not.toBeChecked();
+  page = await restart();
+  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  tools = toolsOf();
+  await expect(tools.getByRole('checkbox', { name: `Tự cài khi mở cho ${email}` })).not.toBeChecked();
+  await expect(cell('context-resume')).toContainText('Trùng tên');
+  await expect(tools.getByRole('button', { name: `Gỡ context-resume khỏi ${email}` })).toHaveCount(0);
+
+  // A folder without SKILL.md is refused with the reason.
+  mkdirSync(join(root, 'not-a-skill'));
+  await answerFolderDialog(join(root, 'not-a-skill'));
+  await tools.getByRole('button', { name: 'Thêm skill riêng…' }).click();
+  await expect(page.getByRole('alert')).toContainText('không có SKILL.md');
+
+  const mine = join(root, 'skills của tôi', 'review-scene');
+  mkdirSync(mine, { recursive: true });
+  writeFileSync(join(mine, 'SKILL.md'), '---\nname: review-scene\ndescription: Kiểm tra scene Unity trước khi commit.\n---\n# Review\n');
+  await answerFolderDialog(mine);
+  await tools.getByRole('button', { name: 'Thêm skill riêng…' }).click();
+  await expect(tools.getByRole('rowheader', { name: /review-scene/ })).toContainText('Kiểm tra scene Unity');
+  await tools.getByRole('button', { name: `Cài review-scene cho ${email}` }).click();
+  await expect(cell('review-scene')).toContainText('Đã cài');
+  expect(readFileSync(join(folder, 'skills', 'review-scene', 'SKILL.md'), 'utf8')).toContain('name: review-scene');
+
+  await tools.getByRole('button', { name: 'Xoá review-scene khỏi AgentHub' }).click();
+  await expect(tools.getByRole('rowheader', { name: /review-scene/ })).toHaveCount(0);
+  expect(existsSync(join(folder, 'skills', 'review-scene'))).toBe(false);
+  expect(existsSync(mine)).toBe(true);
 });
 
 test('a missing CLI blocks the Terminal launch with a clear reason', async () => {
@@ -637,7 +826,7 @@ test('the theme setting applies and survives a restart', async () => {
   let page = await launch();
   await page.getByRole('button', { name: 'Cài đặt' }).click();
   await page.getByText('Nâng cao').click();
-  await expect(page.locator('#schema-version')).toHaveText('5');
+  await expect(page.locator('#schema-version')).toHaveText('7');
 
   const theme = (label: string) => page.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: label });
   await theme('Tối').click();
@@ -657,6 +846,48 @@ test('the theme setting applies and survives a restart', async () => {
   expect(await app?.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('dark');
   await page.getByRole('button', { name: 'Cài đặt' }).click();
   await expect(page.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: 'Tối' })).toBeChecked();
+});
+
+test('the interface language changes every text at once and survives a restart; prompts follow the chat language (ADR-020 item 6)', async () => {
+  let page = await launch();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'vi');
+  await addProject(page);
+  await openTab(page, 'Handoff');
+  const copyPrompt = async (label: string): Promise<string> => {
+    await page.getByRole('button', { name: label }).click();
+    return (await app?.evaluate(({ clipboard }) => clipboard.readText())) ?? '';
+  };
+  // Chat follows the interface until chosen.
+  expect(await copyPrompt('Copy lời nhắc tóm tắt')).toMatch(/^Viết handoff .*Hãy trả lời tôi bằng tiếng Việt\.$/s);
+
+  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await page.getByRole('radiogroup', { name: 'Ngôn ngữ giao diện' }).getByRole('radio', { name: 'English' }).click();
+  await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  // The sidebar and every other screen switch with it, without a reload.
+  await expect(page.getByRole('navigation', { name: 'Navigation' }).getByRole('button', { name: 'Add project' })).toBeVisible();
+  // An error from Main is shown in the interface language too.
+  const reply = await page.evaluate(() =>
+    (globalThis as unknown as { agentHub: { removeProject(input: { id: string }): Promise<unknown> } }).agentHub.removeProject({ id: '00000000-0000-4000-8000-000000000000' }),
+  );
+  expect(reply).toMatchObject({ ok: false, error: { code: 'NOT_FOUND', detail: { key: 'error.projectNotFound' } } });
+
+  const chat = page.getByRole('radiogroup', { name: 'Chat language' });
+  await chat.getByRole('radio', { name: '한국어' }).click();
+  await expect(chat.getByRole('radio', { name: '한국어' })).toBeChecked();
+  await page.getByRole('navigation', { name: 'Navigation' }).getByRole('button', { name: /Dự án/ }).click();
+  await page.getByRole('tablist', { name: 'Project page' }).getByRole('tab', { name: 'Handoff', exact: true }).click();
+  expect(await copyPrompt('Copy summary prompt')).toMatch(/^다른 계정이 이어갈 수 있도록.*한국어로 답해 주세요\.$/s);
+
+  // A project can speak its own language.
+  await page.getByRole('tablist', { name: 'Project page' }).getByRole('tab', { name: 'Settings', exact: true }).click();
+  await page.getByRole('radiogroup', { name: 'Chat language' }).getByRole('radio', { name: 'English' }).click();
+  await page.getByRole('tablist', { name: 'Project page' }).getByRole('tab', { name: 'Handoff', exact: true }).click();
+  expect(await copyPrompt('Copy summary prompt')).toMatch(/^Write a handoff .*paste it into AgentHub\.$/s);
+
+  page = await restart();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.getByRole('button', { name: 'Settings' })).toBeVisible();
 });
 
 test('the renderer has no system access and bad payloads are refused', async () => {

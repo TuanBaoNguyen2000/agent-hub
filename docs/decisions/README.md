@@ -24,8 +24,9 @@ Giữ mã ADR ổn định; phân biệt quyết định đã chốt với lựa
 | ADR-016 | npm workspaces, electron-vite, electron-builder | Accepted; đã kiểm chứng trên macOS | [016-workspace-and-build-tooling.md](016-workspace-and-build-tooling.md) |
 | ADR-017 | Git observation tối thiểu trong MVP | Accepted | [017-mvp-git-observations.md](017-mvp-git-observations.md) |
 | ADR-018 | Đăng nhập qua cửa sổ riêng tư, tên account theo email | Accepted for MVP (conditional) | [018-account-login-and-identity.md](018-account-login-and-identity.md) |
-| ADR-019 | Context do agent duy trì qua tài liệu, skill và MCP của AgentHub | Accepted for MVP (conditional, chờ spike); sửa đổi một phần bởi ADR-020 | [019-agent-maintained-context.md](019-agent-maintained-context.md) |
+| ADR-019 | Context do agent duy trì qua tài liệu, skill và MCP của AgentHub | Accepted for MVP (conditional, chờ spike); sửa đổi một phần bởi ADR-020, ADR-021 | [019-agent-maintained-context.md](019-agent-maintained-context.md) |
 | ADR-020 | Sửa Phase 3 theo đánh giá của người dùng | Accepted | [020-phase3-review-changes.md](020-phase3-review-changes.md) |
+| ADR-021 | AgentHub quản lý tài liệu và task của project | Accepted | [021-task-and-document-management.md](021-task-and-document-management.md) |
 
 Kết quả capability cần evidence trong [feasibility.md](../feasibility.md), kể cả khi quyết định kiến trúc đã Accepted.
 

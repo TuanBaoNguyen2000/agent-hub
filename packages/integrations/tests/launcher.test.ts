@@ -1,7 +1,11 @@
 import type { InstalledApp, LaunchTarget, PlatformPort, RunOptions, RunResult, ToolProcess } from '@agenthub/application';
-import type { AccountProfile } from '@agenthub/domain';
+import type { AccountProfile, LaunchOutcome, Message } from '@agenthub/domain';
+import { msg, raw, translate } from '@agenthub/i18n';
 import { describe, expect, it } from 'vitest';
 import { CLAUDE_USAGE_ARGS, cliPromptArgs, createLauncher, parseClaudeUsage, parseCodexUsage } from '../src/index';
+
+// What the user reads, in Vietnamese as these expectations were written.
+const text = (message: Message | null | undefined): string => (message ? translate('vi', message) : '');
 
 const CLAUDE_APP: InstalledApp = {
   path: '/Applications/Claude.app',
@@ -168,7 +172,7 @@ describe('Claude CLI', () => {
     expect(outcome.workspace).toBe('opened');
     expect(outcome.sessionStarted).toBe(false);
     expect(JSON.stringify(outcome)).not.toMatch(/switched/i);
-    expect(outcome.userActionRequired.join()).toContain('/status');
+    expect(outcome.userActionRequired.map(text).join()).toContain('/status');
   });
 
   it('blocks with BIN_NOT_FOUND when the CLI is missing', async () => {
@@ -184,7 +188,7 @@ describe('Claude CLI', () => {
 
     const plan = await launcher.plan(target({ profile: b }));
     expect(callsOf(fake, 'ensureDirectory')).toEqual([]);
-    expect(plan.steps.some((step) => step.execution === 'manual' && /Đăng nhập/.test(step.label))).toBe(true);
+    expect(plan.steps.some((step) => step.execution === 'manual' && /Đăng nhập/.test(text(step.label)))).toBe(true);
 
     await launcher.launch(plan);
     expect(callsOf(fake, 'ensureDirectory')).toEqual([['/Users/test/new']]);
@@ -219,8 +223,8 @@ describe('the opening prompt (TDD §8.2, SPIKE-13)', () => {
     const outcome = await launcher.launch(await launcher.plan(target({ prompt })));
 
     expect((callsOf(fake, 'openTerminal')[0]?.[0] as { args: string[] }).args).toEqual([`--add-dir=${prompt.addDir}`, prompt.text]);
-    expect(outcome.userActionRequired.join()).toContain('tin tưởng folder');
-    expect(outcome.userActionRequired.join()).not.toContain('Nhập prompt');
+    expect(outcome.userActionRequired.map(text).join()).toContain('tin tưởng folder');
+    expect(outcome.userActionRequired.map(text).join()).not.toContain('Nhập prompt');
   });
 
   it('gives Codex the folder too, without the Claude trust step', async () => {
@@ -242,7 +246,7 @@ describe('the opening prompt (TDD §8.2, SPIKE-13)', () => {
 
   it('warns Desktop users that the agent will ask to read the transcript', async () => {
     const plan = await createLauncher(fakePlatform().platform).plan(target({ mode: 'desktop', prompt: { text: 'x', addDir: null, readDirs: ['/s'] } }));
-    expect(plan.steps.some((step) => step.warning?.includes('transcript'))).toBe(true);
+    expect(plan.steps.some((step) => text(step.warning).includes('transcript'))).toBe(true);
   });
 
   it('sends only the prompt when the documents are inside the project', async () => {
@@ -256,8 +260,8 @@ describe('the opening prompt (TDD §8.2, SPIKE-13)', () => {
     const plan = await launcher.plan(target({ mode: 'desktop', prompt }));
     const outcome = await launcher.launch(plan);
 
-    expect(plan.steps.some((step) => step.warning?.includes('ngoài project'))).toBe(true);
-    expect(outcome.userActionRequired.join()).toContain('dán lời nhắc');
+    expect(plan.steps.some((step) => text(step.warning).includes('ngoài project'))).toBe(true);
+    expect(outcome.userActionRequired.map(text).join()).toContain('dán lời nhắc');
   });
 
   it('keeps each account\'s skills in its own config folder, home for the default one', () => {
@@ -279,7 +283,7 @@ describe('MCP registration (SPIKE-10, 11, 12)', () => {
     const launcher = createLauncher(fake.platform);
     const b = profile({ cliConfigRoot: '/Users/test/claude b' });
 
-    expect(await launcher.mcpRegistration(b, server, null)).toEqual({ pending: ['/Users/test/claude b/.claude.json'], problems: [] });
+    expect(await launcher.mcpRegistration(b, server, null)).toEqual({ pending: ['/Users/test/claude b/.claude.json'], registered: [], problems: [] });
     await launcher.registerMcp(b, server, null);
 
     const add = callsOf(fake, 'run').find((call) => (call[1] as string[])[1] === 'add-json');
@@ -294,9 +298,14 @@ describe('MCP registration (SPIKE-10, 11, 12)', () => {
     await createLauncher(outdated.platform).registerMcp(profile(), server, null);
     expect(runs(outdated)).toEqual(expect.arrayContaining(['mcp remove -s user agenthub']));
 
+    expect(await createLauncher(outdated.platform).mcpRegistration(profile(), server, null)).toMatchObject({
+      pending: ['/Users/test/.claude.json'],
+      registered: ['/Users/test/.claude.json'],
+    });
+
     const current = fakePlatform({ files: { '/Users/test/.claude.json': config(server.args) } });
     const launcher = createLauncher(current.platform);
-    expect((await launcher.mcpRegistration(profile(), server, null)).pending).toEqual([]);
+    expect(await launcher.mcpRegistration(profile(), server, null)).toMatchObject({ pending: [], registered: ['/Users/test/.claude.json'] });
     await launcher.registerMcp(profile(), server, null);
     expect(runs(current).filter((args) => args.startsWith('mcp'))).toEqual([]);
   });
@@ -306,7 +315,7 @@ describe('MCP registration (SPIKE-10, 11, 12)', () => {
     const registration = await createLauncher(fake.platform).mcpRegistration(profile(), server, null);
 
     expect(registration.pending).toEqual([]);
-    expect(registration.problems[0]).toContain('JSON');
+    expect(text(registration.problems[0])).toContain('JSON');
   });
 
   it('adds the same entry to the config of the account\'s own Desktop window, keeping what is there', async () => {
@@ -350,6 +359,37 @@ describe('MCP registration (SPIKE-10, 11, 12)', () => {
 
     registered = JSON.stringify({ name: 'agenthub', transport: { type: 'stdio', command: server.command, args: server.args } });
     expect((await launcher.mcpRegistration(codex, server, null)).pending).toEqual([]);
+
+    await launcher.unregisterMcp(codex, null);
+    const remove = callsOf(fake, 'run').find((call) => (call[1] as string[])[1] === 'remove');
+    expect(remove?.[1]).toEqual(['mcp', 'remove', 'agenthub']);
+    expect((remove?.[2] as RunOptions).extraEnv).toEqual({ CODEX_HOME: '/Users/test/codex b' });
+  });
+
+  it('removes only its own entry from Claude and the account\'s Desktop window (ADR-020 item 1)', async () => {
+    const desktopConfig = '/Users/test/desktop b/claude_desktop_config.json';
+    const fake = fakePlatform({
+      files: {
+        '/Users/test/claude b/.claude.json': JSON.stringify({ mcpServers: { agenthub: server, other: {} } }),
+        [desktopConfig]: JSON.stringify({ mcpServers: { mine: { command: 'x' }, agenthub: server }, preferences: { a: 1 } }),
+      },
+    });
+    const b = profile({ cliConfigRoot: '/Users/test/claude b', desktopDataDir: '/Users/test/desktop b' });
+
+    await createLauncher(fake.platform).unregisterMcp(b, null);
+
+    const remove = callsOf(fake, 'run').find((call) => (call[1] as string[])[1] === 'remove');
+    expect(remove?.[1]).toEqual(['mcp', 'remove', '-s', 'user', 'agenthub']);
+    expect((remove?.[2] as RunOptions).extraEnv).toEqual({ CLAUDE_CONFIG_DIR: '/Users/test/claude b' });
+    const written = JSON.parse(callsOf(fake, 'writeTextFile')[0]?.[1] as string) as Record<string, unknown>;
+    expect(written).toEqual({ mcpServers: { mine: { command: 'x' } }, preferences: { a: 1 } });
+  });
+
+  it('runs nothing to remove a server that is not there', async () => {
+    const fake = fakePlatform({ files: { '/Users/test/.claude.json': JSON.stringify({ mcpServers: { other: {} } }) } });
+    await createLauncher(fake.platform).unregisterMcp(profile(), null);
+    expect(runs(fake).filter((args) => args.startsWith('mcp'))).toEqual([]);
+    expect(callsOf(fake, 'writeTextFile')).toEqual([]);
   });
 
   it('reports a failed registration', async () => {
@@ -368,7 +408,7 @@ describe('Claude Desktop, main app', () => {
     expect(callsOf(fake, 'runInPty')[0]?.slice(0, 2)).toEqual(['/bin/claude', ['--desktop']]);
     expect((callsOf(fake, 'runInPty')[0]?.[2] as RunOptions).cwd).toBe(PROJECT);
     expect(outcome.workspace).toBe('requested');
-    expect(outcome.userActionRequired.join()).toContain('đúng folder');
+    expect(outcome.userActionRequired.map(text).join()).toContain('đúng folder');
   });
 
   it('warns when the CLI login is gone after opening Desktop', async () => {
@@ -377,7 +417,7 @@ describe('Claude Desktop, main app', () => {
 
     const outcome = await launcher.launch(await launcher.plan(target({ mode: 'desktop' })));
 
-    expect(outcome.warnings.join()).toContain('mất đăng nhập');
+    expect(outcome.warnings.map(text).join()).toContain('mất đăng nhập');
   });
 
   it('does not run --desktop when the CLI is signed out, and falls back to manual', async () => {
@@ -398,7 +438,7 @@ describe('Claude Desktop, main app', () => {
     const outcome = await launcher.launch(await launcher.plan(target({ mode: 'desktop' })));
 
     expect(outcome.workspace).toBe('manual');
-    expect(outcome.warnings.join()).toContain('từ chối');
+    expect(outcome.warnings.map(text).join()).toContain('từ chối');
   });
 
   it('opens the app and asks for the folder when there is no CLI', async () => {
@@ -419,7 +459,7 @@ describe('Claude Desktop, main app', () => {
 
     const plan = await launcher.plan(target({ mode: 'desktop', profile: b }));
 
-    expect(plan.steps[0]?.warning).toContain('account đang đăng nhập');
+    expect(text(plan.steps[0]?.warning)).toContain('account đang đăng nhập');
   });
 
   it('blocks with APP_NOT_FOUND when the app is missing', async () => {
@@ -465,7 +505,7 @@ describe('Desktop instance (ADR-013, ADR-014)', () => {
     const plan = await launcher.plan(target({ mode: 'desktop', profile: claudeB }));
 
     expect(plan.requiredConfirmations).toHaveLength(1);
-    expect(plan.requiredConfirmations[0]?.label).toContain('9.9.9');
+    expect(text(plan.requiredConfirmations[0]?.label)).toContain('9.9.9');
   });
 
   it('needs no confirmation on a version with evidence', async () => {
@@ -483,7 +523,7 @@ describe('Desktop instance (ADR-013, ADR-014)', () => {
 
     const plan = await launcher.plan(target({ mode: 'desktop', profile: claudeB }));
 
-    expect(plan.steps.some((step) => step.warning?.includes('tự tắt'))).toBe(true);
+    expect(plan.steps.some((step) => text(step.warning).includes('tự tắt'))).toBe(true);
   });
 
   it('brings a window already open to the front, and starts no second process on its data', async () => {
@@ -509,7 +549,7 @@ describe('Desktop instance (ADR-013, ADR-014)', () => {
     const outcome = await launcher.launch(await launcher.plan(target({ mode: 'desktop', profile: claudeB })));
 
     expect(outcome.appOpened).toBe(true);
-    expect(outcome.warnings.join()).toContain('Dock');
+    expect(outcome.warnings.map(text).join()).toContain('Dock');
   });
 });
 
@@ -533,8 +573,8 @@ describe('main app beside a window of another account', () => {
     expect(callsOf(fake, 'openApp')).toEqual([]);
     expect(callsOf(fake, 'run').filter(([, args]) => (args as string[])[0] === 'app')).toEqual([]);
     expect(outcome).toMatchObject({ workspace: 'manual', sessionStarted: false });
-    expect(outcome.userActionRequired[0]).toContain('folder');
-    expect(outcome.warnings.join()).toContain('tự chọn folder');
+    expect(text(outcome.userActionRequired[0])).toContain('folder');
+    expect(outcome.warnings.map(text).join()).toContain('tự chọn folder');
   });
 
   it('brings the main app forward when it started after that other window', async () => {
@@ -552,7 +592,7 @@ describe('main app beside a window of another account', () => {
   it('warns before the launch that the folder will not open by itself', async () => {
     const plan = await createLauncher(fakePlatform({ runningInstances: async () => [b] }).platform).plan(target({ mode: 'desktop', profile: a }));
 
-    expect(plan.steps[0]?.warning).toContain('đi nhầm');
+    expect(text(plan.steps[0]?.warning)).toContain('đi nhầm');
     expect(plan.steps.map((step) => step.execution)).toEqual(['conditional', 'manual', 'manual', 'manual']);
   });
 
@@ -585,7 +625,7 @@ describe('main app beside a window of another account', () => {
 
 describe('an account opened without a project', () => {
   const claudeB = profile({ cliConfigRoot: '/Users/test/claude b', desktopDataDir: '/Users/test/claude desktop b' });
-  const noFolder = (outcome: { userActionRequired: string[] }) => outcome.userActionRequired.every((item) => !item.includes('folder'));
+  const noFolder = (outcome: LaunchOutcome) => outcome.userActionRequired.every((item) => !text(item).includes('folder'));
 
   it('starts the CLI at home and never claims a project folder', async () => {
     const fake = fakePlatform();
@@ -595,7 +635,7 @@ describe('an account opened without a project', () => {
     const outcome = await launcher.launch(plan);
 
     expect(callsOf(fake, 'openTerminal')[0]?.[0]).toMatchObject({ cwd: '/Users/test' });
-    expect(plan.steps[0]?.label).toContain('thư mục home');
+    expect(text(plan.steps[0]?.label)).toContain('thư mục home');
     expect(outcome.workspace).toBe('none');
   });
 
@@ -661,7 +701,7 @@ describe('status', () => {
   it('reads login and email for Claude', async () => {
     const status = await createLauncher(fakePlatform().platform).status(profile(), null);
 
-    expect(status).toMatchObject({ login: 'logged_in', loginDetail: 'pro', accountEmail: 'a@example.com', desktopVersionHasEvidence: true });
+    expect(status).toMatchObject({ login: 'logged_in', loginDetail: raw('pro'), accountEmail: 'a@example.com', desktopVersionHasEvidence: true });
     expect(status.accountFingerprint).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -679,7 +719,7 @@ describe('status', () => {
 
     const status = await createLauncher(fake.platform).status(profile({ provider: 'codex' }), null);
 
-    expect(status).toMatchObject({ login: 'logged_in', accountEmail: 'c@example.com', loginDetail: 'team, Acme' });
+    expect(status).toMatchObject({ login: 'logged_in', accountEmail: 'c@example.com', loginDetail: raw('team, Acme') });
     expect(status.accountFingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(tool.killed()).toBe(true);
   });
@@ -699,7 +739,7 @@ describe('status', () => {
 
       const status = await createLauncher(fake.platform).status(profile({ provider: 'codex' }), null);
 
-      expect(status).toMatchObject({ login: 'logged_in', loginDetail: 'ChatGPT', accountEmail: null, accountFingerprint: null });
+      expect(status).toMatchObject({ login: 'logged_in', loginDetail: raw('ChatGPT'), accountEmail: null, accountFingerprint: null });
     }
   });
 
@@ -934,7 +974,7 @@ describe('usage limits (SPIKE-16)', () => {
     expect(report.windows).toEqual([
       { kind: 'session', label: null, usedPercent: 19, windowMinutes: 300, resetsAt: null, resetsText: 'Nov 4 at 8:19pm (Asia/Saigon)' },
       { kind: 'weekly', label: null, usedPercent: 10, windowMinutes: 10080, resetsAt: null, resetsText: 'Nov 6 at 11:59pm (Asia/Saigon)' },
-      { kind: 'other', label: 'Tuần, Sonnet only', usedPercent: 104, windowMinutes: 10080, resetsAt: null, resetsText: 'Nov 6 at 11:59pm (Asia/Saigon)' },
+      { kind: 'other', label: msg('usage.weekScope', { scope: 'Sonnet only' }), usedPercent: 104, windowMinutes: 10080, resetsAt: null, resetsText: 'Nov 6 at 11:59pm (Asia/Saigon)' },
     ]);
   });
 
@@ -973,7 +1013,7 @@ describe('usage limits (SPIKE-16)', () => {
       windows: [
         { kind: 'session', label: null, usedPercent: 42, windowMinutes: 300, resetsAt: '2026-11-04T14:57:59.000Z', resetsText: null },
         { kind: 'weekly', label: null, usedPercent: 7, windowMinutes: 10080, resetsAt: '2026-11-11T11:42:30.000Z', resetsText: null },
-        { kind: 'other', label: 'GPT-5 Pro', usedPercent: 3, windowMinutes: 10080, resetsAt: null, resetsText: null },
+        { kind: 'other', label: raw('GPT-5 Pro'), usedPercent: 3, windowMinutes: 10080, resetsAt: null, resetsText: null },
       ],
     });
     expect(JSON.stringify(report)).not.toMatch(/acct-secret|RateLimitResetCredit/);

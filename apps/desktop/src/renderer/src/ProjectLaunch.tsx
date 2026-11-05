@@ -1,22 +1,24 @@
-import { CONTEXT_TOOLS_CONFIRMATION } from '@agenthub/contracts/constants';
 import type { ClientModeDto, LaunchAttemptDto, LaunchPreviewDto, LaunchResultDto, ProfileDto, ProjectDto } from '@agenthub/contracts';
 import { type ReactNode, useEffect, useState } from 'react';
 import { AccountAvatar, PROVIDER_LABELS, needsDecision, windowLabel } from './accounts';
+import type { MessageKey } from '@agenthub/i18n';
 import { api, unwrap } from './api';
+import { useI18n } from './i18n';
 import { ChevronUpDown, Gear, Monitor, Terminal } from './icons';
 import { Menu, MenuItem, MenuSeparator } from './ui';
 
-const WORKSPACE_LABELS = {
-  opened: 'Đã mở tại folder của project.',
-  requested: 'Đã gửi lệnh mở folder; AgentHub không biết app có mở đúng folder không.',
-  manual: 'Đã mở app. Bạn cần tự chọn folder trong app.',
-  none: '',
-} as const;
+const WORKSPACE_LABELS: Record<'opened' | 'requested' | 'manual', MessageKey> = {
+  opened: 'launch.result.opened',
+  requested: 'launch.result.requested',
+  manual: 'launch.result.manual',
+};
 
 interface Props {
   project: ProjectDto;
   accounts: ProfileDto[] | undefined;
   onOpenSettings: () => void;
+  // Settings, at the Agent tools section.
+  onOpenTools: () => void;
   // The task the next launch points the agent at; null leaves the choice to the agent.
   taskRef: string | null;
   // The project's earlier launches, newest first: the account last used is picked again.
@@ -25,10 +27,13 @@ interface Props {
   onLaunched: () => void;
   // The task line, shown under the launch bar.
   taskSummary?: ReactNode;
+  // 'refine': the agent fills in the task instead of resuming it (ADR-021 item 7).
+  purpose?: 'refine';
 }
 
 // Opens an account at the project's folder.
-export function ProjectLaunch({ project, accounts, onOpenSettings, taskRef, history, onLaunched, taskSummary }: Props) {
+export function ProjectLaunch({ project, accounts, onOpenSettings, onOpenTools, taskRef, history, onLaunched, taskSummary, purpose }: Props) {
+  const { t, tr, date } = useI18n();
   const [error, setError] = useState<string>();
 
   const [accountId, setAccountId] = useState('');
@@ -47,14 +52,14 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, taskRef, hist
     setAccountId(recent?.profileId ?? accounts[0]?.id ?? '');
   }, [accounts, history, accountId]);
 
-  async function execute(mode: ClientModeDto, confirmations: string[], skipContextTools = false): Promise<void> {
+  async function execute(mode: ClientModeDto, confirmations: string[]): Promise<void> {
     const transcript = useTranscript && pending?.preview.transcript !== null && pending !== undefined;
     setUseTranscript(false);
     setBusy(true);
     setPending(undefined);
     setConfirmed([]);
     try {
-      setLast(await unwrap(api.executeLaunch({ request: { projectId: project.id, taskRef, profileId: accountId, mode, ...(skipContextTools ? { skipContextTools } : {}), ...(transcript ? { useTranscript: true } : {}) }, confirmations })));
+      setLast(await unwrap(api.executeLaunch({ request: { projectId: project.id, taskRef, profileId: accountId, mode, ...(purpose ? { purpose } : {}), ...(transcript ? { useTranscript: true } : {}) }, confirmations })));
     } catch (reason) {
       setError((reason as Error).message);
     } finally {
@@ -69,7 +74,7 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, taskRef, hist
     setCopiedAgain(false);
     setUseTranscript(false);
     try {
-      const preview = await unwrap(api.planLaunch({ projectId: project.id, taskRef, profileId: accountId, mode }));
+      const preview = await unwrap(api.planLaunch({ projectId: project.id, taskRef, profileId: accountId, mode, ...(purpose ? { purpose } : {}) }));
       if (needsDecision(preview) || preview.permission !== 'allowed' || preview.transcript !== null) {
         setConfirmed([]);
         setPending({ mode, preview });
@@ -102,10 +107,6 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, taskRef, hist
   }
 
   const missingConfirmation = pending?.preview.requiredConfirmations.some((item) => !confirmed.includes(item.id)) ?? false;
-  // Declining the change to the main config still opens, just without skills and MCP this time.
-  const asksForTools = pending?.preview.requiredConfirmations.some((item) => item.id === CONTEXT_TOOLS_CONFIRMATION) ?? false;
-  const missingOther =
-    pending?.preview.requiredConfirmations.some((item) => item.id !== CONTEXT_TOOLS_CONFIRMATION && !confirmed.includes(item.id)) ?? false;
   const canContinue = pending !== undefined && pending.preview.permission === 'allowed' && !pending.preview.blocker && !missingConfirmation && !busy;
   const account = accounts?.find((item) => item.id === accountId);
 
@@ -113,13 +114,13 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, taskRef, hist
     <>
       {accounts?.length === 0 ? (
         <div className="launch-bar empty-launch">
-          <p className="hint grow">Chưa có account nào để mở project này.</p>
+          <p className="hint grow">{t('launch.noAccount')}</p>
           <button type="button" className="primary" onClick={onOpenSettings}>
-            Thêm account
+            {t('accounts.add')}
           </button>
         </div>
       ) : (
-        <div className="launch-bar" role="group" aria-label="Mở project">
+        <div className="launch-bar" role="group" aria-label={t('launch.bar')}>
           <Menu
             label="Account"
             value={accountId}
@@ -130,9 +131,9 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, taskRef, hist
                 <>
                   <AccountAvatar account={account} />
                   <span className="account-picker-text">
-                    <span className="truncate">{account.name}</span>
+                    <span className="truncate">{tr(account.name)}</span>
                     <span className="account-picker-meta">
-                      {PROVIDER_LABELS[account.provider]} · {windowLabel(account)}
+                      {PROVIDER_LABELS[account.provider]} · {windowLabel(t, account)}
                     </span>
                   </span>
                   <span className="select-chevron">
@@ -140,7 +141,7 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, taskRef, hist
                   </span>
                 </>
               ) : (
-                <span className="hint">Chọn account</span>
+                <span className="hint">{t('launch.pickAccount')}</span>
               )
             }
           >
@@ -148,27 +149,27 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, taskRef, hist
               <MenuItem
                 key={item.id}
                 icon={<AccountAvatar account={item} size="sm" />}
-                description={`${PROVIDER_LABELS[item.provider]} · ${windowLabel(item)}`}
+                description={`${PROVIDER_LABELS[item.provider]} · ${windowLabel(t, item)}`}
                 checked={item.id === accountId}
                 onSelect={() => setAccountId(item.id)}
               >
-                {item.name}
+                {tr(item.name)}
               </MenuItem>
             ))}
             <MenuSeparator />
             <MenuItem icon={<Gear />} onSelect={onOpenSettings}>
-              Quản lý account
+              {t('accounts.manage')}
             </MenuItem>
           </Menu>
           {/* Desktop and CLI are the same account opened two ways (TDD §9.2). */}
           <div className="launch-actions">
             <button type="button" className="primary" disabled={!account || busy} onClick={() => void open('desktop')}>
               <Monitor />
-              Mở trong Desktop
+              {t('launch.openDesktop')}
             </button>
             <button type="button" className="primary" disabled={!account || busy} onClick={() => void open('cli')}>
               <Terminal />
-              Mở trong Terminal
+              {t('launch.openTerminal')}
             </button>
           </div>
         </div>
@@ -177,31 +178,30 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, taskRef, hist
       {taskSummary}
 
       {pending && (
-        <div className="card" aria-label="Cần bạn quyết định" role="group">
+        <div className="card" aria-label={t('launch.decide')} role="group">
           {pending.preview.blocker && (
             <p className="banner error" role="alert">
-              {pending.preview.blocker.message}
+              {tr(pending.preview.blocker.message)}
             </p>
           )}
           {pending.preview.steps
             .filter((step) => step.warning)
-            .map((step) => (
-              <p key={step.label} className="banner warning">
-                {step.warning}
+            .map((step, index) => (
+              <p key={index} className="banner warning">
+                {tr(step.warning)}
               </p>
             ))}
           {pending.preview.permission === 'unset' && (
             <div className="banner warning">
               <p>
-                Cho account "{pending.preview.profileAlias}" làm việc với project "{pending.preview.projectName}"? Account này sẽ đọc được source code của
-                project. AgentHub chỉ hỏi một lần cho mỗi cặp.
+                {t('launch.permission.ask', { account: pending.preview.profileAlias, project: pending.preview.projectName })}
               </p>
               <div className="row">
                 <button type="button" onClick={() => void answerPermission(true)}>
-                  Cho phép
+                  {t('launch.permission.allow')}
                 </button>
                 <button type="button" onClick={() => void answerPermission(false)}>
-                  Không cho phép
+                  {t('launch.permission.deny')}
                 </button>
               </div>
             </div>
@@ -209,28 +209,31 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, taskRef, hist
           {pending.preview.permission === 'denied' && (
             <div className="banner error" role="alert">
               <p>
-                Account "{pending.preview.profileAlias}" không được phép dùng project "{pending.preview.projectName}".
+                {t('launch.permission.denied', { account: pending.preview.profileAlias, project: pending.preview.projectName })}
               </p>
               <button type="button" onClick={() => void answerPermission(true)}>
-                Đổi thành cho phép
+                {t('launch.permission.change')}
               </button>
             </div>
           )}
           {pending.preview.transcript && (
-            <div className="banner warning" role="group" aria-label="Transcript của phiên cũ">
+            <div className="banner warning" role="group" aria-label={t('launch.transcript.region')}>
               <p>
-                Phiên {pending.preview.transcript.provider === 'claude' ? 'Claude' : 'Codex'} của account "{pending.preview.transcript.sourceAccount}" còn làm tiếp lúc{' '}
-                {new Date(pending.preview.transcript.updatedAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}, sau checkpoint gần nhất (
-                {new Date(pending.preview.transcript.checkpointAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}). Phần đó chưa được ghi lại.
+                {t('launch.transcript.offer', {
+                  provider: pending.preview.transcript.provider === 'claude' ? 'Claude' : 'Codex',
+                  account: pending.preview.transcript.sourceAccount,
+                  at: date(pending.preview.transcript.updatedAt),
+                  checkpoint: date(pending.preview.transcript.checkpointAt),
+                })}
               </p>
               {(pending.preview.transcript.otherAccount || pending.preview.transcript.otherProvider) && (
                 <p>
-                  Agent mới thuộc {pending.preview.transcript.otherProvider ? 'provider khác' : 'account khác'} sẽ đọc nội dung của phiên đó, có thể gồm source code. Chỉ đồng ý nếu điều này được phép.
+                  {t(pending.preview.transcript.otherProvider ? 'launch.transcript.otherProvider' : 'launch.transcript.otherAccount')}
                 </p>
               )}
               <label className="choice">
                 <input type="checkbox" checked={useTranscript} onChange={(event) => setUseTranscript(event.target.checked)} />
-                Cho agent mới đọc phần cuối transcript và viết checkpoint bù
+                {t('launch.transcript.accept')}
               </label>
             </div>
           )}
@@ -243,26 +246,22 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, taskRef, hist
                   setConfirmed((current) => (event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id)))
                 }
               />
-              {item.label}
+              {tr(item.label)}
             </label>
           ))}
           <div className="row">
             {!pending.preview.blocker && pending.preview.permission === 'allowed' && (
               <button type="button" className="primary" disabled={!canContinue} onClick={() => void execute(pending.mode, confirmed)}>
-                Tiếp tục mở
+                {t('launch.continue')}
               </button>
             )}
-            {asksForTools && !pending.preview.blocker && pending.preview.permission === 'allowed' && (
-              <button
-                type="button"
-                disabled={missingOther || busy}
-                onClick={() => void execute(pending.mode, confirmed.filter((id) => id !== CONTEXT_TOOLS_CONFIRMATION), true)}
-              >
-                Mở mà không cài
+            {pending.preview.missingTools && (
+              <button type="button" onClick={onOpenTools}>
+                {t('launch.openTools')}
               </button>
             )}
             <button type="button" onClick={() => setPending(undefined)}>
-              Huỷ
+              {t('common.cancel')}
             </button>
           </div>
         </div>
@@ -275,32 +274,32 @@ export function ProjectLaunch({ project, accounts, onOpenSettings, taskRef, hist
       )}
 
       {last?.outcome && (
-        <div className="card" role="status" aria-label="Kết quả lần mở">
-          <p>{WORKSPACE_LABELS[last.outcome.workspace]}</p>
+        <div className="card" role="status" aria-label={t('launch.result')}>
+          {last.outcome.workspace !== 'none' && <p>{t(WORKSPACE_LABELS[last.outcome.workspace])}</p>}
           {last.prompt && (
-            <div className="prompt-box" aria-label="Lời nhắc cho phiên mới" role="group">
+            <div className="prompt-box" aria-label={t('launch.prompt.region')} role="group">
               <p className="hint">
                 {last.mode === 'cli'
-                  ? 'Đã gửi làm prompt đầu tiên của CLI:'
+                  ? t('launch.prompt.sent')
                   : last.copied
-                    ? 'Đã copy vào clipboard. Dán vào cuộc trò chuyện mới:'
-                    : 'Dán vào cuộc trò chuyện mới:'}
+                    ? t('launch.prompt.copied')
+                    : t('launch.prompt.paste')}
               </p>
               <code className="prompt-text">{last.prompt}</code>
               <button type="button" onClick={() => void copyPrompt(last.prompt as string)}>
-                {copiedAgain ? 'Đã copy' : 'Copy lại'}
+                {copiedAgain ? t('common.copied') : t('launch.prompt.copyAgain')}
               </button>
             </div>
           )}
-          {last.outcome.warnings.map((warning) => (
-            <p key={warning} className="banner warning">
-              {warning}
+          {last.outcome.warnings.map((warning, index) => (
+            <p key={index} className="banner warning">
+              {tr(warning)}
             </p>
           ))}
           {last.outcome.userActionRequired.length > 0 && (
             <ul className="todo">
-              {last.outcome.userActionRequired.map((item) => (
-                <li key={item}>{item}</li>
+              {last.outcome.userActionRequired.map((item, index) => (
+                <li key={index}>{tr(item)}</li>
               ))}
             </ul>
           )}

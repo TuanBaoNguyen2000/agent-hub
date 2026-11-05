@@ -1,13 +1,17 @@
 import type {
+  CustomSkill,
   LaunchRepository,
   MetadataStore,
   PermissionRepository,
   ProfileRepository,
+  ProfileToolsRepository,
   ProjectRepository,
   SettingsRepository,
+  SkillRepository,
   StoredProject,
 } from '@agenthub/application';
-import type { AccountProfile, ClientMode, ContextLanguage, LaunchAttempt, LaunchOutcome, LaunchStatus, Project, Provider } from '@agenthub/domain';
+import { type AccountProfile, type ClientMode, type ContextLanguage, type LaunchAttempt, type LaunchOutcome, type LaunchStatus, type Message, type Project, type Provider, raw } from '@agenthub/domain';
+import { isLocale } from '@agenthub/i18n';
 import { type SqliteDatabase, openDatabase, schemaVersion } from './database';
 import { MIGRATIONS } from './migrations';
 
@@ -26,6 +30,7 @@ interface ProjectRow {
   updated_at: string;
   context_enabled: number;
   context_language: ContextLanguage;
+  chat_language: string | null;
   absolute_path: string | null;
   context_path: string | null;
   context_detected_at: string | null;
@@ -37,6 +42,7 @@ const toProject = (row: ProjectRow): StoredProject => ({
   id: row.id,
   name: row.name,
   context: { enabled: row.context_enabled === 1, language: row.context_language },
+  chatLanguage: isLocale(row.chat_language) ? row.chat_language : null,
   path: row.absolute_path,
   contextPath: row.context_path,
   contextDetectedAt: row.context_detected_at,
@@ -46,7 +52,7 @@ const toProject = (row: ProjectRow): StoredProject => ({
 
 function projectRepository(db: SqliteDatabase): ProjectRepository {
   const select = `
-    SELECT p.id, p.name, p.created_at, p.updated_at, p.context_enabled, p.context_language, l.absolute_path, l.context_path, l.context_detected_at
+    SELECT p.id, p.name, p.created_at, p.updated_at, p.context_enabled, p.context_language, p.chat_language, l.absolute_path, l.context_path, l.context_detected_at
     FROM projects p
     LEFT JOIN project_locations l ON l.project_id = p.id AND l.device_id = @deviceId
     WHERE p.removed_at IS NULL`;
@@ -69,6 +75,7 @@ function projectRepository(db: SqliteDatabase): ProjectRepository {
   );
   const updateContextPath = db.prepare('UPDATE project_locations SET context_path = ? WHERE project_id = ? AND device_id = ?');
   const markDetected = db.prepare('UPDATE project_locations SET context_detected_at = ? WHERE project_id = ? AND device_id = ?');
+  const updateChatLanguage = db.prepare('UPDATE projects SET chat_language = ?, updated_at = ? WHERE id = ?');
   const markRemoved = db.prepare('UPDATE projects SET removed_at = ?, updated_at = ? WHERE id = ?');
 
   const insert = db.transaction((project: Project, location: Location) => {
@@ -110,6 +117,9 @@ function projectRepository(db: SqliteDatabase): ProjectRepository {
     },
     setContext: (id, deviceId, context, contextPath, updatedAt) => {
       setContext(id, deviceId, context, contextPath, updatedAt);
+    },
+    setChatLanguage: (id, language, updatedAt) => {
+      updateChatLanguage.run(language, updatedAt, id);
     },
     markContextDetected: (id, deviceId, at) => {
       markDetected.run(at, id, deviceId);
@@ -213,6 +223,15 @@ interface LaunchRow {
   created_at: string;
 }
 
+// Launches recorded before ADR-020 item 6 kept their texts in Vietnamese; they are shown as they were.
+type StoredText = string | Message;
+const asMessage = (text: StoredText): Message => (typeof text === 'string' ? raw(text) : text);
+
+function readOutcome(json: string): LaunchOutcome {
+  const stored = JSON.parse(json) as Omit<LaunchOutcome, 'userActionRequired' | 'warnings'> & { userActionRequired: StoredText[]; warnings: StoredText[] };
+  return { ...stored, userActionRequired: (stored.userActionRequired ?? []).map(asMessage), warnings: (stored.warnings ?? []).map(asMessage) };
+}
+
 const toLaunch = (row: LaunchRow): LaunchAttempt => ({
   id: row.id,
   projectId: row.project_id,
@@ -221,7 +240,7 @@ const toLaunch = (row: LaunchRow): LaunchAttempt => ({
   mode: row.mode,
   status: row.status,
   errorCode: row.error_code,
-  outcome: row.outcome === null ? null : (JSON.parse(row.outcome) as LaunchOutcome),
+  outcome: row.outcome === null ? null : readOutcome(row.outcome),
   accountConfirmedAt: row.account_confirmed_at,
   createdAt: row.created_at,
 });
@@ -253,6 +272,45 @@ function launchRepository(db: SqliteDatabase): LaunchRepository {
   };
 }
 
+interface SkillRow {
+  id: string;
+  name: string;
+  source_path: string;
+  added_at: string;
+}
+
+function skillRepository(db: SqliteDatabase): SkillRepository {
+  const list = db.prepare('SELECT * FROM skills ORDER BY name');
+  const insert = db.prepare('INSERT INTO skills (id, name, source_path, added_at) VALUES (@id, @name, @sourcePath, @addedAt)');
+  const remove = db.prepare('DELETE FROM skills WHERE name = ?');
+  return {
+    list: () =>
+      (list.all() as SkillRow[]).map((row): CustomSkill => ({ id: row.id, name: row.name, sourcePath: row.source_path, addedAt: row.added_at })),
+    insert: (skill) => {
+      insert.run(skill);
+    },
+    remove: (name) => {
+      remove.run(name);
+    },
+  };
+}
+
+function profileToolsRepository(db: SqliteDatabase): ProfileToolsRepository {
+  const get = db.prepare('SELECT auto_install FROM profile_tools WHERE profile_id = ?');
+  const set = db.prepare(`
+    INSERT INTO profile_tools (profile_id, auto_install) VALUES (?, ?)
+    ON CONFLICT(profile_id) DO UPDATE SET auto_install = excluded.auto_install`);
+  return {
+    autoInstall: (profileId) => {
+      const row = get.get(profileId) as { auto_install: number } | undefined;
+      return row === undefined ? undefined : row.auto_install === 1;
+    },
+    setAutoInstall: (profileId, on) => {
+      set.run(profileId, on ? 1 : 0);
+    },
+  };
+}
+
 export function openMetadataStore(databasePath: string, options: { backupDirectory?: string } = {}): MetadataStore {
   const db = openDatabase(databasePath, MIGRATIONS, options.backupDirectory);
   const engineVersion = (db.prepare('SELECT sqlite_version() AS version').get() as { version: string }).version;
@@ -262,6 +320,8 @@ export function openMetadataStore(databasePath: string, options: { backupDirecto
     profiles: profileRepository(db),
     permissions: permissionRepository(db),
     launches: launchRepository(db),
+    skills: skillRepository(db),
+    profileTools: profileToolsRepository(db),
     status: () => ({ engineVersion, schemaVersion: schemaVersion(db) }),
     close: () => {
       db.close();

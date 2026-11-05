@@ -399,5 +399,5 @@ export function createMacPlatform({
     homeDirectory: () => home,
   };
 }
-export { createSkillInstaller } from './skills';
+export { createSkillInstaller, readSkillManifest, skillFrontmatter } from './skills';
 export { createGitObserver } from './git';

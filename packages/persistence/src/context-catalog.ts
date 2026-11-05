@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { type ContextLanguage, DomainError } from '@agenthub/domain';
+import { type ContextLanguage, DomainError, raw } from '@agenthub/domain';
 import Database from 'better-sqlite3';
 
 // What the MCP server may show one account (ADR-019 item 6, FR-016): the projects this account
@@ -39,12 +39,12 @@ export function contextProjectsFor(dataDirectory: string, profileId: string): Co
   try {
     db = new Database(join(dataDirectory, 'agenthub.sqlite'), { readonly: true, fileMustExist: true });
   } catch {
-    throw new DomainError('NOT_FOUND', 'AgentHub has no data yet. Open AgentHub once.');
+    throw new DomainError('NOT_FOUND', raw('AgentHub has no data yet. Open AgentHub once.'));
   }
   try {
     const { version } = db.prepare('SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations').get() as { version: number };
     if (version < CONTEXT_CATALOG_SCHEMA) {
-      throw new DomainError('UNEXPECTED', 'AgentHub data is from an older version. Open AgentHub once to update it.');
+      throw new DomainError('UNEXPECTED', raw('AgentHub data is from an older version. Open AgentHub once to update it.'));
     }
     const device = db.prepare("SELECT value FROM settings WHERE key = 'device_id'").get() as { value: string } | undefined;
     if (!device) return [];

@@ -2,6 +2,7 @@ import type { ContextTaskDto, NoteWithContentDto, ProjectContextDto, ProjectDto 
 import { useState } from 'react';
 import { api, unwrap } from './api';
 import { CopyButton } from './CopyButton';
+import { useI18n } from './i18n';
 import { Disclosure } from './ui';
 
 interface Props {
@@ -14,7 +15,7 @@ interface Props {
   onError: (message: string | undefined) => void;
 }
 
-export const noteDate = (iso: string): string => new Date(iso).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' });
+export const noteDate = ({ date }: ReturnType<typeof useI18n>, iso: string): string => date(iso, { dateStyle: 'short', timeStyle: 'short' });
 
 export function ProjectHandoffs(props: Props) {
   if (!props.context) return null;
@@ -24,6 +25,7 @@ export function ProjectHandoffs(props: Props) {
 // With documents, handoffs live in each task's Handoff log, written by the agent through
 // context-checkpoint. "Thêm handoff" pastes an entry from a chat that cannot reach the files.
 function TaskHandoffs({ project, context, selectedTask, onPickTask, onReload, onError }: Props & { context: ProjectContextDto }) {
+  const { t } = useI18n();
   const [entry, setEntry] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<string>();
@@ -45,25 +47,20 @@ function TaskHandoffs({ project, context, selectedTask, onPickTask, onReload, on
   }
 
   return (
-    <section className="settings-group" aria-label="Handoff của project">
+    <section className="settings-group" aria-label={t('handoffs.region')}>
       <div className="settings-group-header">
         <div className="grow settings-row-text">
           <h2>Handoff</h2>
-          <p className="hint">
-            Trước khi đổi account, dán lời nhắc này vào phiên đang làm: agent chạy context-checkpoint và ghi handoff vào task trong tài liệu.
-          </p>
+          <p className="hint">{t('handoffs.checkpointHint')}</p>
         </div>
-        <CopyButton text={context.checkpointPrompt} label="Copy lời nhắc checkpoint" />
+        <CopyButton text={context.checkpointPrompt} label={t('handoffs.copyCheckpoint')} />
       </div>
       <div className="settings-row handoff-form">
         {selectedTask ? (
           <div className="stack grow">
-            <p className="hint">
-              Dán handoff mà agent viết trong một chat không đọc được file (tab Chat không có MCP). AgentHub chèn nó lên đầu Handoff log của{' '}
-              <strong>{selectedTask.id}</strong>.
-            </p>
+            <p className="hint">{t('handoffs.pasteHint', { task: selectedTask.id })}</p>
             <textarea
-              aria-label="Nội dung handoff"
+              aria-label={t('handoffs.content')}
               rows={6}
               value={entry}
               placeholder={'### 2026-11-05 14:00 — account / agent\n- **Done:** …\n- **Remaining:** …'}
@@ -74,20 +71,20 @@ function TaskHandoffs({ project, context, selectedTask, onPickTask, onReload, on
             />
             <div className="row">
               <button type="button" className="primary" disabled={saving || entry.trim() === ''} onClick={() => void addHandoff()}>
-                Thêm handoff
+                {t('handoffs.add')}
               </button>
               {saved && (
                 <span className="hint" role="status">
-                  Đã thêm vào {saved}.
+                  {t('handoffs.added', { task: saved })}
                 </span>
               )}
             </div>
           </div>
         ) : (
           <>
-            <p className="hint grow">Để dán một handoff vào tài liệu, chọn task của nó trước.</p>
+            <p className="hint grow">{t('handoffs.pickTaskFirst')}</p>
             <button type="button" onClick={onPickTask}>
-              Chọn task
+              {t('handoffs.pickTask')}
             </button>
           </>
         )}
@@ -99,6 +96,8 @@ function TaskHandoffs({ project, context, selectedTask, onPickTask, onReload, on
 // TDD §7.5: a project without documents moves its context as one summary per handoff. AgentHub
 // keeps them; the next session reads the newest, which the opening prompt points to.
 function NoteHandoffs({ project, context, onReload, onError }: Props & { context: ProjectContextDto }) {
+  const i18n = useI18n();
+  const { t } = i18n;
   const [open, setOpen] = useState<NoteWithContentDto>();
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -134,26 +133,24 @@ function NoteHandoffs({ project, context, onReload, onError }: Props & { context
   }
 
   return (
-    <section className="settings-group" aria-label="Handoff của project">
+    <section className="settings-group" aria-label={t('handoffs.region')}>
       <div className="settings-group-header">
         <div className="grow settings-row-text">
           <h2>Handoff</h2>
-          <p className="hint">
-            Project này không bật tài liệu, nên ngữ cảnh đi qua bản tóm tắt. Trước khi đổi account, dán lời nhắc này vào phiên đang làm; agent lưu bản tóm tắt qua MCP. Lần mở sau, agent đọc bản mới nhất.
-          </p>
+          <p className="hint">{t('handoffs.summaryHint')}</p>
         </div>
-        <CopyButton text={context.checkpointPrompt} label="Copy lời nhắc tóm tắt" />
+        <CopyButton text={context.checkpointPrompt} label={t('handoffs.copySummary')} />
       </div>
-      {handoffs.length === 0 && <p className="settings-empty hint">Chưa có handoff nào.</p>}
+      {handoffs.length === 0 && <p className="settings-empty hint">{t('handoffs.empty')}</p>}
       {handoffs.length > 0 && (
-        <ul className="settings-list" aria-label="Các handoff">
+        <ul className="settings-list" aria-label={t('handoffs.list')}>
           {handoffs.map((note, index) => (
             <li key={note.id} className="note-row" data-testid="project-handoff">
               <button type="button" className="note-summary" aria-expanded={open?.id === note.id} onClick={() => void show(note.id)}>
                 <span className="grow truncate">{note.title}</span>
-                {index === 0 && <span className="badge ok">Mới nhất</span>}
+                {index === 0 && <span className="badge ok">{t('handoffs.newest')}</span>}
                 <span className="hint">
-                  {noteDate(note.createdAt)} · {note.source}
+                  {noteDate(i18n, note.createdAt)} · {note.source}
                 </span>
               </button>
               {open?.id === note.id && <pre className="note-text">{open.content}</pre>}
@@ -161,14 +158,14 @@ function NoteHandoffs({ project, context, onReload, onError }: Props & { context
           ))}
         </ul>
       )}
-      <Disclosure summary="Thêm handoff" className="settings-row handoff-form">
+      <Disclosure summary={t('handoffs.add')} className="settings-row handoff-form">
         <div className="stack">
-          <p className="hint">Dán bản tóm tắt mà agent in ra khi không lưu được qua MCP.</p>
-          <input aria-label="Tiêu đề handoff" placeholder="Tiêu đề (tuỳ chọn)" value={title} onChange={(event) => setTitle(event.target.value)} />
-          <textarea aria-label="Nội dung handoff" rows={6} value={content} onChange={(event) => setContent(event.target.value)} />
+          <p className="hint">{t('handoffs.pasteSummary')}</p>
+          <input aria-label={t('handoffs.titleField')} placeholder={t('handoffs.titlePlaceholder')} value={title} onChange={(event) => setTitle(event.target.value)} />
+          <textarea aria-label={t('handoffs.content')} rows={6} value={content} onChange={(event) => setContent(event.target.value)} />
           <div className="row">
             <button type="button" className="primary" disabled={saving || content.trim() === ''} onClick={() => void save()}>
-              Lưu handoff
+              {t('handoffs.save')}
             </button>
           </div>
         </div>

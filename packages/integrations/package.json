@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@agenthub/application": "*",
-    "@agenthub/domain": "*"
+    "@agenthub/domain": "*",
+    "@agenthub/i18n": "*"
   },
   "devDependencies": {
     "@types/node": "24.10.1"

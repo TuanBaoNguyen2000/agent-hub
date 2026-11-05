@@ -33,7 +33,7 @@ When `context_projects` shows the project with `documents: false`, or the prompt
    - **Git:** branch, last commit, uncommitted files.
    ```
 
-2. **`STATUS.md`** of the workstream: what is in progress, blockers, next step, and the task table. Keep it readable in 30 seconds; it is an entry point, not a log.
+2. **`STATUS.md`** of the workstream: what is in progress, blockers, next step, and the task table. Keep it readable in 30 seconds; it is an entry point, not a log. In the task table, keep the task id (with its title) in the first column and its state in the second, one row per task. Use exactly one of four states, in the documents' language: `To do`, `In progress`, `Blocked`, `Done` (Vietnamese: `Chờ`, `Đang làm`, `Bị chặn`, `Xong`; Korean: `대기`, `진행 중`, `막힘`, `완료`). AgentHub shows and edits this table, and the user may change states or add tasks from AgentHub too. Only write `Done` when the user or a test confirmed the work; an entry "Verified by user in AgentHub" in the handoff log is such a confirmation.
 3. **`DECISIONS.md`**: append (never rewrite) any decision made this session: what, why, which alternatives were rejected.
 4. **`PROJECT_CONTEXT.md`**: add a pitfall only when it applies to the whole project.
 

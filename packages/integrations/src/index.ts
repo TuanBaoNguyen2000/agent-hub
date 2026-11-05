@@ -15,7 +15,8 @@ import type {
   UsageReport,
   UsageWindow,
 } from '@agenthub/application';
-import { type AccountProfile, DomainError, type LaunchOutcome, type Provider } from '@agenthub/domain';
+import { type AccountProfile, DomainError, type LaunchOutcome, type Message, type MessageKey, type Provider, msg, raw } from '@agenthub/domain';
+import { joinMessages } from '@agenthub/i18n';
 
 interface ProviderSpec {
   cli: string;
@@ -65,14 +66,14 @@ type Action =
       inProject: boolean;
       extraEnv: Record<string, string>;
       ensureDirs: string[];
-      manual: string[];
+      manual: Message[];
     }
-  | { kind: 'claude-desktop'; executable: string; cwd: string; bundleId: string; manualPrompt: string }
-  | { kind: 'codex-app'; executable: string; path: string; bundleId: string; manualPrompt: string }
-  | { kind: 'open-app'; bundleId: string; manual: string[] }
-  | { kind: 'open-main'; appName: string; executable: string; manual: string[]; warning: string | null }
-  | { kind: 'focus'; pid: number; manual: string[]; warning: string | null }
-  | { kind: 'instance'; appName: string; envName: string; envValue: string; dataDir: string; executable: string; manual: string[] };
+  | { kind: 'claude-desktop'; executable: string; cwd: string; bundleId: string; manualPrompt: Message }
+  | { kind: 'codex-app'; executable: string; path: string; bundleId: string; manualPrompt: Message }
+  | { kind: 'open-app'; bundleId: string; manual: Message[] }
+  | { kind: 'open-main'; appName: string; executable: string; manual: Message[]; warning: Message | null }
+  | { kind: 'focus'; pid: number; manual: Message[]; warning: Message | null }
+  | { kind: 'instance'; appName: string; envName: string; envValue: string; dataDir: string; executable: string; manual: Message[] };
 
 const VERSION_CONFIRMATION = 'desktop-version-without-evidence';
 
@@ -86,11 +87,11 @@ function sameServer(found: unknown, server: McpServerSpec): boolean {
   return entry.command === server.command && JSON.stringify(entry.args ?? []) === JSON.stringify(server.args);
 }
 
-const MANUAL_PROMPT = 'Tạo cuộc trò chuyện mới và nhập prompt';
-const PASTE_PROMPT = 'Tạo cuộc trò chuyện mới và dán lời nhắc AgentHub đã copy';
+const MANUAL_PROMPT = msg('launch.manual.typePrompt');
+const PASTE_PROMPT = msg('launch.manual.pastePrompt');
 
 // A Desktop app takes no first prompt, so the user pastes the one AgentHub copied.
-const desktopPromptStep = (target: LaunchTarget): string => (target.prompt ? PASTE_PROMPT : MANUAL_PROMPT);
+const desktopPromptStep = (target: LaunchTarget): Message => (target.prompt ? PASTE_PROMPT : MANUAL_PROMPT);
 
 // SPIKE-13: the prompt goes last, and `--add-dir=` keeps the flag from swallowing it.
 // Codex reads outside its workspace already (SPIKE-15), so only Claude is given read-only folders.
@@ -103,7 +104,7 @@ export function cliPromptArgs(prompt: LaunchTarget['prompt'], provider: Provider
 const envFor = (spec: ProviderSpec, profile: AccountProfile): Record<string, string> =>
   profile.cliConfigRoot === null ? {} : { [spec.configEnv]: profile.cliConfigRoot };
 
-function blocked(code: NonNullable<LaunchPlan['blocker']>['code'], message: string): LaunchPlan {
+function blocked(code: NonNullable<LaunchPlan['blocker']>['code'], message: Message): LaunchPlan {
   return { steps: [], requiredConfirmations: [], blocker: { code, message }, action: null };
 }
 
@@ -240,7 +241,7 @@ const USAGE_TIMEOUT_MS = 30_000;
 const SESSION_MINUTES = 300;
 const WEEK_MINUTES = 10_080;
 
-const unavailable = (detail: string): UsageReport => ({ state: 'unavailable', windows: [], plan: null, limitReached: false, detail });
+const unavailable = (detail: Message): UsageReport => ({ state: 'unavailable', windows: [], plan: null, limitReached: false, detail });
 
 // `/usage` is a local command: in print mode it answers without a model turn. Hooks and MCP
 // servers stay off so that reading a number starts nothing of the user's.
@@ -264,10 +265,10 @@ export function parseClaudeUsage(stdout: string): UsageReport {
   try {
     data = JSON.parse(stdout) as Record<string, unknown>;
   } catch {
-    return unavailable('Claude CLI không trả kết quả đọc được cho /usage.');
+    return unavailable(msg('usage.claudeUnreadable'));
   }
   if (data['local_command'] !== 'usage' || data['is_error'] === true || typeof data['result'] !== 'string') {
-    return unavailable('Claude CLI không trả kết quả đọc được cho /usage.');
+    return unavailable(msg('usage.claudeUnreadable'));
   }
   const windows: UsageWindow[] = [];
   for (const match of data['result'].matchAll(CLAUDE_USAGE_LINE)) {
@@ -282,7 +283,7 @@ export function parseClaudeUsage(stdout: string): UsageReport {
       const scope = /^current week \((.+)\)$/i.exec(name)?.[1];
       windows.push({
         kind: 'other',
-        label: scope ? `Tuần, ${scope}` : name,
+        label: scope ? msg('usage.weekScope', { scope }) : raw(name),
         usedPercent,
         windowMinutes: scope ? WEEK_MINUTES : null,
         resetsAt: null,
@@ -291,26 +292,26 @@ export function parseClaudeUsage(stdout: string): UsageReport {
     }
   }
   if (windows.length === 0) {
-    return unavailable('Claude CLI không báo hạn mức. Hạn mức chỉ có với gói thuê bao Claude, không có khi dùng API key.');
+    return unavailable(msg('usage.claudeNoLimits'));
   }
   return { state: 'ok', windows, plan: null, limitReached: windows.some((window) => window.usedPercent >= 100), detail: null };
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
-function codexWindow(raw: unknown, label: string | null): UsageWindow | null {
-  if (!isRecord(raw) || typeof raw['usedPercent'] !== 'number') return null;
-  const minutes = typeof raw['windowDurationMins'] === 'number' ? raw['windowDurationMins'] : null;
-  const resetsAt = typeof raw['resetsAt'] === 'number' ? new Date(raw['resetsAt'] * 1000).toISOString() : null;
+function codexWindow(value: unknown, label: string | null): UsageWindow | null {
+  if (!isRecord(value) || typeof value['usedPercent'] !== 'number') return null;
+  const minutes = typeof value['windowDurationMins'] === 'number' ? value['windowDurationMins'] : null;
+  const resetsAt = typeof value['resetsAt'] === 'number' ? new Date(value['resetsAt'] * 1000).toISOString() : null;
   const kind = label === null && minutes === SESSION_MINUTES ? 'session' : label === null && minutes === WEEK_MINUTES ? 'weekly' : 'other';
-  return { kind, label: kind === 'other' ? (label ?? null) : null, usedPercent: raw['usedPercent'], windowMinutes: minutes, resetsAt, resetsText: null };
+  return { kind, label: kind === 'other' && label !== null ? raw(label) : null, usedPercent: value['usedPercent'], windowMinutes: minutes, resetsAt, resetsText: null };
 }
 
 // The reply of `account/rateLimits/read`. Reset credits, the upsell banner and the account id
 // are left out on purpose.
 export function parseCodexUsage(reply: Record<string, unknown> | null): UsageReport {
   const main = reply?.['rateLimits'];
-  if (!reply || !isRecord(main)) return unavailable('Codex không trả về hạn mức của account này.');
+  if (!reply || !isRecord(main)) return unavailable(msg('usage.codexNoReply'));
   const windows: UsageWindow[] = [];
   const addBucket = (bucket: Record<string, unknown>, label: string | null): void => {
     for (const key of ['primary', 'secondary']) {
@@ -330,7 +331,7 @@ export function parseCodexUsage(reply: Record<string, unknown> | null): UsageRep
     reply['ordinaryUsageAllowed'] === false ||
     windows.some((window) => window.usedPercent >= 100);
   const plan = typeof main['planType'] === 'string' && main['planType'] !== 'unknown' ? main['planType'] : null;
-  if (windows.length === 0 && !reached) return { ...unavailable('Codex không báo hạn mức theo thời gian cho account này.'), plan };
+  if (windows.length === 0 && !reached) return { ...unavailable(msg('usage.codexNoWindows')), plan };
   return { state: 'ok', windows, plan, limitReached: reached, detail: null };
 }
 
@@ -338,7 +339,7 @@ async function readCodexUsage(platform: PlatformPort, executable: string, extraE
   const tool = platform.spawnTool(executable, ['app-server'], { extraEnv });
   try {
     const server = codexAppServer(tool);
-    if (!(await server.initialize())) return unavailable('Không khởi động được Codex app-server.');
+    if (!(await server.initialize())) return unavailable(msg('usage.codexServerFailed'));
     return parseCodexUsage(await server.request('account/rateLimits/read', undefined));
   } finally {
     tool.kill();
@@ -422,12 +423,11 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
   }
 
   // The documents sit outside the project, where a Desktop agent may need to ask before reading.
-  function outsideWarning(target: LaunchTarget): string | null {
-    const warnings = [
-      target.prompt?.addDir ? 'Folder tài liệu nằm ngoài project, nên agent trong app có thể hỏi quyền trước khi đọc nó.' : null,
-      target.prompt?.readDirs?.length ? 'Agent trong app sẽ hỏi quyền đọc file transcript của phiên cũ, vì file nằm ngoài project.' : null,
-    ].filter(Boolean);
-    return warnings.length > 0 ? warnings.join(' ') : null;
+  function outsideWarning(target: LaunchTarget): Message | null {
+    return joinMessages([
+      target.prompt?.addDir ? msg('launch.warning.docsOutside') : null,
+      target.prompt?.readDirs?.length ? msg('launch.warning.transcriptOutside') : null,
+    ]);
   }
 
   // --- MCP registration (ADR-019 item 6; SPIKE-10, 11, 12) ---
@@ -476,32 +476,37 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
   async function mcpRegistration(profile: AccountProfile, server: McpServerSpec, cliOverride: string | null): Promise<McpRegistration> {
     const spec = PROVIDERS[profile.provider];
     const pending: string[] = [];
-    const problems: string[] = [];
+    const registered: string[] = [];
+    const problems: Message[] = [];
+    const note = (path: string, state: ServerState): void => {
+      if (state !== 'registered') pending.push(path);
+      if (state !== 'missing') registered.push(path);
+    };
     if (profile.provider === 'claude') {
       const path = claudeConfigFile(profile);
       const state = jsonState(path, server);
-      if (state === null) problems.push(`${path} không đọc được dưới dạng JSON, nên AgentHub không đụng tới.`);
-      else if (state !== 'registered') pending.push(path);
+      if (state === null) problems.push(msg('mcp.unreadableConfig', { path }));
+      else note(path, state);
     } else {
       const executable = await platform.findCli(spec.cli, cliOverride);
-      if (!executable) problems.push(`Không tìm thấy ${spec.label} để đăng ký MCP.`);
-      else if ((await codexState(profile, server, executable)) !== 'registered') pending.push(codexConfigFile(profile));
+      if (!executable) problems.push(msg('mcp.cliMissing', { cli: spec.label }));
+      else note(codexConfigFile(profile), await codexState(profile, server, executable));
     }
     const desktop = desktopConfigFile(profile);
     if (desktop) {
       const state = jsonState(desktop, server);
-      if (state === null) problems.push(`${desktop} không đọc được dưới dạng JSON, nên AgentHub không đụng tới.`);
-      else if (state !== 'registered') pending.push(desktop);
+      if (state === null) problems.push(msg('mcp.unreadableConfig', { path: desktop }));
+      else note(desktop, state);
     }
     if (profile.provider === 'claude' && pending.includes(claudeConfigFile(profile)) && !(await platform.findCli(spec.cli, cliOverride))) {
-      problems.push(`Không tìm thấy ${spec.label} để đăng ký MCP.`);
+      problems.push(msg('mcp.cliMissing', { cli: spec.label }));
     }
-    return { pending, problems };
+    return { pending, registered, problems };
   }
 
-  async function runOrFail(executable: string, args: string[], extraEnv: Record<string, string>, what: string): Promise<void> {
+  async function runOrFail(executable: string, args: string[], extraEnv: Record<string, string>, failure: MessageKey): Promise<void> {
     const result = await platform.run(executable, args, { extraEnv, timeoutMs: 30_000 });
-    if (result.exit !== 0) throw new DomainError('LAUNCH_FAILED', `Không ${what}: ${(result.stderr || result.stdout).trim().split('\n')[0] ?? ''}`);
+    if (result.exit !== 0) throw new DomainError('LAUNCH_FAILED', failure, { output: (result.stderr || result.stdout).trim().split('\n')[0] ?? '' });
   }
 
   // Official commands for the CLI configs; Desktop has none, so its JSON is merged by hand.
@@ -513,57 +518,90 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
     if (profile.provider === 'claude') {
       const state = jsonState(claudeConfigFile(profile), server);
       if (state !== 'registered') {
-        if (!executable) throw new DomainError('BIN_NOT_FOUND', `Không tìm thấy ${spec.label} để đăng ký MCP.`);
-        if (state === 'different') await runOrFail(executable, ['mcp', 'remove', '-s', 'user', MCP_NAME], extraEnv, 'gỡ được MCP cũ');
+        if (!executable) throw new DomainError('BIN_NOT_FOUND', 'mcp.cliMissing', { cli: spec.label });
+        if (state === 'different') await runOrFail(executable, ['mcp', 'remove', '-s', 'user', MCP_NAME], extraEnv, 'mcp.failed.removeOld');
         const json = JSON.stringify({ type: 'stdio', command: server.command, args: server.args });
-        await runOrFail(executable, ['mcp', 'add-json', '-s', 'user', MCP_NAME, json], extraEnv, 'đăng ký được MCP cho Claude');
+        await runOrFail(executable, ['mcp', 'add-json', '-s', 'user', MCP_NAME, json], extraEnv, 'mcp.failed.addClaude');
       }
     } else {
-      if (!executable) throw new DomainError('BIN_NOT_FOUND', `Không tìm thấy ${spec.label} để đăng ký MCP.`);
+      if (!executable) throw new DomainError('BIN_NOT_FOUND', 'mcp.cliMissing', { cli: spec.label });
       if ((await codexState(profile, server, executable)) !== 'registered') {
-        await runOrFail(executable, ['mcp', 'add', MCP_NAME, '--', server.command, ...server.args], extraEnv, 'đăng ký được MCP cho Codex');
+        await runOrFail(executable, ['mcp', 'add', MCP_NAME, '--', server.command, ...server.args], extraEnv, 'mcp.failed.addCodex');
       }
     }
     const desktop = desktopConfigFile(profile);
     if (desktop && jsonState(desktop, server) !== 'registered') {
       const data = jsonConfig(desktop);
-      if (data === null) throw new DomainError('LAUNCH_FAILED', `${desktop} không đọc được dưới dạng JSON.`);
+      if (data === null) throw new DomainError('LAUNCH_FAILED', 'mcp.unreadableJson', { path: desktop });
       const servers = typeof data['mcpServers'] === 'object' && data['mcpServers'] !== null ? (data['mcpServers'] as Record<string, unknown>) : {};
       data['mcpServers'] = { ...servers, [MCP_NAME]: { command: server.command, args: server.args } };
       platform.writeTextFile(desktop, `${JSON.stringify(data, null, 2)}\n`);
     }
   }
 
+  // The same official commands in reverse; only AgentHub's own entry is removed.
+  async function unregisterMcp(profile: AccountProfile, cliOverride: string | null): Promise<void> {
+    const spec = PROVIDERS[profile.provider];
+    const extraEnv = envFor(spec, profile);
+    if (profile.provider === 'claude') {
+      const data = jsonConfig(claudeConfigFile(profile));
+      if (data === null) throw new DomainError('LAUNCH_FAILED', 'mcp.unreadableJson', { path: claudeConfigFile(profile) });
+      const servers = data['mcpServers'];
+      if (typeof servers === 'object' && servers !== null && MCP_NAME in servers) {
+        const executable = await platform.findCli(spec.cli, cliOverride);
+        if (!executable) throw new DomainError('BIN_NOT_FOUND', 'mcp.cliMissingRemove', { cli: spec.label });
+        await runOrFail(executable, ['mcp', 'remove', '-s', 'user', MCP_NAME], extraEnv, 'mcp.failed.removeClaude');
+      }
+    } else {
+      const executable = await platform.findCli(spec.cli, cliOverride);
+      if (!executable) throw new DomainError('BIN_NOT_FOUND', 'mcp.cliMissingRemove', { cli: spec.label });
+      const found = await platform.run(executable, ['mcp', 'get', MCP_NAME, '--json'], { extraEnv, timeoutMs: 20_000 });
+      if (found.exit === 0) await runOrFail(executable, ['mcp', 'remove', MCP_NAME], extraEnv, 'mcp.failed.removeCodex');
+    }
+    const desktop = desktopConfigFile(profile);
+    if (desktop) {
+      const data = jsonConfig(desktop);
+      if (data === null) throw new DomainError('LAUNCH_FAILED', 'mcp.unreadableJson', { path: desktop });
+      const servers = data['mcpServers'];
+      if (typeof servers === 'object' && servers !== null && MCP_NAME in servers) {
+        const rest = { ...(servers as Record<string, unknown>) };
+        delete rest[MCP_NAME];
+        data['mcpServers'] = rest;
+        platform.writeTextFile(desktop, `${JSON.stringify(data, null, 2)}\n`);
+      }
+    }
+  }
+
   async function planCli(target: LaunchTarget, spec: ProviderSpec): Promise<LaunchPlan> {
     const executable = await platform.findCli(spec.cli, target.cliOverride);
-    if (!executable) return blocked('BIN_NOT_FOUND', `Không tìm thấy ${spec.label}. Hãy cài đặt, hoặc chỉ đường dẫn trong Cài đặt.`);
+    if (!executable) return blocked('BIN_NOT_FOUND', msg('launch.blocker.cliMissing', { cli: spec.label }));
 
     const extraEnv = envFor(spec, target.profile);
     const root = target.profile.cliConfigRoot;
     const steps: PlannedStep[] = [];
     if (root !== null && platform.pathKind(root) === 'missing') {
-      steps.push({ label: 'Tạo thư mục cấu hình của account', execution: 'automatic' });
+      steps.push({ label: msg('launch.step.createConfig'), execution: 'automatic' });
     }
     const inProject = target.projectPath !== null;
     steps.push({
-      label: inProject ? `Mở ${spec.label} trong Terminal, tại folder của project` : `Mở ${spec.label} trong Terminal, tại thư mục home`,
+      label: msg(inProject ? 'launch.step.terminalProject' : 'launch.step.terminalHome', { cli: spec.label }),
       execution: 'automatic',
     });
 
     const { login } = root !== null && platform.pathKind(root) === 'missing'
       ? { login: 'logged_out' as const }
       : await readLogin(platform, target.profile.provider, executable, extraEnv);
-    if (login !== 'logged_in') steps.push({ label: 'Đăng nhập khi CLI yêu cầu', execution: 'manual' });
-    const manual = ['Kiểm tra đúng account bằng lệnh /status'];
+    if (login !== 'logged_in') steps.push({ label: msg('launch.step.signInWhenAsked'), execution: 'manual' });
+    const manual: Message[] = [msg('launch.manual.checkStatus')];
     if (target.prompt) {
       steps.push({
-        label: target.prompt.addDir ? 'Gửi lời nhắc của AgentHub làm prompt đầu tiên, cho phép dùng folder tài liệu' : 'Gửi lời nhắc của AgentHub làm prompt đầu tiên',
+        label: msg(target.prompt.addDir ? 'launch.step.sendPromptWithDocs' : 'launch.step.sendPrompt'),
         execution: 'automatic',
       });
       // Claude holds the prompt behind its trust question for a new folder (SPIKE-13).
-      if (target.profile.provider === 'claude') manual.unshift('Nếu Claude hỏi có tin tưởng folder này không, chọn Yes để lời nhắc chạy');
+      if (target.profile.provider === 'claude') manual.unshift(msg('launch.manual.trustFolder'));
     } else {
-      manual.push('Nhập prompt để bắt đầu');
+      manual.push(msg('launch.manual.typeToStart'));
     }
     for (const label of manual) steps.push({ label, execution: 'manual' });
 
@@ -582,7 +620,7 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
 
   async function planDesktop(target: LaunchTarget, spec: ProviderSpec): Promise<LaunchPlan> {
     const app = await platform.findApp(spec.appName);
-    if (!app) return blocked('APP_NOT_FOUND', `Không tìm thấy ${spec.desktopLabel} trong thư mục Applications.`);
+    if (!app) return blocked('APP_NOT_FOUND', msg('launch.blocker.appMissing', { app: spec.desktopLabel }));
 
     const { profile } = target;
     if (profile.desktopDataDir !== null && profile.cliConfigRoot !== null) {
@@ -590,17 +628,12 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
     }
 
     const inProject = target.projectPath !== null;
-    const manualFolder = 'Chọn folder của project trong app';
-    const manualAccount = 'Kiểm tra đúng account trong app; nếu sai, đăng xuất rồi đăng nhập lại trong app';
+    const manualFolder = msg('launch.manual.pickFolder');
+    const manualAccount = msg('launch.manual.checkAccountSwitch');
     const manualPrompt = desktopPromptStep(target);
     const manual = inProject ? [manualFolder, manualAccount, manualPrompt] : [manualAccount, manualPrompt];
     const openWarning =
-      [
-        profile.cliConfigRoot === null ? null : 'Account này chưa có cửa sổ Desktop riêng, nên app vẫn dùng account đang đăng nhập.',
-        outsideWarning(target),
-      ]
-        .filter(Boolean)
-        .join(' ') || undefined;
+      joinMessages([profile.cliConfigRoot === null ? null : msg('launch.warning.noOwnWindow'), outsideWarning(target)]) ?? undefined;
 
     // macOS hands `open -b`, links and so `claude --desktop` to the copy that started first. If
     // that is another account's window, they would all land there instead of the main app.
@@ -609,12 +642,12 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
       const running = instances.find((instance) => instance.dataDir === null);
       // Without a project there is no folder to send astray, so nothing to warn about.
       const warning = inProject
-        ? `Cửa sổ ${spec.desktopLabel} của account khác đã mở từ trước, nên lệnh mở folder sẽ đi nhầm sang đó. Hãy tự chọn folder trong app chính.`
+        ? msg('launch.warning.otherWindowFirst', { app: spec.desktopLabel })
         : null;
-      const stepWarning = [openWarning, warning].filter(Boolean).join(' ');
+      const stepWarning = joinMessages([openWarning ?? null, warning]);
       const steps: PlannedStep[] = [
         {
-          label: running ? `Chuyển sang ${spec.desktopLabel} chính, đang mở sẵn` : `Mở ${spec.desktopLabel} chính, bên cạnh cửa sổ đang mở`,
+          label: msg(running ? 'launch.step.focusMain' : 'launch.step.openMainBeside', { app: spec.desktopLabel }),
           execution: 'conditional',
           ...(stepWarning ? { warning: stepWarning } : {}),
         },
@@ -628,7 +661,7 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
 
     if (target.projectPath === null) {
       const steps: PlannedStep[] = [
-        { label: `Mở ${spec.desktopLabel}`, execution: 'automatic', ...(openWarning ? { warning: openWarning } : {}) },
+        { label: msg('launch.step.openApp', { app: spec.desktopLabel }), execution: 'automatic', ...(openWarning ? { warning: openWarning } : {}) },
         ...manual.map((label): PlannedStep => ({ label, execution: 'manual' })),
       ];
       return { steps, requiredConfirmations: [], blocker: null, action: { kind: 'open-app', bundleId: spec.bundleId, manual } };
@@ -638,8 +671,8 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
 
     if (!executable) {
       const steps: PlannedStep[] = [
-        { label: `Mở ${spec.desktopLabel}`, execution: 'automatic', ...(openWarning ? { warning: openWarning } : {}) },
-        { label: manualFolder, execution: 'manual', warning: `Không tìm thấy ${spec.label}, nên không tự mở được folder.` },
+        { label: msg('launch.step.openApp', { app: spec.desktopLabel }), execution: 'automatic', ...(openWarning ? { warning: openWarning } : {}) },
+        { label: manualFolder, execution: 'manual', warning: msg('launch.warning.noCliForFolder', { cli: spec.label }) },
         { label: manualAccount, execution: 'manual' },
         { label: manualPrompt, execution: 'manual' },
       ];
@@ -649,7 +682,7 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
 
     const steps: PlannedStep[] = [
       {
-        label: `Yêu cầu ${spec.desktopLabel} mở folder của project`,
+        label: msg('launch.step.askAppOpenFolder', { app: spec.desktopLabel }),
         execution: 'conditional',
         ...(openWarning ? { warning: openWarning } : {}),
       },
@@ -670,22 +703,22 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
   ): Promise<LaunchPlan> {
     const instances = await platform.runningInstances(app.executable);
     const running = instances.find((instance) => instance.dataDir === app.dataDir);
-    const manualFolder = 'Chọn folder của project trong cửa sổ này; lệnh mở folder chỉ đi tới app chính';
-    const manualAccount = 'Kiểm tra đúng account trong cửa sổ này';
+    const manualFolder = msg('launch.manual.pickFolderInWindow');
+    const manualAccount = msg('launch.manual.checkAccountInWindow');
     const manualPrompt = desktopPromptStep(target);
     const steps: PlannedStep[] = [];
     const confirmations: RequiredConfirmation[] = [];
     const hasEvidence = app.version !== null && spec.evidencedDesktopVersions.includes(app.version);
 
     if (running) {
-      steps.push({ label: `Chuyển sang cửa sổ ${spec.desktopLabel} của account này, đang mở sẵn`, execution: 'conditional' });
+      steps.push({ label: msg('launch.step.focusInstance', { app: spec.desktopLabel }), execution: 'conditional' });
     } else {
       const warning = outsideWarning(target);
-      steps.push({ label: `Mở cửa sổ ${spec.desktopLabel} riêng của account`, execution: 'conditional', ...(warning ? { warning } : {}) });
+      steps.push({ label: msg('launch.step.openInstance', { app: spec.desktopLabel }), execution: 'conditional', ...(warning ? { warning } : {}) });
       if (!hasEvidence) {
         confirmations.push({
           id: VERSION_CONFIRMATION,
-          label: `${spec.desktopLabel} ${app.version ?? 'không rõ version'} chưa được kiểm chứng cho cửa sổ riêng, cách mở này không có trong tài liệu chính thức nên có thể không hoạt động. Vẫn thử mở? Nếu không, hãy đăng xuất rồi đăng nhập lại trong app chính.`,
+          label: msg('launch.confirm.unverifiedVersion', { app: spec.desktopLabel, version: app.version ?? msg('launch.unknownVersion') }),
         });
       }
       // A sign-in callback is a link, so it goes to whichever copy started first (SPIKE-07).
@@ -696,9 +729,9 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
         (platform.pathKind(app.dataDir) === 'missing' || platform.isEmptyDirectory(app.dataDir))
       ) {
         steps.push({
-          label: 'Đăng nhập account này trong cửa sổ mới',
+          label: msg('launch.step.signInNewWindow'),
           execution: 'manual',
-          warning: `Đây là lần đầu mở cửa sổ này, và Desktop có đăng nhập riêng với CLI. Hãy tự tắt các cửa sổ ${spec.desktopLabel} khác trước khi đăng nhập, vì trình duyệt sẽ trả kết quả đăng nhập về cửa sổ đã mở trước.`,
+          warning: msg('launch.warning.firstWindowSignIn', { app: spec.desktopLabel }),
         });
       }
     }
@@ -720,16 +753,16 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
   }
 
   async function launchClaudeDesktop(action: Extract<Action, { kind: 'claude-desktop' }>): Promise<LaunchOutcome> {
-    const manualAccount = 'Kiểm tra đúng account trong app';
+    const manualAccount = msg('launch.manual.checkAccount');
     const { manualPrompt } = action;
-    const fallback = async (warning: string): Promise<LaunchOutcome> => {
+    const fallback = async (warning: Message): Promise<LaunchOutcome> => {
       const appOpened = await platform.openApp(action.bundleId);
-      if (!appOpened) throw new DomainError('LAUNCH_FAILED', 'Không mở được Claude Desktop.');
+      if (!appOpened) throw new DomainError('LAUNCH_FAILED', 'launch.failed.claudeDesktop');
       return {
         appOpened,
         workspace: 'manual',
         sessionStarted: false,
-        userActionRequired: ['Chọn folder của project trong app', manualAccount, manualPrompt],
+        userActionRequired: [msg('launch.manual.pickFolder'), manualAccount, manualPrompt],
         warnings: [warning],
       };
     };
@@ -737,21 +770,21 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
     // --desktop needs a signed-in CLI, and a login was once lost right after it (SPIKE-09).
     const before = await readLogin(platform, 'claude', action.executable, {});
     if (before.login !== 'logged_in') {
-      return fallback('Claude CLI chưa đăng nhập ở profile mặc định, nên không tự mở được folder.');
+      return fallback(msg('launch.warning.claudeSignedOut'));
     }
     const result = await platform.runInPty(action.executable, ['--desktop'], { cwd: action.cwd, timeoutMs: 30_000 });
-    if (result.exit !== 0) return fallback('Claude CLI từ chối lệnh mở folder.');
+    if (result.exit !== 0) return fallback(msg('launch.warning.cliRefused', { cli: 'Claude CLI' }));
 
     const after = await readLogin(platform, 'claude', action.executable, {});
     const warnings =
       after.login === 'logged_in'
         ? []
-        : ['Claude CLI mất đăng nhập ngay sau khi mở Desktop. Hãy đăng nhập lại profile mặc định.'];
+        : [msg('launch.warning.claudeLostLogin')];
     return {
       appOpened: true,
       workspace: 'requested',
       sessionStarted: false,
-      userActionRequired: ['Kiểm tra app đã mở đúng folder', manualAccount, manualPrompt],
+      userActionRequired: [msg('launch.manual.checkFolder'), manualAccount, manualPrompt],
       warnings,
     };
   }
@@ -766,7 +799,7 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
           cwd: action.cwd,
           extraEnv: action.extraEnv,
         });
-        if (!started) throw new DomainError('LAUNCH_FAILED', 'Không mở được Terminal.');
+        if (!started) throw new DomainError('LAUNCH_FAILED', 'launch.failed.terminal');
         return {
           appOpened: true,
           workspace: action.inProject ? 'opened' : 'none',
@@ -779,31 +812,31 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
         return launchClaudeDesktop(action);
       case 'codex-app': {
         const result = await platform.run(action.executable, ['app', action.path], { timeoutMs: 30_000 });
-        const manual = ['Kiểm tra đúng account trong app', action.manualPrompt];
+        const manual = [msg('launch.manual.checkAccount'), action.manualPrompt];
         if (result.exit === 0) {
           return {
             appOpened: true,
             workspace: 'requested',
             sessionStarted: false,
-            userActionRequired: ['Kiểm tra app đã mở đúng folder', ...manual],
+            userActionRequired: [msg('launch.manual.checkFolder'), ...manual],
             warnings: [],
           };
         }
-        if (!(await platform.openApp(action.bundleId))) throw new DomainError('LAUNCH_FAILED', 'Không mở được Codex Desktop.');
+        if (!(await platform.openApp(action.bundleId))) throw new DomainError('LAUNCH_FAILED', 'launch.failed.codexDesktop');
         return {
           appOpened: true,
           workspace: 'manual',
           sessionStarted: false,
-          userActionRequired: ['Chọn folder của project trong app', ...manual],
-          warnings: ['Codex CLI từ chối lệnh mở folder.'],
+          userActionRequired: [msg('launch.manual.pickFolder'), ...manual],
+          warnings: [msg('launch.warning.cliRefused', { cli: 'Codex CLI' })],
         };
       }
       case 'open-app': {
-        if (!(await platform.openApp(action.bundleId))) throw new DomainError('LAUNCH_FAILED', 'Không mở được app.');
+        if (!(await platform.openApp(action.bundleId))) throw new DomainError('LAUNCH_FAILED', 'launch.failed.app');
         return { appOpened: true, workspace: 'manual', sessionStarted: false, userActionRequired: action.manual, warnings: [] };
       }
       case 'open-main': {
-        if (!(await platform.openDefaultInstance(action))) throw new DomainError('LAUNCH_FAILED', 'Không thấy app chính khởi động.');
+        if (!(await platform.openDefaultInstance(action))) throw new DomainError('LAUNCH_FAILED', 'launch.failed.mainApp');
         return {
           appOpened: true,
           workspace: 'manual',
@@ -815,14 +848,14 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
       case 'focus': {
         // Not worth failing the launch: the window is open, only bringing it forward did not work.
         const focused = await platform.focusProcess(action.pid);
-        const warnings = [...(action.warning ? [action.warning] : []), ...(focused ? [] : ['Không tự chuyển được sang cửa sổ này; hãy chọn nó trên Dock.'])];
+        const warnings = [...(action.warning ? [action.warning] : []), ...(focused ? [] : [msg('launch.warning.focusFailed')])];
         return { appOpened: true, workspace: 'manual', sessionStarted: false, userActionRequired: action.manual, warnings };
       }
       case 'instance': {
         platform.ensureDirectory(action.envValue);
         platform.ensureDirectory(action.dataDir);
         const started = await platform.openInstance(action);
-        if (!started) throw new DomainError('LAUNCH_FAILED', 'Không thấy instance mới khởi động.');
+        if (!started) throw new DomainError('LAUNCH_FAILED', 'launch.failed.instance');
         return { appOpened: true, workspace: 'manual', sessionStarted: false, userActionRequired: action.manual, warnings: [] };
       }
     }
@@ -831,7 +864,7 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
   return {
     async plan(target) {
       if (!platform.supported) {
-        return blocked('LAUNCH_UNSUPPORTED', 'Launcher hiện chỉ hỗ trợ macOS.');
+        return blocked('LAUNCH_UNSUPPORTED', msg('launch.macOnly'));
       }
       const spec = PROVIDERS[target.profile.provider];
       return target.mode === 'cli' ? planCli(target, spec) : planDesktop(target, spec);
@@ -841,6 +874,7 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
 
     mcpRegistration,
     registerMcp,
+    unregisterMcp,
 
     // SPIKE-14: each provider reads its account's own folder; the default account uses home.
     skillsDirectory(profile) {
@@ -875,7 +909,7 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
         cliPath,
         cliVersion,
         login: login.login,
-        loginDetail: login.detail,
+        loginDetail: login.detail === null ? null : raw(login.detail),
         accountEmail: login.email,
         accountFingerprint: login.fingerprint,
         desktopInstalled: app !== null,
@@ -885,10 +919,10 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
     },
 
     async usage(profile, cliOverride) {
-      if (!platform.supported) return unavailable('Launcher hiện chỉ hỗ trợ macOS.');
+      if (!platform.supported) return unavailable(msg('launch.macOnly'));
       const spec = PROVIDERS[profile.provider];
       const executable = await platform.findCli(spec.cli, cliOverride);
-      if (!executable) return unavailable(`Không tìm thấy ${spec.label}.`);
+      if (!executable) return unavailable(msg('error.cliNotFound', { cli: spec.label }));
       const root = profile.cliConfigRoot;
       // Asking a CLI with no folder yet would create one; there is no login in it anyway.
       const signedOut: UsageReport = { state: 'logged_out', windows: [], plan: null, limitReached: false, detail: null };
@@ -903,15 +937,15 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
         extraEnv,
         timeoutMs: USAGE_TIMEOUT_MS,
       });
-      if (result.timedOut) return unavailable('Claude CLI không trả lời /usage kịp thời.');
+      if (result.timedOut) return unavailable(msg('usage.claudeTimeout'));
       return parseClaudeUsage(result.stdout);
     },
 
     async startLogin(profile, cliOverride) {
-      if (!platform.supported) throw new DomainError('LAUNCH_UNSUPPORTED', 'Launcher hiện chỉ hỗ trợ macOS.');
+      if (!platform.supported) throw new DomainError('LAUNCH_UNSUPPORTED', 'launch.macOnly');
       const spec = PROVIDERS[profile.provider];
       const executable = await platform.findCli(spec.cli, cliOverride);
-      if (!executable) throw new DomainError('BIN_NOT_FOUND', `Không tìm thấy ${spec.label}.`);
+      if (!executable) throw new DomainError('BIN_NOT_FOUND', 'error.cliNotFound', { cli: spec.label });
       if (profile.cliConfigRoot !== null) platform.ensureDirectory(profile.cliConfigRoot);
       const cwd = profile.cliConfigRoot ?? platform.homeDirectory();
       const start = profile.provider === 'claude' ? startClaudeLogin : startCodexLogin;
@@ -926,10 +960,10 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
     },
 
     async openLogin(profile, cliOverride) {
-      if (!platform.supported) throw new DomainError('LAUNCH_UNSUPPORTED', 'Launcher hiện chỉ hỗ trợ macOS.');
+      if (!platform.supported) throw new DomainError('LAUNCH_UNSUPPORTED', 'launch.macOnly');
       const spec = PROVIDERS[profile.provider];
       const executable = await platform.findCli(spec.cli, cliOverride);
-      if (!executable) throw new DomainError('BIN_NOT_FOUND', `Không tìm thấy ${spec.label}.`);
+      if (!executable) throw new DomainError('BIN_NOT_FOUND', 'error.cliNotFound', { cli: spec.label });
       if (profile.cliConfigRoot !== null) platform.ensureDirectory(profile.cliConfigRoot);
       const started = await platform.openTerminal({
         executable,
@@ -937,7 +971,7 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
         cwd: profile.cliConfigRoot ?? platform.homeDirectory(),
         extraEnv: envFor(spec, profile),
       });
-      if (!started) throw new DomainError('LAUNCH_FAILED', 'Không mở được Terminal.');
+      if (!started) throw new DomainError('LAUNCH_FAILED', 'launch.failed.terminal');
     },
   };
 }

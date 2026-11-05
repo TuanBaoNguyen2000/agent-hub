@@ -1,6 +1,6 @@
 import type { LaunchService, Workspace } from '@agenthub/application';
 import { IpcChannel, type IpcErrorDto, type IpcInput, type IpcOutput, type IpcResult, ipcInput } from '@agenthub/contracts';
-import { type AccountProfile, DomainError, accountName } from '@agenthub/domain';
+import { type AccountProfile, DomainError, accountName, msg, raw } from '@agenthub/domain';
 import { type IpcMainInvokeEvent, app, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron';
 
 interface IpcDependencies {
@@ -14,10 +14,10 @@ interface IpcDependencies {
 const profileDto = (profile: AccountProfile) => ({ ...profile, name: accountName(profile) });
 
 function toErrorDto(error: unknown): IpcErrorDto {
-  if (error instanceof DomainError) return { code: error.code, message: error.message };
+  if (error instanceof DomainError) return { code: error.code, message: error.message, detail: error.detail };
   // Paths and driver details stay in the log, not in the UI.
   console.error(error);
-  return { code: 'UNEXPECTED', message: 'Đã xảy ra lỗi không mong đợi.' };
+  return { code: 'UNEXPECTED', message: 'Unexpected error.', detail: msg('error.unexpected') };
 }
 
 export function registerIpcHandlers({ workspace, launching, engineStatus, dataDirectory, isTrustedSender }: IpcDependencies): void {
@@ -27,11 +27,11 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
   ): void {
     ipcMain.handle(channel, async (event, payload: unknown): Promise<IpcResult<IpcOutput[C]>> => {
       if (!isTrustedSender(event)) {
-        return { ok: false, error: { code: 'VALIDATION_FAILED', message: 'Yêu cầu không hợp lệ.' } };
+        return { ok: false, error: { code: 'VALIDATION_FAILED', message: 'Invalid request.', detail: msg('error.badRequest') } };
       }
       const parsed = ipcInput[channel].safeParse(payload);
       if (!parsed.success) {
-        return { ok: false, error: { code: 'VALIDATION_FAILED', message: 'Dữ liệu gửi lên không hợp lệ.' } };
+        return { ok: false, error: { code: 'VALIDATION_FAILED', message: 'Invalid payload.', detail: msg('error.badPayload') } };
       }
       try {
         return { ok: true, data: await run(parsed.data as IpcInput<C>) };
@@ -89,7 +89,7 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
   });
   handle(IpcChannel.projectsOpenContextFolder, async ({ id }) => {
     const failure = await shell.openPath(workspace.contextFolder(id));
-    if (failure) throw new DomainError('UNEXPECTED', `Không mở được folder tài liệu: ${failure}`);
+    if (failure) throw new DomainError('UNEXPECTED', 'main.openDocsFailed', { reason: raw(failure) });
     return null;
   });
   handle(IpcChannel.settingsGet, () => settingsDto(workspace.getSettings()));
@@ -155,7 +155,7 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
   });
   handle(IpcChannel.launchPlan, async (request) => {
     // Explicit fields: the plan's internal action holds commands and stays in Main.
-    const { plan, permission, projectName, profileAlias, prompt, transcript } = await launching.preview(request);
+    const { plan, permission, projectName, profileAlias, prompt, transcript, missingTools } = await launching.preview(request);
     return {
       steps: plan.steps,
       requiredConfirmations: plan.requiredConfirmations,
@@ -174,6 +174,7 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
         otherProvider: transcript.otherProvider,
         checkpointAt: transcript.checkpointAt,
       },
+      missingTools,
     };
   });
   handle(IpcChannel.launchExecute, async ({ request, confirmations }) => {
@@ -193,4 +194,33 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
     return { steps, requiredConfirmations, blocker };
   });
   handle(IpcChannel.launchAccountExecute, ({ request, confirmations }) => launching.openAccount(request, confirmations));
+
+  handle(IpcChannel.documentsList, ({ id }) => workspace.listDocuments(id));
+  handle(IpcChannel.documentsRead, ({ id, path }) => workspace.readDocument(id, path));
+  handle(IpcChannel.documentsChecksum, ({ id, path }) => workspace.documentChecksum(id, path));
+  handle(IpcChannel.documentsWrite, (input) => workspace.writeDocument(input));
+  handle(IpcChannel.documentsOpen, async ({ id, path }) => {
+    // Resolved inside the documents folder first, so only a document there can be opened.
+    const failure = await shell.openPath(workspace.documentPath(id, path));
+    if (failure) throw new DomainError('UNEXPECTED', 'main.openDocsFailed', { reason: raw(failure) });
+    return null;
+  });
+  handle(IpcChannel.tasksRead, ({ id, ref }) => workspace.readTask(id, ref));
+  handle(IpcChannel.tasksSave, (input) => workspace.saveTask(input));
+  handle(IpcChannel.tasksSetState, (input) => workspace.setTaskState(input));
+  handle(IpcChannel.tasksCreate, (input) => workspace.createTask(input));
+
+  const { tools } = launching;
+  handle(IpcChannel.toolsOverview, () => tools.view());
+  handle(IpcChannel.toolsInstall, ({ profileId, tool }) => tools.install(profileId, tool));
+  handle(IpcChannel.toolsUninstall, ({ profileId, tool }) => tools.uninstall(profileId, tool));
+  handle(IpcChannel.toolsSetAutoInstall, ({ profileId, on }) => tools.setAutoInstall(profileId, on));
+  handle(IpcChannel.toolsAddSkill, ({ path }) => {
+    tools.addSkill(path);
+    return tools.view();
+  });
+  handle(IpcChannel.toolsRemoveSkill, ({ name }) => {
+    tools.removeSkill(name);
+    return tools.view();
+  });
 }

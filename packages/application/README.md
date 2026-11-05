@@ -1,6 +1,6 @@
 # Application
 
-**Status:** Có ports, `createWorkspace` và `createLaunchService` cho Project, cài đặt tài liệu context, settings, profile, quyền và launch. Launch service chọn lời nhắc (`context-init`/`context-resume`) và cài skill cho account khi project bật tài liệu. Đăng ký MCP cùng lúc với skill. Đọc task và Git cho trang project, quy tắc cảnh báo, chọn task khi mở, "Thêm handoff". Handoff cho project không có tài liệu và Chat rời. Đề xuất fallback transcript khi có phiên mới hơn checkpoint.
+**Status:** Có ports, `createWorkspace` và `createLaunchService` cho Project, cài đặt tài liệu context, settings, profile, quyền và launch. Launch service chọn lời nhắc (`context-init`/`context-resume`); account bật "Tự cài khi mở" được cài skill và MCP khi mở, account khác chỉ được báo thiếu. `agent-tools.ts`: trạng thái, cài, gỡ skill và MCP theo account, skill riêng (ADR-020 mục 1). Đọc task và Git cho trang project, quy tắc cảnh báo, chọn task khi mở, "Thêm handoff". Handoff cho project không có tài liệu và Chat rời. Đề xuất fallback transcript khi có phiên mới hơn checkpoint. `task-document.ts`: đọc, sửa task theo mục, bảng trạng thái `STATUS`, mẫu task; workspace đọc, ghi tài liệu và task (ADR-021).
 
 ## Trách nhiệm
 

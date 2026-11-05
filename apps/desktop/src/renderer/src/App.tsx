@@ -1,7 +1,9 @@
 import type { NoteDto, ProfileDto, ProjectDto, UsageDto } from '@agenthub/contracts';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AccountAvatar, PROVIDER_LABELS, useAccountLauncher, windowLabel } from './accounts';
+import { compareText } from '@agenthub/i18n';
 import { api, unwrap } from './api';
+import { useI18n } from './i18n';
 import { Chat, Folder, Gear, Monitor, Plus, Terminal } from './icons';
 import { LooseChatView, NewLooseChat } from './LooseChats';
 import { ProjectPane } from './ProjectPane';
@@ -12,9 +14,9 @@ import { highestUsage, resetText, usageTone, windowTitle } from './usage';
 // Each read starts the account's CLI, so the sidebar only checks now and then.
 const USAGE_REFRESH_MS = 10 * 60_000;
 
-function usageSummary(usage: UsageDto): string {
+function usageSummary(i18n: ReturnType<typeof useI18n>, usage: UsageDto): string {
   return usage.windows
-    .map((window) => [`${windowTitle(window)}: ${Math.round(window.usedPercent)}%`, resetText(window)].filter(Boolean).join(', '))
+    .map((window) => [`${windowTitle(i18n, window)}: ${Math.round(window.usedPercent)}%`, resetText(i18n, window)].filter(Boolean).join(', '))
     .join('\n');
 }
 
@@ -22,12 +24,13 @@ type Screen =
   | { kind: 'project'; id: string }
   | { kind: 'loose-chat'; id: string }
   | { kind: 'new-loose-chat' }
-  | { kind: 'settings' }
+  // section: where the page opens, such as the Agent tools a launch points to.
+  | { kind: 'settings'; section?: 'tools' }
   | { kind: 'none' };
 
-const byName = (a: ProjectDto, b: ProjectDto): number => a.name.localeCompare(b.name, 'vi');
-
 export function App() {
+  const { t, tr, locale, chatLocale } = useI18n();
+  const byName = (a: ProjectDto, b: ProjectDto): number => compareText(locale, a.name, b.name);
   const [projects, setProjects] = useState<ProjectDto[]>();
   const [accounts, setAccounts] = useState<ProfileDto[]>();
   const [usages, setUsages] = useState<Record<string, UsageDto>>({});
@@ -84,6 +87,19 @@ export function App() {
     return () => clearInterval(timer);
   }, [accountIds]);
 
+  // Each project's chat language may follow the app's, which Settings can change. Only on a
+  // change: the first list comes from the load below, and reading twice could undo a newer update.
+  const shownChat = useRef(chatLocale);
+  useEffect(() => {
+    if (shownChat.current === chatLocale) return;
+    shownChat.current = chatLocale;
+    unwrap(api.listProjects()).then(
+      (loaded) => setProjects((current) => (current ? loaded.sort(byName) : current)),
+      () => undefined,
+    );
+    // Read again only when the chat language changes.
+  }, [chatLocale]);
+
   useEffect(() => {
     unwrap(api.listProjects()).then(
       (loaded) => {
@@ -124,7 +140,7 @@ export function App() {
 
   return (
     <div className="layout">
-      <nav className="sidebar" aria-label="Điều hướng">
+      <nav className="sidebar" aria-label={t('nav.label')}>
         <div className="sidebar-header">
           <span className="brand">AgentHub</span>
         </div>
@@ -132,9 +148,9 @@ export function App() {
           <section className="sidebar-section" aria-labelledby="sidebar-projects">
             <div className="sidebar-section-header">
               <p className="sidebar-label grow" id="sidebar-projects">
-                Project
+                {t('nav.projects')}
               </p>
-              <button type="button" className="icon-button sidebar-add" aria-label="Thêm project" title="Thêm project" onClick={() => void addProject()}>
+              <button type="button" className="icon-button sidebar-add" aria-label={t('nav.addProject')} title={t('nav.addProject')} onClick={() => void addProject()}>
                 <Plus />
               </button>
             </div>
@@ -152,7 +168,7 @@ export function App() {
                     </span>
                     <span className="grow truncate">{project.name}</span>
                     {project.pathStatus !== 'directory' && (
-                      <span className="badge warning" title="Không tìm thấy folder">
+                      <span className="badge warning" title={t('nav.folderMissing')}>
                         !
                       </span>
                     )}
@@ -160,18 +176,18 @@ export function App() {
                 </li>
               ))}
             </ul>
-            {projects?.length === 0 && <p className="sidebar-empty">Chưa có project nào.</p>}
+            {projects?.length === 0 && <p className="sidebar-empty">{t('projects.empty')}</p>}
           </section>
           <section className="sidebar-section" aria-labelledby="sidebar-loose-chats">
             <div className="sidebar-section-header">
               <p className="sidebar-label grow" id="sidebar-loose-chats">
-                Chat rời
+                {t('looseChat.section')}
               </p>
               <button
                 type="button"
                 className="icon-button sidebar-add"
-                aria-label="Thêm chat rời"
-                title="Thêm chat rời"
+                aria-label={t('looseChat.add')}
+                title={t('looseChat.add')}
                 aria-current={screen.kind === 'new-loose-chat' ? 'true' : undefined}
                 onClick={() => navigate({ kind: 'new-loose-chat' })}
               >
@@ -196,34 +212,34 @@ export function App() {
                 </li>
               ))}
             </ul>
-            {looseChats?.length === 0 && <p className="sidebar-empty">Chưa có chat rời nào.</p>}
+            {looseChats?.length === 0 && <p className="sidebar-empty">{t('nav.noLooseChats')}</p>}
           </section>
         </div>
         <div className="sidebar-footer">
           <p className="sidebar-label">Accounts</p>
-          <ul className="list" aria-label="Mở account">
+          <ul className="list" aria-label={t('nav.openAccount')}>
             {accounts?.map((account) => (
               <li key={account.id}>
                 <Menu
-                  label={`Mở ${account.name}`}
+                  label={t('nav.openAccountNamed', { account: tr(account.name) })}
                   triggerClassName="nav-item account-item"
                   trigger={
                     <>
                       <AccountAvatar account={account} size="sm" />
-                      <span className="grow truncate">{account.name}</span>
+                      <span className="grow truncate">{tr(account.name)}</span>
                       <UsageChip usage={usages[account.id]} />
                     </>
                   }
                 >
-                  <MenuItem icon={<Monitor />} description={`${PROVIDER_LABELS[account.provider]} · ${windowLabel(account)}`} onSelect={() => launcher.launch(account, 'desktop')}>
-                    Mở trong Desktop
+                  <MenuItem icon={<Monitor />} description={`${PROVIDER_LABELS[account.provider]} · ${windowLabel(t, account)}`} onSelect={() => launcher.launch(account, 'desktop')}>
+                    {t('launch.openDesktop')}
                   </MenuItem>
-                  <MenuItem icon={<Terminal />} description="Tại thư mục home" onSelect={() => launcher.launch(account, 'cli')}>
-                    Mở trong Terminal
+                  <MenuItem icon={<Terminal />} description={t('nav.atHome')} onSelect={() => launcher.launch(account, 'cli')}>
+                    {t('launch.openTerminal')}
                   </MenuItem>
                   <MenuSeparator />
                   <MenuItem icon={<Gear />} onSelect={() => navigate({ kind: 'settings' })}>
-                    Quản lý account
+                    {t('accounts.manage')}
                   </MenuItem>
                 </Menu>
               </li>
@@ -234,7 +250,7 @@ export function App() {
                   <span className="nav-icon">
                     <Plus />
                   </span>
-                  Thêm account
+                  {t('accounts.add')}
                 </button>
               </li>
             )}
@@ -248,7 +264,7 @@ export function App() {
             <span className="nav-icon">
               <Gear />
             </span>
-            Cài đặt
+            {t('settings.title')}
           </button>
         </div>
       </nav>
@@ -280,13 +296,14 @@ export function App() {
               onError={showError}
             />
           )}
-          {screen.kind === 'settings' && <SettingsView onError={showError} onAccountsChanged={reloadAccounts} />}
+          {screen.kind === 'settings' && <SettingsView onError={showError} onAccountsChanged={reloadAccounts} section={screen.section} />}
           {screen.kind === 'project' && selectedProject && (
             <ProjectPane
               key={selectedProject.id}
               project={selectedProject}
               accounts={accounts}
               onOpenSettings={() => navigate({ kind: 'settings' })}
+              onOpenTools={() => navigate({ kind: 'settings', section: 'tools' })}
               onError={showError}
               onChanged={(updated) =>
                 setProjects((current) => current?.map((project) => (project.id === updated.id ? updated : project)).sort(byName))
@@ -303,15 +320,11 @@ export function App() {
               <span className="empty-icon" aria-hidden="true">
                 <Folder />
               </span>
-              <h1>{projects.length === 0 ? 'Chưa có project nào' : 'Chưa chọn project'}</h1>
-              <p className="hint">
-                {projects.length === 0
-                  ? 'Thêm folder của một project để bắt đầu. AgentHub không ghi gì vào folder đó.'
-                  : 'Chọn một project ở cột bên trái.'}
-              </p>
+              <h1>{t(projects.length === 0 ? 'nav.emptyTitle' : 'nav.noneSelected')}</h1>
+              <p className="hint">{t(projects.length === 0 ? 'nav.emptyHint' : 'nav.noneSelectedHint')}</p>
               {projects.length === 0 && (
                 <button type="button" className="primary" onClick={() => void addProject()}>
-                  Chọn folder
+                  {t('nav.chooseFolder')}
                 </button>
               )}
             </div>
@@ -324,11 +337,12 @@ export function App() {
 }
 
 function UsageChip({ usage }: { usage: UsageDto | undefined }) {
+  const i18n = useI18n();
   const highest = highestUsage(usage);
   if (!usage || highest === null) return null;
   const tone = usage.limitReached ? 'full' : usageTone(highest);
   return (
-    <span className={`usage-chip ${tone}`} title={usageSummary(usage)} data-testid="usage-chip">
+    <span className={`usage-chip ${tone}`} title={usageSummary(i18n, usage)} data-testid="usage-chip">
       {Math.round(highest)}%
     </span>
   );

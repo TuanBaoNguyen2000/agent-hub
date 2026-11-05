@@ -2,17 +2,22 @@ import {
   type AccountProfile,
   CONTEXT_LANGUAGES,
   type ClientMode,
-  type ContextLanguage,
   DomainError,
   type LaunchAttempt,
   type LaunchOutcome,
+  type Message,
   type Provider,
   accountName,
   isSamePath,
+  msg,
+  raw,
   requireLabel,
 } from '@agenthub/domain';
+import { type Locale, translate } from '@agenthub/i18n';
+import { type MissingTools, type SkillInstaller, type SkillManifest, createAgentTools } from './agent-tools';
 import { contextWarnings, findTask } from './context-view';
 import type { ContextDocuments, GitObserver, MetadataStore, NoteStore, PathInspector, StoredProject } from './index';
+import { chatLanguageOf, documentLanguageName, promptIn } from './languages';
 
 export const CLI_PATH_KEYS = { claude: 'cli_path_claude', codex: 'cli_path_codex' } as const;
 
@@ -96,20 +101,20 @@ export interface PlatformPort {
 export type StepExecution = 'automatic' | 'conditional' | 'manual';
 
 export interface PlannedStep {
-  label: string;
+  label: Message;
   execution: StepExecution;
-  warning?: string;
+  warning?: Message;
 }
 
 export interface RequiredConfirmation {
   id: string;
-  label: string;
+  label: Message;
 }
 
 export interface LaunchPlan {
   steps: PlannedStep[];
   requiredConfirmations: RequiredConfirmation[];
-  blocker: { code: 'BIN_NOT_FOUND' | 'APP_NOT_FOUND' | 'LAUNCH_UNSUPPORTED' | 'PROFILE_INVALID'; message: string } | null;
+  blocker: { code: 'BIN_NOT_FOUND' | 'APP_NOT_FOUND' | 'LAUNCH_UNSUPPORTED' | 'PROFILE_INVALID'; message: Message } | null;
   // Opaque to this layer and never sent to the renderer.
   action: unknown;
 }
@@ -143,7 +148,7 @@ export interface TranscriptOffer {
   path: string;
   updatedAt: string;
   sourceProfileId: string;
-  sourceAccount: string;
+  sourceAccount: Message;
   provider: Provider;
   // Moving source code between accounts or providers needs the user's eyes (§8.3 item 3).
   otherAccount: boolean;
@@ -160,23 +165,11 @@ export interface LaunchTarget {
   prompt: LaunchPrompt | null;
 }
 
-// --- Skills: one copy owned by AgentHub, linked into each allowed account (ADR-019, SPIKE-14). ---
-
-// 'foreign': something of the same name that AgentHub did not put there; it is never replaced.
-export type SkillPresence = 'installed' | 'missing' | 'foreign';
-
-export interface SkillInstaller {
-  readonly names: readonly string[];
-  inspect(directory: string): Record<string, SkillPresence>;
-  // Refreshes AgentHub's copy and links only the missing names.
-  install(directory: string): void;
-}
-
 export interface ProfileStatus {
   cliPath: string | null;
   cliVersion: string | null;
   login: 'logged_in' | 'logged_out' | 'unknown';
-  loginDetail: string | null;
+  loginDetail: Message | null;
   accountEmail: string | null;
   // Tells accounts apart when the same email sits in several organizations or workspaces.
   accountFingerprint: string | null;
@@ -198,7 +191,7 @@ export interface LoginProcess {
 export interface UsageWindow {
   kind: 'session' | 'weekly' | 'other';
   // The provider's own name for an 'other' limit, such as a model-specific week.
-  label: string | null;
+  label: Message | null;
   // Above 100 once a limit is exceeded.
   usedPercent: number;
   windowMinutes: number | null;
@@ -214,7 +207,7 @@ export interface UsageReport {
   windows: UsageWindow[];
   plan: string | null;
   limitReached: boolean;
-  detail: string | null;
+  detail: Message | null;
 }
 
 export type UsageView = UsageReport & { checkedAt: string };
@@ -228,8 +221,10 @@ export interface McpServerSpec {
 export interface McpRegistration {
   // Human names of the config files that need the server added or corrected; empty when done.
   pending: string[];
+  // Config files that hold a server under AgentHub's name, current or not.
+  registered: string[];
   // Why a config cannot be checked or changed, such as a missing CLI or an unreadable file.
-  problems: string[];
+  problems: Message[];
 }
 
 export interface Launcher {
@@ -237,6 +232,8 @@ export interface Launcher {
   // Registered under the same name everywhere, as Claude Desktop prefers its own copy (SPIKE-12).
   mcpRegistration(profile: AccountProfile, server: McpServerSpec, cliOverride: string | null): Promise<McpRegistration>;
   registerMcp(profile: AccountProfile, server: McpServerSpec, cliOverride: string | null): Promise<void>;
+  // Removes AgentHub's entry from every config of the account, and nothing else.
+  unregisterMcp(profile: AccountProfile, cliOverride: string | null): Promise<void>;
   // Where the provider's CLI reads this account's own skills.
   skillsDirectory(profile: AccountProfile): string;
   // A folder the provider reads for every account, so AgentHub must never install there.
@@ -260,6 +257,8 @@ export interface LaunchServiceDependencies {
   skills: SkillInstaller;
   // null when the MCP shim is not available, for example in a test without one.
   mcpServer: (profileId: string) => McpServerSpec | null;
+  // Checks a folder the user offers as a skill (Agent Skills format).
+  readSkill: (folder: string) => SkillManifest;
   defaultContextDirectory: (projectId: string) => string;
   documents: ContextDocuments;
   git: GitObserver;
@@ -271,16 +270,18 @@ export interface LaunchServiceDependencies {
   now: () => string;
   // Where AgentHub keeps the folders of an extra account; the user never has to see them.
   accountDirectories: (accountId: string) => { cli: string; desktop: string };
+  // The system's language, for prompts when the user chose none (ADR-020 item 6).
+  defaultLocale?: Locale;
 }
 
 export interface LaunchRequest {
   projectId: string;
   // A task from the project's documents (ContextTask.ref); the agent is pointed at it.
   taskRef?: string | null | undefined;
-  // The user chose to open without adding skills and MCP to this account's config this time.
-  skipContextTools?: boolean | undefined;
   // The user accepted the transcript offer of the preview (§7.6).
   useTranscript?: boolean | undefined;
+  // 'refine': the agent fills in the chosen task instead of resuming it (ADR-021 item 7).
+  purpose?: 'refine' | undefined;
   profileId: string;
   mode: ClientMode;
 }
@@ -297,20 +298,18 @@ export interface LaunchPreview {
   plan: LaunchPlan;
   permission: PermissionState;
   projectName: string;
-  profileAlias: string;
+  profileAlias: Message;
   prompt: string | null;
   transcript: TranscriptOffer | null;
+  // The account opens without some tools, as it does not install them itself (ADR-020 item 1).
+  missingTools: MissingTools | null;
 }
 
-export type LaunchHistoryEntry = LaunchAttempt & { profileAlias: string };
+export type LaunchHistoryEntry = LaunchAttempt & { profileAlias: Message };
 
 // The prompt is only kept for this reply, so the UI can show and copy it.
 export type LaunchResult = LaunchHistoryEntry & { prompt: string | null };
 
-// One consent covers both skills and MCP in the main config folder (ADR-019 item 6).
-export const CONTEXT_TOOLS_CONFIRMATION = 'context-tools-main-config';
-
-const LANGUAGE_NAMES: Record<ContextLanguage, string> = { en: 'English', vi: 'Vietnamese' };
 
 export const isInside = (child: string, parent: string): boolean => {
   const a = child.normalize('NFC').replace(/\/+$/, '');
@@ -325,7 +324,7 @@ export interface ProfileInput {
   desktopDataDir: string | null;
 }
 
-export type ProfileStatusView = ProfileStatus & { sameAccountAs: string[] };
+export type ProfileStatusView = ProfileStatus & { sameAccountAs: Message[] };
 
 export type AccountSource = 'machine' | 'separate';
 
@@ -334,7 +333,7 @@ export interface MachineAccount {
   cliFound: boolean;
   login: ProfileStatus['login'];
   accountEmail: string | null;
-  loginDetail: string | null;
+  loginDetail: Message | null;
 }
 
 export interface LoginState {
@@ -362,6 +361,7 @@ export function createLaunchService({
   paths,
   skills,
   mcpServer,
+  readSkill,
   defaultContextDirectory,
   documents,
   git,
@@ -372,6 +372,7 @@ export function createLaunchService({
   newId,
   now,
   accountDirectories,
+  defaultLocale = 'en',
 }: LaunchServiceDependencies) {
   // One at a time: a Codex login always listens on the same local port.
   let activeLogin: ActiveLogin | undefined;
@@ -388,50 +389,54 @@ export function createLaunchService({
 
   function waitingLogin(id: string): ActiveLogin {
     if (activeLogin?.profileId !== id || activeLogin.url === null || activeLogin.state.phase !== 'waiting') {
-      throw new DomainError('LOGIN_NOT_ACTIVE', 'Không còn lượt đăng nhập nào đang chờ. Hãy bấm Đăng nhập lại.');
+      throw new DomainError('LOGIN_NOT_ACTIVE', 'login.notActive');
     }
     return activeLogin;
   }
 
   const cliOverride = (provider: Provider): string | null => store.settings.get(CLI_PATH_KEYS[provider]) || null;
 
+  const chatLocale = (project: StoredProject): Locale => chatLanguageOf(store, project, defaultLocale);
+
+  const tools = createAgentTools({ store, launcher, skills, mcpServer, cliOverride, readSkill, isInside, newId, now });
+
   function requireProfile(id: string): AccountProfile {
     const profile = store.profiles.get(id);
-    if (!profile) throw new DomainError('NOT_FOUND', 'Không tìm thấy account.');
+    if (!profile) throw new DomainError('NOT_FOUND', 'error.accountNotFound');
     return profile;
   }
 
   function validated(input: ProfileInput, ownId?: string): ProfileInput {
     // Empty is allowed: the account then goes by its email.
-    const alias = input.alias.trim() === '' ? '' : requireLabel(input.alias, 'Tên gợi nhớ');
+    const alias = input.alias.trim() === '' ? '' : requireLabel(input.alias, 'field.alias');
     const { cliConfigRoot, desktopDataDir } = input;
-    const invalid = (message: string): DomainError => new DomainError('PROFILE_INVALID', message);
+    const invalid = (message: Message): DomainError => new DomainError('PROFILE_INVALID', message);
 
     // ADR-013 and ADR-014: an instance needs both directories, or it shares config with the default account.
     if (desktopDataDir !== null && cliConfigRoot === null) {
-      throw invalid('Cửa sổ Desktop riêng cần có cả thư mục cấu hình CLI.');
+      throw invalid(msg('profile.instanceNeedsConfig'));
     }
     for (const path of [cliConfigRoot, desktopDataDir]) {
       if (path === null) continue;
       const kind = platform.pathKind(path);
-      if (kind === 'relative') throw invalid('Đường dẫn phải là đường dẫn tuyệt đối.');
-      if (kind === 'file') throw invalid('Đường dẫn này là một file, không phải thư mục.');
+      if (kind === 'relative') throw invalid(msg('profile.pathNotAbsolute'));
+      if (kind === 'file') throw invalid(msg('profile.pathIsFile'));
     }
     if (cliConfigRoot !== null && desktopDataDir !== null && isSamePath(cliConfigRoot, desktopDataDir)) {
-      throw invalid('Thư mục cấu hình CLI và thư mục dữ liệu Desktop phải khác nhau.');
+      throw invalid(msg('profile.sameFolders'));
     }
     if (desktopDataDir !== null && platform.defaultDesktopDataDirs().some((path) => isSamePath(path, desktopDataDir))) {
-      throw invalid('Không được dùng thư mục dữ liệu mặc định của app cho instance riêng.');
+      throw invalid(msg('profile.defaultDataDir'));
     }
 
     for (const other of store.profiles.list()) {
       if (other.id === ownId) continue;
-      if (alias !== '' && other.alias === alias) throw invalid(`Đã có account tên "${alias}".`);
+      if (alias !== '' && other.alias === alias) throw invalid(msg('profile.aliasTaken', { alias }));
       if (other.provider === input.provider && (other.cliConfigRoot ?? '') === (cliConfigRoot ?? '')) {
-        throw invalid(`Account "${accountName(other)}" đã dùng cấu hình CLI này.`);
+        throw invalid(msg('profile.configTaken', { account: accountName(other) }));
       }
       if (desktopDataDir !== null && other.desktopDataDir !== null && isSamePath(other.desktopDataDir, desktopDataDir)) {
-        throw invalid(`Account "${accountName(other)}" đã dùng thư mục dữ liệu Desktop này.`);
+        throw invalid(msg('profile.desktopDirTaken', { account: accountName(other) }));
       }
     }
     return { ...input, alias };
@@ -439,9 +444,9 @@ export function createLaunchService({
 
   function requestContext(request: LaunchRequest) {
     const project = store.projects.get(request.projectId, deviceId());
-    if (!project) throw new DomainError('NOT_FOUND', 'Không tìm thấy project.');
+    if (!project) throw new DomainError('NOT_FOUND', 'error.projectNotFound');
     if (project.path === null || paths.inspect(project.path) !== 'directory') {
-      throw new DomainError('PROJECT_PATH_MISSING', 'Không tìm thấy folder của project. Hãy chọn lại folder trước.');
+      throw new DomainError('PROJECT_PATH_MISSING', 'error.projectFolderMissing');
     }
     return { project: { ...project, path: project.path }, profile: requireProfile(request.profileId) };
   }
@@ -460,121 +465,122 @@ export function createLaunchService({
     warnings: PlannedStep[];
   }
 
-  async function promptFor(project: StoredProject & { path: string }, taskRef: string | null): Promise<PromptPlan | null> {
+  async function promptFor(project: StoredProject & { path: string }, taskRef: string | null, purpose?: 'refine'): Promise<PromptPlan | null> {
     if (!project.context.enabled) {
-      if (taskRef) throw new DomainError('VALIDATION_FAILED', 'Project này chưa bật tài liệu context, nên không có task để chọn.');
+      if (taskRef) throw new DomainError('VALIDATION_FAILED', 'launch.noDocsNoTask');
       // §8.2: without documents, the newest saved handoff is the context.
       const folder = handoffDirectory(project.id);
       const latest = notes.list(folder)[0];
       if (!latest) return null;
       const file = `${folder}/${latest.id}.md`;
-      const text = `Continue from the latest AgentHub handoff for this project: ${file} — read it, check Git, and tell me what you understand before changing anything.`;
+      const text = promptIn(chatLocale(project), 'prompt.handoff', { file });
       return { prompt: { text, addDir: isInside(folder, project.path) ? null : folder }, taskRef: null, warnings: [] };
     }
     const folder = project.contextPath ?? defaultContextDirectory(project.id);
     if (platform.pathKind(folder) !== 'directory') {
-      throw new DomainError('PROJECT_PATH_MISSING', 'Không tìm thấy folder tài liệu context. Hãy chọn lại nơi lưu trong trang project.');
+      throw new DomainError('PROJECT_PATH_MISSING', 'launch.docsFolderMissing');
     }
     const addDir = isInside(folder, project.path) ? null : folder;
-    const language = LANGUAGE_NAMES[CONTEXT_LANGUAGES.includes(project.context.language) ? project.context.language : 'en'];
+    const locale = chatLocale(project);
+    const language = documentLanguageName(CONTEXT_LANGUAGES.includes(project.context.language) ? project.context.language : 'en');
     const initialised = platform.pathKind(`${folder}/README.md`) === 'file';
     if (!initialised) {
-      if (taskRef) throw new DomainError('NOT_FOUND', 'Tài liệu chưa được tạo, nên chưa có task.');
+      if (taskRef) throw new DomainError('NOT_FOUND', 'launch.docsNotCreated');
       // Notes the project already keeps in another shape are linked, not copied (ADR-020 item 4).
       const existing = documents.detect(project.path).others.filter((path) => !isInside(`${project.path}/${path}`, folder));
-      const linked = existing.length > 0 ? ` Existing docs in the project folder: ${existing.join(', ')} — link and summarise them, do not copy them.` : '';
-      const text = `Use the context-init skill. Context documents: ${folder} (not set up yet). Write them in ${language}; ask me for the brief before writing.${linked}`;
+      const text = promptIn(locale, existing.length > 0 ? 'prompt.initWithDocs' : 'prompt.init', { folder, language, docs: existing.join(', ') });
       return { prompt: { text, addDir }, taskRef: null, warnings: [] };
     }
     if (!taskRef) {
-      const text = `Use the context-resume skill. Context documents: ${folder} — read them, check Git, and tell me what you understand before changing anything.`;
+      const text = promptIn(locale, 'prompt.resume', { folder });
       return { prompt: { text, addDir }, taskRef: null, warnings: [] };
     }
     const overview = documents.overview(folder);
     const found = findTask(overview, taskRef);
-    if (!found) throw new DomainError('NOT_FOUND', 'Không tìm thấy task này trong tài liệu. Hãy tải lại trang project.');
+    if (!found) throw new DomainError('NOT_FOUND', 'launch.taskNotFound');
     const observation = await git.observe(project.path);
     const workstream = overview.workstreams.find((item) => item.tasks.includes(found.task));
     const warnings = contextWarnings(overview, observation, new Date(now()))
       .filter((warning) => warning.taskRef === taskRef || (warning.kind === 'branch_mismatch' && warning.workstream === workstream?.slug))
-      .map((warning): PlannedStep => ({ label: 'Kiểm tra ngữ cảnh trước khi mở', execution: 'manual', warning: warning.message }));
-    const text = `Use the context-resume skill for ${found.task.id} (${taskRef}). Context documents: ${folder} — read them, check Git, and tell me what you understand before changing anything.`;
+      .map((warning): PlannedStep => ({ label: msg('launch.step.checkContext'), execution: 'manual', warning: warning.message }));
+    const text = promptIn(locale, purpose === 'refine' ? 'prompt.refineTask' : 'prompt.resumeTask', { task: found.task.id, ref: taskRef, folder });
     return { prompt: { text, addDir }, taskRef, warnings };
   }
 
   interface ContextSetup {
     skillsDirectory: string;
-    installSkills: boolean;
+    // The shipped skills to link, when the account installs its tools by itself.
+    installSkills: string[];
     mcp: McpServerSpec | null;
     steps: PlannedStep[];
-    confirmations: RequiredConfirmation[];
+    missing: MissingTools | null;
   }
 
-  // Accounts get the skills and the MCP server when they open a project, and the user's own
-  // skills of the same name are left alone.
+  // An account set to install its tools gets the shipped skills and the MCP server when it opens
+  // a project; any other account is only told what it lacks (ADR-020 item 1). The user's own
+  // skills of the same name are left alone either way.
   async function contextSetup(profile: AccountProfile, mode: ClientMode): Promise<ContextSetup> {
     const directory = launcher.skillsDirectory(profile);
-    const state = skills.inspect(directory);
-    const missing = skills.names.filter((name) => state[name] === 'missing');
-    const foreign = skills.names.filter((name) => state[name] === 'foreign');
+    const state = skills.inspect(directory, skills.builtin);
+    const missingSkills = skills.builtin.filter((name) => state[name] === 'missing');
+    const foreign = skills.builtin.filter((name) => state[name] === 'foreign');
+    const auto = tools.autoInstallOf(profile);
     const steps: PlannedStep[] = [];
-    const mainConfigChanges: string[] = [];
-    if (missing.length > 0) {
-      steps.push({ label: `Cài skill ${missing.join(', ')} cho account này`, execution: 'automatic' });
-      mainConfigChanges.push(`${missing.length} skill vào ${directory}`);
-    }
     if (foreign.length > 0) {
       steps.push({
-        label: 'Giữ nguyên skill trùng tên của bạn',
+        label: msg('launch.step.keepForeign'),
         execution: 'automatic',
-        warning: `${directory} đã có ${foreign.join(', ')} không do AgentHub cài; agent sẽ dùng bản đó.`,
+        warning: msg('launch.warning.foreignSkills', { directory, names: foreign.join(', ') }),
       });
     }
-    const leaked = launcher
-      .sharedSkillsDirectories()
-      .filter((shared) => Object.values(skills.inspect(shared)).some((presence) => presence !== 'missing'));
-    for (const shared of leaked) {
+    for (const leaked of tools.leaked()) {
       steps.push({
-        label: 'Kiểm tra skill dùng chung',
+        label: msg('launch.step.checkSharedSkills'),
         execution: 'manual',
-        warning: `${shared} có skill context-*. Mọi account đều đọc thư mục này, nên nên xoá chúng khỏi đó.`,
+        warning: msg('tools.leaked', { directory: leaked.directory, names: leaked.names.join(', ') }),
       });
     }
 
     const server = mcpServer(profile.id);
-    let mcp: McpServerSpec | null = null;
+    let mcpPending = false;
     if (server) {
       const registration = await launcher.mcpRegistration(profile, server, cliOverride(profile.provider));
       for (const problem of registration.problems) {
-        steps.push({ label: 'Đăng ký MCP của AgentHub', execution: 'manual', warning: `${problem} Agent vẫn đọc tài liệu qua đường dẫn trong lời nhắc.` });
+        steps.push({ label: msg('launch.step.registerMcpManual'), execution: 'manual', warning: msg('launch.warning.mcpProblem', { problem }) });
       }
-      if (registration.pending.length > 0) {
-        mcp = server;
-        const desktopNote =
-          mode === 'desktop' && profile.desktopDataDir !== null
-            ? { warning: 'Nếu cửa sổ Desktop của account này đang mở, hãy thoát rồi mở lại để nó nạp MCP.' }
-            : {};
-        steps.push({ label: 'Đăng ký MCP "agenthub" cho account này', execution: 'automatic', ...desktopNote });
-        mainConfigChanges.push(`MCP "agenthub" vào ${registration.pending.join(', ')}`);
-      }
+      mcpPending = registration.pending.length > 0;
     }
 
-    const confirmations: RequiredConfirmation[] =
-      profile.cliConfigRoot === null && mainConfigChanges.length > 0
-        ? [
-            {
-              id: CONTEXT_TOOLS_CONFIRMATION,
-              label: `Thêm ${mainConfigChanges.join(' và ')}? Đây là cấu hình chính của bạn. AgentHub chỉ thêm phần của nó, không sửa skill hay MCP server khác.`,
-            },
-          ]
-        : [];
-    return {
-      skillsDirectory: directory,
-      installSkills: skills.names.some((name) => state[name] !== 'foreign'),
-      mcp,
-      steps,
-      confirmations,
-    };
+    if (!auto) {
+      const lacking = missingSkills.length > 0 || mcpPending;
+      if (lacking) {
+        const names = missingSkills.join(', ');
+        const what =
+          missingSkills.length > 0 && mcpPending
+            ? msg('launch.lacking.both', { names })
+            : missingSkills.length > 0
+              ? msg('launch.lacking.skills', { names })
+              : msg('launch.lacking.mcp');
+        steps.push({ label: msg('launch.step.checkTools'), execution: 'manual', warning: msg('launch.warning.missingTools', { what }) });
+      }
+      return {
+        skillsDirectory: directory,
+        installSkills: [],
+        mcp: null,
+        steps,
+        missing: lacking ? { skills: missingSkills, mcp: mcpPending } : null,
+      };
+    }
+
+    if (missingSkills.length > 0) steps.push({ label: msg('launch.step.installSkills', { names: missingSkills.join(', ') }), execution: 'automatic' });
+    if (mcpPending) {
+      const desktopNote =
+        mode === 'desktop' && profile.desktopDataDir !== null
+          ? { warning: msg('launch.warning.restartDesktopForMcp') }
+          : {};
+      steps.push({ label: msg('launch.step.registerMcp'), execution: 'automatic', ...desktopNote });
+    }
+    return { skillsDirectory: directory, installSkills: missingSkills, mcp: mcpPending ? server : null, steps, missing: null };
   }
 
   // The newest checkpoint the documents or handoffs record: the selected task's, else any.
@@ -618,24 +624,28 @@ export function createLaunchService({
     };
   }
 
-  function withTranscript(prompt: LaunchPrompt, offer: TranscriptOffer, documentsOn: boolean): LaunchPrompt {
-    const source = `${offer.provider === 'claude' ? 'Claude' : 'Codex'} account ${offer.sourceAccount}, last active ${offer.updatedAt}`;
-    const write = documentsOn
-      ? 'first write the missing checkpoint with the context-checkpoint skill'
-      : 'first save the missing handoff with the agenthub MCP tool context_save_handoff';
-    const text =
-      `${prompt.text} The previous session (${source}) went on after the last checkpoint. Its transcript is ${offer.path}. ` +
-      `Read only its last 200 lines (for example tail -n 200), not the whole file and nothing else in that folder, then ${write}, marking what you take from it as reported.`;
+  function withTranscript(prompt: LaunchPrompt, offer: TranscriptOffer, documentsOn: boolean, locale: Locale): LaunchPrompt {
+    const params = {
+      provider: offer.provider === 'claude' ? 'Claude' : 'Codex',
+      account: offer.sourceAccount,
+      at: offer.updatedAt,
+      path: offer.path,
+      write: msg(documentsOn ? 'prompt.transcript.writeCheckpoint' : 'prompt.transcript.saveHandoff'),
+    };
+    const text = `${prompt.text} ${translate(locale, 'prompt.transcript', params)}`;
     const folder = offer.path.slice(0, offer.path.lastIndexOf('/'));
     return { ...prompt, text, readDirs: [...(prompt.readDirs ?? []), folder] };
   }
 
   async function preparedPlan(request: LaunchRequest) {
     const { project, profile } = requestContext(request);
-    const promptPlan = await promptFor(project, request.taskRef ?? null);
+    if (request.purpose === 'refine' && !request.taskRef) throw new DomainError('VALIDATION_FAILED', 'launch.refineNeedsTask');
+    const promptPlan = await promptFor(project, request.taskRef ?? null, request.purpose);
     const offer = promptPlan ? transcriptOffer(project, profile, promptPlan.taskRef) : null;
     const prompt =
-      promptPlan && offer && request.useTranscript ? withTranscript(promptPlan.prompt, offer, project.context.enabled) : (promptPlan?.prompt ?? null);
+      promptPlan && offer && request.useTranscript
+        ? withTranscript(promptPlan.prompt, offer, project.context.enabled, chatLocale(project))
+        : (promptPlan?.prompt ?? null);
     const plan = await launcher.plan({
       profile,
       mode: request.mode,
@@ -644,17 +654,16 @@ export function createLaunchService({
       prompt,
     });
     // Every project gets the tools: without documents, MCP is how a session saves its handoff.
-    const setup = !plan.blocker && !request.skipContextTools ? await contextSetup(profile, request.mode) : null;
+    const setup = !plan.blocker ? await contextSetup(profile, request.mode) : null;
     const merged: LaunchPlan = {
       ...plan,
       steps: [...(promptPlan?.warnings ?? []), ...(setup?.steps ?? []), ...plan.steps],
-      requiredConfirmations: [...(setup?.confirmations ?? []), ...plan.requiredConfirmations],
     };
     return { project, profile, prompt, taskRef: promptPlan?.taskRef ?? null, plan: merged, setup, offer };
   }
 
   async function preview(request: LaunchRequest): Promise<LaunchPreview> {
-    const { project, profile, prompt, plan, offer } = await preparedPlan(request);
+    const { project, profile, prompt, plan, offer, setup } = await preparedPlan(request);
     return {
       plan,
       permission: permissionOf(project.id, profile.id),
@@ -662,6 +671,7 @@ export function createLaunchService({
       profileAlias: accountName(profile),
       prompt: prompt?.text ?? null,
       transcript: offer,
+      missingTools: setup?.missing ?? null,
     };
   }
 
@@ -724,7 +734,7 @@ export function createLaunchService({
     updateProfile(input: { id: string } & ProfileInput): AccountProfile {
       const current = requireProfile(input.id);
       if (input.provider !== current.provider) {
-        throw new DomainError('PROFILE_INVALID', 'Không đổi được loại của account đã tạo.');
+        throw new DomainError('PROFILE_INVALID', 'profile.providerFixed');
       }
       const updated: AccountProfile = { ...current, ...validated(input, current.id) };
       store.profiles.update(updated);
@@ -764,7 +774,7 @@ export function createLaunchService({
       if (status.login === 'logged_in' && status.accountEmail !== null && status.accountEmail !== profile.accountEmail) {
         store.profiles.update({ ...profile, accountEmail: status.accountEmail });
       }
-      const sameAccountAs: string[] = [];
+      const sameAccountAs: Message[] = [];
       if (status.accountFingerprint !== null) {
         for (const other of store.profiles.list()) {
           if (other.id === profile.id || other.provider !== profile.provider) continue;
@@ -810,7 +820,7 @@ export function createLaunchService({
       const login = waitingLogin(id);
       const url = login.url as string;
       if (browser === 'normal') {
-        if (!(await platform.openInDefaultBrowser(url))) throw new DomainError('LAUNCH_FAILED', 'Không mở được trình duyệt.');
+        if (!(await platform.openInDefaultBrowser(url))) throw new DomainError('LAUNCH_FAILED', 'login.browserFailed');
       } else {
         login.state = { ...login.state, privateBrowser: await platform.openPrivateWindow(url) };
       }
@@ -826,7 +836,7 @@ export function createLaunchService({
     stopLogins: stopActiveLogin,
 
     setPermission(input: { projectId: string; profileId: string; allowed: boolean }): void {
-      if (!store.projects.get(input.projectId, deviceId())) throw new DomainError('NOT_FOUND', 'Không tìm thấy project.');
+      if (!store.projects.get(input.projectId, deviceId())) throw new DomainError('NOT_FOUND', 'error.projectNotFound');
       requireProfile(input.profileId);
       store.permissions.set(input.projectId, input.profileId, input.allowed);
     },
@@ -838,7 +848,7 @@ export function createLaunchService({
       const permission = permissionOf(project.id, profile.id);
 
       if (permission !== 'allowed') {
-        throw new DomainError('PROFILE_NOT_ALLOWED', `Account "${accountName(profile)}" chưa được phép dùng project "${project.name}".`);
+        throw new DomainError('PROFILE_NOT_ALLOWED', 'launch.notAllowed', { account: accountName(profile), project: project.name });
       }
       if (plan.blocker) throw new DomainError(plan.blocker.code, plan.blocker.message);
       const missing = plan.requiredConfirmations.find((item) => !confirmations.includes(item.id));
@@ -857,15 +867,14 @@ export function createLaunchService({
       store.launches.insert(attempt);
 
       try {
-        // Also refreshes AgentHub's copy, so an app update reaches accounts already set up.
-        if (setup?.installSkills) skills.install(setup.skillsDirectory);
+        if (setup && setup.installSkills.length > 0) skills.install(setup.skillsDirectory, setup.installSkills);
         // MCP is a convenience: the prompt still names the folder, so a failure only warns.
-        let mcpWarning: string | null = null;
+        let mcpWarning: Message | null = null;
         if (setup?.mcp) {
           try {
             await launcher.registerMcp(profile, setup.mcp, cliOverride(profile.provider));
           } catch (error) {
-            mcpWarning = `Không đăng ký được MCP: ${(error as Error).message}`;
+            mcpWarning = msg('launch.mcpFailed', { reason: error instanceof DomainError ? error.detail : raw((error as Error).message) });
           }
         }
         const launched = await launcher.launch(plan);
@@ -881,6 +890,9 @@ export function createLaunchService({
     },
 
     previewAccount,
+
+    // The Agent tools screen of Settings (ADR-020 item 1).
+    tools,
 
     // No project means no source code to grant, so no permission check. History belongs to
     // projects, so this launch leaves none.
@@ -898,12 +910,12 @@ export function createLaunchService({
       const aliases = new Map(store.profiles.list().map((profile) => [profile.id, accountName(profile)]));
       return store.launches.list(projectId).map((attempt) => ({
         ...attempt,
-        profileAlias: aliases.get(attempt.profileId) ?? 'Account đã gỡ',
+        profileAlias: aliases.get(attempt.profileId) ?? msg('account.removed'),
       }));
     },
 
     confirmAccount(attemptId: string): void {
-      if (!store.launches.get(attemptId)) throw new DomainError('NOT_FOUND', 'Không tìm thấy lần mở này.');
+      if (!store.launches.get(attemptId)) throw new DomainError('NOT_FOUND', 'launch.attemptNotFound');
       store.launches.confirmAccount(attemptId, now());
     },
   };

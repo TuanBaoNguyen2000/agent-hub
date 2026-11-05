@@ -1,12 +1,12 @@
-import type { ContextLanguageDto, ProjectDto } from '@agenthub/contracts';
+import type { ContextLanguageDto, ProjectDto, UiLanguageDto } from '@agenthub/contracts';
+import { LANGUAGE_LABELS, LOCALES } from '@agenthub/i18n';
 import { useState } from 'react';
 import { api, unwrap } from './api';
+import { useI18n } from './i18n';
 import { Dialog, Segmented } from './ui';
 
-export const LANGUAGE_OPTIONS: readonly { value: ContextLanguageDto; label: string }[] = [
-  { value: 'en', label: 'English' },
-  { value: 'vi', label: 'Tiếng Việt' },
-];
+// Each language by its own name, whatever the interface language.
+export const LANGUAGE_OPTIONS: readonly { value: ContextLanguageDto; label: string }[] = LOCALES.map((value) => ({ value, label: LANGUAGE_LABELS[value] }));
 
 interface Props {
   project: ProjectDto;
@@ -18,6 +18,7 @@ interface Props {
 // Where the project's context documents live (ADR-019). Agents write them; the user reads them in
 // their own editor, so AgentHub only keeps the settings. Stopping never deletes the files.
 export function ProjectSettings({ project, onChanged, onCreateDocs, onError }: Props) {
+  const { t } = useI18n();
   const { context } = project;
   // A new place waiting for the user to say whether the files move with it (ADR-020 item 5).
   const [asking, setAsking] = useState<{ customPath: string | null; files: number }>();
@@ -36,16 +37,16 @@ export function ProjectSettings({ project, onChanged, onCreateDocs, onError }: P
       }
       if (change.status === 'conflict') {
         const listed = change.conflicts.slice(0, 10).join(', ');
-        const more = change.conflicts.length > 10 ? ` và ${change.conflicts.length - 10} file khác` : '';
-        onError(`Không chuyển: folder mới đã có ${listed}${more}. AgentHub không ghi đè file nào; nơi lưu chưa đổi.`);
+        const files = change.conflicts.length > 10 ? t('settings.docs.conflictMore', { listed, more: change.conflicts.length - 10 }) : listed;
+        onError(t('settings.docs.conflict', { files }));
         return;
       }
       onChanged(change.project);
       if (change.moved > 0) {
         setResult(
           change.kept
-            ? `Đã chuyển ${change.moved} file. Folder cũ vẫn còn ở ${change.kept}; bạn tự xoá nếu không cần.`
-            : `Đã chuyển ${change.moved} file. Folder cũ trong dữ liệu AgentHub đã vào Thùng rác.`,
+            ? t('settings.docs.movedKept', { count: change.moved, path: change.kept })
+            : t('settings.docs.movedTrashed', { count: change.moved }),
         );
       }
     } catch (reason) {
@@ -53,7 +54,7 @@ export function ProjectSettings({ project, onChanged, onCreateDocs, onError }: P
     }
   }
 
-  async function update(input: { enabled?: boolean; language?: ContextLanguageDto; customPath?: string | null }): Promise<void> {
+  async function update(input: { enabled?: boolean; language?: ContextLanguageDto; customPath?: string | null; chatLanguage?: UiLanguageDto | null }): Promise<void> {
     onError(undefined);
     try {
       onChanged(await unwrap(api.updateProjectContext({ id: project.id, ...input })));
@@ -81,27 +82,43 @@ export function ProjectSettings({ project, onChanged, onCreateDocs, onError }: P
   }
 
   function stop(): void {
-    const accepted = window.confirm(
-      `Ngừng dùng tài liệu context cho "${project.name}"?\n\nCác file trong ${context.path} vẫn còn nguyên. Lần mở account sau sẽ không đọc chúng nữa; ngữ cảnh đi qua handoff tóm tắt.`,
-    );
+    const accepted = window.confirm(t('settings.docs.stopConfirm', { project: project.name, path: context.path }));
     if (accepted) void update({ enabled: false });
   }
 
+  const chatOptions: { value: UiLanguageDto | 'app'; label: string }[] = [
+    { value: 'app', label: t('settings.chat.followApp') },
+    ...LOCALES.map((value) => ({ value, label: LANGUAGE_LABELS[value] })),
+  ];
+
   return (
-    <section className="settings-group" aria-label="Cài đặt tài liệu context">
+    <>
+    <section className="settings-group" aria-label={t('settings.chat.projectRegion')}>
+      <div className="settings-row">
+        <div className="grow settings-row-text">
+          <span className="settings-row-label">{t('settings.chat.label')}</span>
+          <span className="hint">{t('settings.chat.projectHint')}</span>
+        </div>
+        <Segmented
+          label={t('settings.chat.label')}
+          value={project.chatLanguage ?? 'app'}
+          options={chatOptions}
+          onChange={(value) => void update({ chatLanguage: value === 'app' ? null : value })}
+        />
+      </div>
+    </section>
+    <section className="settings-group" aria-label={t('settings.docs.region')}>
       <div className="settings-group-header">
         <div className="grow settings-row-text">
-          <h2>Tài liệu context</h2>
-          <p className="hint">
-            Agent ghi ngữ cảnh của project vào bộ tài liệu này, để account và provider nào cũng đọc được cùng một bản. AgentHub không sửa tài liệu.
-          </p>
+          <h2>{t('settings.docs.title')}</h2>
+          <p className="hint">{t('settings.docs.hint')}</p>
         </div>
       </div>
       {!context.enabled && (
         <div className="settings-row">
-          <p className="hint grow">Project này chưa dùng tài liệu context.</p>
+          <p className="hint grow">{t('settings.docs.off')}</p>
           <button type="button" onClick={onCreateDocs}>
-            Tạo tài liệu context
+            {t('docs.create')}
           </button>
         </div>
       )}
@@ -109,16 +126,12 @@ export function ProjectSettings({ project, onChanged, onCreateDocs, onError }: P
         <>
           <div className="settings-row">
             <div className="grow settings-row-text">
-              <span className="settings-row-label">Nơi lưu</span>
-              <span className="hint">
-                {context.custom
-                  ? 'Folder bạn chọn. Nếu nằm trong repo, tài liệu đi theo branch và bạn quyết định có commit hay không.'
-                  : 'Trong dữ liệu của AgentHub, không vào repo và không đổi theo branch.'}
-              </span>
+              <span className="settings-row-label">{t('settings.docs.place')}</span>
+              <span className="hint">{t(context.custom ? 'settings.docs.placeCustom' : 'settings.docs.placeDefault')}</span>
               <span className="path" data-testid="context-path">
                 {context.path}
               </span>
-              {context.pathStatus !== 'directory' && context.custom && <span className="warning-text">Không tìm thấy folder này trên máy.</span>}
+              {context.pathStatus !== 'directory' && context.custom && <span className="warning-text">{t('settings.docs.folderGone')}</span>}
               {result && (
                 <span className="hint" role="status">
                   {result}
@@ -127,61 +140,64 @@ export function ProjectSettings({ project, onChanged, onCreateDocs, onError }: P
             </div>
             <div className="row">
               <button type="button" onClick={() => void chooseFolder()}>
-                Chọn folder khác
+                {t('settings.docs.chooseOther')}
               </button>
               {context.custom && (
                 <button type="button" onClick={() => void changePlace(null)}>
-                  Dùng mặc định
+                  {t('settings.docs.useDefault')}
                 </button>
               )}
             </div>
           </div>
           <div className="settings-row">
             <div className="grow">
-              <span className="settings-row-label">Ngôn ngữ tài liệu</span>
+              <span className="settings-row-label">{t('settings.docs.language')}</span>
             </div>
-            <Segmented label="Ngôn ngữ tài liệu" value={context.language} options={LANGUAGE_OPTIONS} onChange={(language) => void update({ language })} />
+            <Segmented label={t('settings.docs.language')} value={context.language} options={LANGUAGE_OPTIONS} onChange={(language) => void update({ language })} />
           </div>
           <div className="settings-row">
-            <p className="hint grow">Mở folder trong Finder hoặc editor của bạn để đọc tài liệu.</p>
+            <p className="hint grow">{t('settings.docs.openHint')}</p>
             <button type="button" onClick={() => void openFolder()}>
-              Mở folder tài liệu
+              {t('settings.docs.open')}
             </button>
           </div>
           <div className="settings-row">
-            <p className="hint grow">Ngừng dùng không xoá file nào; bạn tạo lại hoặc trỏ lại folder này sau được.</p>
+            <p className="hint grow">{t('settings.docs.stopHint')}</p>
             <button type="button" onClick={stop}>
-              Ngừng dùng tài liệu
+              {t('settings.docs.stop')}
             </button>
           </div>
         </>
       )}
       {asking && (
         <Dialog
-          label="Chuyển tài liệu"
-          title="Chuyển tài liệu sang nơi mới?"
+          label={t('settings.docs.moveLabel')}
+          title={t('settings.docs.moveTitle')}
           onClose={() => setAsking(undefined)}
           actions={
             <>
               <button type="button" onClick={() => setAsking(undefined)}>
-                Huỷ
+                {t('common.cancel')}
               </button>
               <button type="button" onClick={() => void changePlace(asking.customPath, 'leave')}>
-                Không chuyển
+                {t('settings.docs.leave')}
               </button>
               <button type="button" className="primary" onClick={() => void changePlace(asking.customPath, 'move')}>
-                Chuyển
+                {t('settings.docs.move')}
               </button>
             </>
           }
         >
           <p>
-            Folder hiện tại có {asking.files} file. Chuyển: AgentHub copy chúng sang {asking.customPath ?? 'dữ liệu AgentHub'}, không ghi đè file đã có
-            {context.custom ? ', và để nguyên folder cũ.' : ', rồi đưa folder cũ vào Thùng rác.'}
+            {t(context.custom ? 'settings.docs.moveBodyKeep' : 'settings.docs.moveBodyTrash', {
+              count: asking.files,
+              target: asking.customPath ?? t('settings.docs.agentHubData'),
+            })}
           </p>
-          <p className="hint">Không chuyển: project dùng folder mới, các file cũ vẫn ở chỗ cũ.</p>
+          <p className="hint">{t('settings.docs.leaveHint')}</p>
         </Dialog>
       )}
     </section>
+    </>
   );
 }

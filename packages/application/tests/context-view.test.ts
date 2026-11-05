@@ -1,3 +1,4 @@
+import { translate } from '@agenthub/i18n';
 import { describe, expect, it } from 'vitest';
 import { type ContextOverview, type ContextTask, type GitObservation, contextWarnings, isActive, isDone } from '../src/index';
 
@@ -65,7 +66,7 @@ describe('contextWarnings (TDD §7.7, §9.3)', () => {
 
   it('flags a branch other than the one STATUS names, and a detached HEAD', () => {
     expect(kinds(overview([], 'feature/combo'))).toEqual([['branch_mismatch', null]]);
-    expect(contextWarnings(overview([]), git({ branch: null }), now)[0]?.message).toContain('detached HEAD');
+    expect(translate('vi', contextWarnings(overview([]), git({ branch: null }), now)[0]?.message ?? 'missing')).toContain('detached HEAD');
   });
 
   it('mentions uncommitted changes once for the project', () => {
@@ -88,7 +89,7 @@ describe('contextWarnings (TDD §7.7, §9.3)', () => {
         { kind: 'no_handoff_log', workstream: 'w', taskRef: 'Workstreams/w/Tasks/TASK-001.md' },
       ],
     };
-    expect(contextWarnings(value, git(), now).map((warning) => [warning.kind, warning.message])).toEqual([
+    expect(contextWarnings(value, git(), now).map((warning) => [warning.kind, translate('vi', warning.message)])).toEqual([
       ['no_project_context', 'Tài liệu thiếu PROJECT_CONTEXT.md.'],
       ['no_status', 'Workstream "Combo" thiếu STATUS.md.'],
       ['no_handoff_log', 'TASK-001 thiếu mục "Handoff log".'],

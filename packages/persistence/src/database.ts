@@ -23,7 +23,8 @@ function migrate(db: SqliteDatabase, migrations: readonly Migration[], backupDir
   if (current > newest) {
     throw new DomainError(
       'UNEXPECTED',
-      `Database có schema ${current}, mới hơn bản app này (${newest}). Hãy cập nhật AgentHub; dữ liệu chưa bị thay đổi.`,
+      'error.schemaTooNew',
+      { current, newest },
     );
   }
 

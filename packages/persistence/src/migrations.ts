@@ -133,4 +133,29 @@ export const MIGRATIONS: readonly Migration[] = [
       ALTER TABLE project_locations ADD COLUMN context_detected_at TEXT;
     `,
   },
+  {
+    // ADR-020 item 1: the skills the user added (the ones shipped with the app are read from the
+    // bundle), and whether opening an account installs the tools. Which tools an account has is
+    // read from its folders, never stored, as the user may change them by hand.
+    version: 6,
+    up: `
+      CREATE TABLE skills (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        source_path TEXT NOT NULL,
+        added_at TEXT NOT NULL
+      );
+      CREATE TABLE profile_tools (
+        profile_id TEXT PRIMARY KEY REFERENCES account_profiles(id),
+        auto_install INTEGER NOT NULL CHECK(auto_install IN (0, 1))
+      );
+    `,
+  },
+  {
+    // ADR-020 item 6: the language prompts for this project are written in; null follows the app.
+    version: 7,
+    up: `
+      ALTER TABLE projects ADD COLUMN chat_language TEXT;
+    `,
+  },
 ];

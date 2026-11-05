@@ -14,20 +14,23 @@ Tài liệu này chứa quy tắc dùng chung cho người phát triển, Codex 
 
 | Thành phần | Trách nhiệm | Dependency nội bộ dự kiến được phép |
 |---|---|---|
-| `packages/domain` | Entities, value objects, business rules và domain validation | Không có |
-| `packages/application` | Use cases, orchestration và ports cho hệ thống bên ngoài | domain |
-| `packages/contracts` | IPC DTOs, events, transport validation schemas | Không có |
-| `packages/persistence` | SQLite, migrations, filesystem artifact store | application, domain |
-| `packages/integrations` | Claude/Codex launchers và capability mapping | application, domain |
-| `packages/platform` | macOS/Windows process, app/folder, terminal và read-only Git/Unity observation adapters | application, domain |
+| `packages/i18n` | Bảng dịch `en`, `vi`, `ko` theo khoá, dịch `Message`, định dạng ngày giờ (ADR-020 mục 6) | Không có |
+| `packages/domain` | Entities, value objects, business rules và domain validation | i18n |
+| `packages/application` | Use cases, orchestration và ports cho hệ thống bên ngoài | domain, i18n |
+| `packages/contracts` | IPC DTOs, events, transport validation schemas | i18n |
+| `packages/persistence` | SQLite, migrations, filesystem artifact store | application, domain, i18n |
+| `packages/integrations` | Claude/Codex launchers và capability mapping | application, domain, i18n |
+| `packages/platform` | macOS/Windows process, app/folder, terminal và read-only Git/Unity observation adapters | application, domain, i18n |
 | `apps/desktop/src/main` | Electron lifecycle, IPC handlers, mapping DTOs và composition root | Các package cần để kết nối implementation |
-| `apps/desktop/src/mcp` | MCP server của AgentHub, chạy bằng binary của app ở chế độ Node, không có Electron API (ADR-019) | application, domain, persistence |
-| `apps/desktop/src/preload` | API contextBridge giới hạn, typed theo contracts | contracts |
-| `apps/desktop/src/renderer` | React UI, state và tương tác qua Preload API | contracts |
+| `apps/desktop/src/mcp` | MCP server của AgentHub, chạy bằng binary của app ở chế độ Node, không có Electron API (ADR-019) | application, domain, i18n, persistence |
+| `apps/desktop/src/preload` | API contextBridge giới hạn, typed theo contracts | contracts, i18n |
+| `apps/desktop/src/renderer` | React UI, state và tương tác qua Preload API | contracts, i18n |
 
 Ranh giới này được kiểm tra bằng `no-restricted-imports` trong `eslint.config.mjs`, và chỉ bắt được import, không phát hiện được truy cập gián tiếp. Khi thêm package hoặc đổi dependency được phép, sửa bảng này và file đó cùng lúc. Mỗi package export `src/index.ts`; `apps/desktop` khai báo package nội bộ ở `devDependencies` để chúng được bundle, còn dependency runtime có native code ở `dependencies`.
 
 `application` không import implementation hạ tầng. `integrations` nhận platform port qua dependency injection; Main nối launcher với platform adapter. `domain` không biết đến Electron, React, database, filesystem hay provider CLI. `contracts` không chứa domain entities trực tiếp; Main map domain results sang DTO cần thiết để giới hạn dữ liệu qua IPC.
+
+**Chữ hiển thị (ADR-020 mục 6):** không viết chữ cho người dùng thẳng trong code. Backend trả `Message` (khoá `@agenthub/i18n` kèm tham số), `DomainError` nhận khoá thay cho câu; renderer dịch bằng `useI18n()`. Thêm khoá vào cả ba bảng `vi`, `en`, `ko` (test kiểm tra cùng khoá và tham số). Lời nhắc cho agent dịch theo ngôn ngữ trò chuyện; lỗi chỉ agent đọc qua MCP để tiếng Anh với `raw()`. E2E chạy với `--lang=vi`.
 
 Renderer không gọi Node APIs, SQLite, filesystem hoặc process. Preload không expose raw `ipcRenderer` hoặc API thực thi tùy ý. Domain validation và transport validation phục vụ hai boundary khác nhau; không đưa quy tắc nghiệp vụ vào Renderer để thay cho kiểm tra trong Main/application.
 
@@ -54,7 +57,8 @@ Thử bản đóng gói bằng double-click trong Finder. Nếu mở bằng `ope
 
 - Giữ Desktop và CLI ngang hàng trong UX; phân biệt mức tự động hóa thực tế.
 - Không thêm chat UI, direct model inference API/SDK, native history scraping hoặc credential ingestion vào MVP. Ngoại lệ duy nhất là fallback transcript của [ADR-019](decisions/019-agent-maintained-context.md): chỉ đọc đủ để định vị file session theo folder, không đọc hay hiển thị nội dung.
-- Ngữ cảnh do agent viết qua skill hoặc MCP (ADR-019); AgentHub không tự soạn nội dung tài liệu và chỉ ghi qua thao tác "Thêm handoff".
+- **Tuân thủ quy định của nhà cung cấp, không dựa vào việc xin phép** (người dùng chốt 2026-11-06, [ADR-021](decisions/021-task-and-document-management.md)): AgentHub chỉ làm việc với account có gói thuê bao, qua app hoặc CLI chính thức, ở phiên tương tác do người dùng mở. Không dùng API key, không chạy agent ngầm (`claude -p`, `codex exec`, Agent SDK, app-server) để lấy kết quả về app, không lấy hay dùng lại token đăng nhập. Lệnh chỉ đọc không gọi model (như đọc usage limit, SPIKE-16) thì được.
+- Ngữ cảnh do agent viết qua skill hoặc MCP (ADR-019); AgentHub không tự soạn nội dung tài liệu. AgentHub chỉ ghi những gì người dùng nhập: "Thêm handoff", và theo ADR-021 các thao tác trên tab Task và Tài liệu, qua cùng `writeContext` (atomic, checksum) với MCP.
 - Smart Switch dựa trên rules và capability đã kiểm chứng; không suy ra account/session ready từ việc mở app.
 - Dùng manual fallback khi tích hợp không hỗ trợ hoặc chưa kiểm chứng; ghi đúng `unknown`/`unverified`.
 - Git/Unity observations ban đầu chỉ đọc; không tự checkout/reset/clean/stash/merge hoặc sửa Unity assets.

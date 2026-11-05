@@ -2,23 +2,18 @@ import type { ContextLanguageDto, ProjectContextDto, ProjectDto } from '@agenthu
 import { useState } from 'react';
 import { api, unwrap } from './api';
 import { CopyButton } from './CopyButton';
+import { useI18n } from './i18n';
 import { LANGUAGE_OPTIONS } from './ProjectSettings';
 import { Dialog, Segmented } from './ui';
 
-function gitText(git: ProjectContextDto['git']): string {
-  if (git.state === 'not_repo') return 'Folder project không phải Git repo.';
-  if (git.state === 'unknown') return 'Không đọc được Git.';
+function gitText(t: ReturnType<typeof useI18n>['t'], git: ProjectContextDto['git']): string {
+  if (git.state === 'not_repo') return t('docs.git.notRepo');
+  if (git.state === 'unknown') return t('docs.git.unknown');
   const parts = [git.branch ? `Branch ${git.branch}` : 'Detached HEAD'];
   if (git.head) parts.push(git.head.slice(0, 7));
-  if (git.dirty) parts.push('có thay đổi chưa commit');
+  if (git.dirty) parts.push(t('docs.git.dirty'));
   return parts.join(' · ');
 }
-
-// An agent compares the documents with the code; AgentHub only checks their layout (ADR-020 item 3).
-const reconcilePrompt = (path: string): string =>
-  `Compare the AgentHub context documents in ${path} with the current code and Git state of this project. List what is out of date, missing or contradicted by the code. Do not change any file until I confirm.`;
-
-const timeText = (date: Date): string => date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
 interface Props {
   project: ProjectDto;
@@ -33,6 +28,8 @@ interface Props {
 
 // The documents card on the overview: buttons instead of an on/off switch (ADR-020 item 3).
 export function ProjectDocs({ project, context, onChanged, onCreate, onCheck, onShowTasks, onError }: Props) {
+  const i18n = useI18n();
+  const { t, tr, date } = i18n;
   const [checkedAt, setCheckedAt] = useState<Date>();
   const [checking, setChecking] = useState(false);
   const settings = project.context;
@@ -64,17 +61,14 @@ export function ProjectDocs({ project, context, onChanged, onCreate, onCheck, on
 
   if (!settings.enabled) {
     return (
-      <section className="settings-group" aria-label="Tài liệu context">
+      <section className="settings-group" aria-label={t('settings.docs.title')}>
         <div className="settings-group-header">
           <div className="grow settings-row-text">
-            <h2>Tài liệu context</h2>
-            <p className="hint">
-              Chưa dùng. Ngữ cảnh đi qua handoff tóm tắt (tab Handoff). Với tài liệu, agent ghi brief, workstream, task và handoff vào một bộ file mà
-              account và provider nào cũng đọc được.
-            </p>
+            <h2>{t('settings.docs.title')}</h2>
+            <p className="hint">{t('docs.offHint')}</p>
           </div>
           <button type="button" className="primary" onClick={onCreate}>
-            Tạo tài liệu context
+            {t('docs.create')}
           </button>
         </div>
       </section>
@@ -86,22 +80,22 @@ export function ProjectDocs({ project, context, onChanged, onCreate, onCheck, on
 
   if (!overview.initialized) {
     return (
-      <section className="settings-group" aria-label="Tài liệu context">
+      <section className="settings-group" aria-label={t('settings.docs.title')}>
         <div className="settings-group-header">
           <div className="grow settings-row-text">
-            <h2>Tài liệu context</h2>
-            <p className="hint">Mở một account ở trên; agent dùng context-init, khảo sát code rồi hỏi bạn brief trước khi viết tài liệu.</p>
+            <h2>{t('settings.docs.title')}</h2>
+            <p className="hint">{t('docs.pendingHint')}</p>
             <span className="path" data-testid="context-path">
               {settings.path}
             </span>
-            {settings.pathStatus !== 'directory' && <span className="warning-text">Không tìm thấy folder này trên máy.</span>}
+            {settings.pathStatus !== 'directory' && <span className="warning-text">{t('settings.docs.folderGone')}</span>}
           </div>
           <div className="row nowrap">
             <button type="button" disabled={checking} onClick={() => void check()}>
-              Kiểm tra tài liệu
+              {t('docs.check')}
             </button>
             <button type="button" onClick={() => void cancelCreate()}>
-              Huỷ tạo
+              {t('docs.cancelCreate')}
             </button>
           </div>
         </div>
@@ -114,10 +108,10 @@ export function ProjectDocs({ project, context, onChanged, onCreate, onCheck, on
   const taskWarnings = warnings.length - projectWarnings.length;
 
   return (
-    <section className="settings-group" aria-label="Tài liệu context">
+    <section className="settings-group" aria-label={t('settings.docs.title')}>
       <div className="settings-group-header">
         <div className="grow settings-row-text">
-          <h2>Tài liệu context</h2>
+          <h2>{t('settings.docs.title')}</h2>
           <p className="hint" data-testid="context-summary">
             {overview.workstreams.length} workstream · {tasks} task
           </p>
@@ -127,35 +121,35 @@ export function ProjectDocs({ project, context, onChanged, onCreate, onCheck, on
         </div>
         <div className="row nowrap">
           <button type="button" disabled={checking} onClick={() => void check()}>
-            Kiểm tra tài liệu
+            {t('docs.check')}
           </button>
           <button type="button" onClick={() => void openFolder()}>
-            Mở folder
+            {t('docs.openFolder')}
           </button>
         </div>
       </div>
       <div className="settings-row">
         <p className="hint grow" data-testid="git-observation">
-          {gitText(git)}
+          {gitText(t, git)}
         </p>
       </div>
       {(projectWarnings.length > 0 || taskWarnings > 0) && (
         <div className="settings-row">
           <div className="stack grow">
             {projectWarnings.length > 0 && (
-              <ul className="warning-list" aria-label="Cảnh báo">
-                {projectWarnings.map((warning) => (
-                  <li key={warning.message} className="warning-text">
-                    {warning.message}
+              <ul className="warning-list" aria-label={t('docs.warnings')}>
+                {projectWarnings.map((warning, index) => (
+                  <li key={index} className="warning-text">
+                    {tr(warning.message)}
                   </li>
                 ))}
               </ul>
             )}
             {taskWarnings > 0 && (
               <p className="hint">
-                {taskWarnings} cảnh báo ở từng task.{' '}
+                {t('docs.taskWarnings', { count: taskWarnings })}{' '}
                 <button type="button" className="link" onClick={onShowTasks}>
-                  Xem ở tab Task
+                  {t('docs.seeTasks')}
                 </button>
               </p>
             )}
@@ -165,13 +159,17 @@ export function ProjectDocs({ project, context, onChanged, onCreate, onCheck, on
       {checkedAt && (
         <div className="settings-row">
           <p className="hint grow" role="status">
-            Đã đọc lại tài liệu lúc {timeText(checkedAt)}: {warnings.length === 0 ? 'không thấy vấn đề.' : `${warnings.length} cảnh báo.`}
+            {t(warnings.length === 0 ? 'docs.checkedClean' : 'docs.checkedWarnings', {
+              at: date(checkedAt, { hour: '2-digit', minute: '2-digit' }),
+              count: warnings.length,
+            })}
           </p>
         </div>
       )}
       <div className="settings-row">
-        <p className="hint grow">AgentHub chỉ kiểm tra cấu trúc. Để agent đối chiếu nội dung với code, dán lời nhắc này vào một phiên đang mở.</p>
-        <CopyButton text={reconcilePrompt(settings.path)} label="Copy lời nhắc đối chiếu" />
+        <p className="hint grow">{t('docs.reconcileHint')}</p>
+        {/* An agent compares the documents with the code; AgentHub only checks their layout (ADR-020 item 3). */}
+        <CopyButton text={i18n.prompt(project.chatLocale, 'prompt.reconcile', { path: settings.path })} label={t('docs.copyReconcile')} />
       </div>
     </section>
   );
@@ -184,13 +182,13 @@ interface CreateProps {
   onError: (message: string | undefined) => void;
 }
 
-const PLACES = [
-  { value: 'agenthub', label: 'Dữ liệu AgentHub' },
-  { value: 'folder', label: 'Folder khác' },
-] as const;
-
 // Chooses where the documents go and their language; the next launch runs context-init.
 export function CreateDocsDialog({ project, onClose, onCreated, onError }: CreateProps) {
+  const { t } = useI18n();
+  const places = [
+    { value: 'agenthub', label: t('docs.create.agentHub') },
+    { value: 'folder', label: t('docs.create.folder') },
+  ] as const;
   const [place, setPlace] = useState<'agenthub' | 'folder'>(project.context.custom ? 'folder' : 'agenthub');
   const [folder, setFolder] = useState<string | null>(project.context.custom ? project.context.path : null);
   const [language, setLanguage] = useState<ContextLanguageDto>(project.context.language);
@@ -221,43 +219,39 @@ export function CreateDocsDialog({ project, onClose, onCreated, onError }: Creat
 
   return (
     <Dialog
-      label="Tạo tài liệu context"
-      title="Tạo tài liệu context"
+      label={t('docs.create')}
+      title={t('docs.create')}
       onClose={onClose}
       actions={
         <>
           <button type="button" onClick={onClose}>
-            Huỷ
+            {t('common.cancel')}
           </button>
           <button type="button" className="primary" disabled={saving || (place === 'folder' && !folder)} onClick={() => void create()}>
-            Tạo tài liệu
+            {t('docs.create.submit')}
           </button>
         </>
       }
     >
-      <p className="hint">AgentHub chỉ chuẩn bị folder. Lần mở account tiếp theo, agent khảo sát code, hỏi bạn brief rồi viết tài liệu.</p>
+      <p className="hint">{t('docs.create.hint')}</p>
       <div className="field">
-        <span className="field-label">Nơi lưu</span>
-        <Segmented label="Nơi lưu" value={place} options={PLACES} onChange={setPlace} />
-        <span className="hint">
-          {place === 'agenthub'
-            ? 'Trong dữ liệu của AgentHub: không vào repo và không đổi theo branch.'
-            : 'Một folder bạn chọn. Nếu nằm trong repo, tài liệu đi theo branch, hiện trong git status, và bạn quyết định có commit hay không.'}
-        </span>
+        <span className="field-label">{t('settings.docs.place')}</span>
+        <Segmented label={t('settings.docs.place')} value={place} options={places} onChange={setPlace} />
+        <span className="hint">{t(place === 'agenthub' ? 'docs.create.agentHubHint' : 'docs.create.folderHint')}</span>
         {place === 'folder' && (
           <div className="row">
             <span className="path grow" data-testid="create-docs-folder">
-              {folder ?? 'Chưa chọn folder'}
+              {folder ?? t('docs.create.noFolder')}
             </span>
             <button type="button" onClick={() => void chooseFolder()}>
-              Chọn folder…
+              {t('docs.create.chooseFolder')}
             </button>
           </div>
         )}
       </div>
       <div className="field">
-        <span className="field-label">Ngôn ngữ tài liệu</span>
-        <Segmented label="Ngôn ngữ tài liệu" value={language} options={LANGUAGE_OPTIONS} onChange={setLanguage} />
+        <span className="field-label">{t('settings.docs.language')}</span>
+        <Segmented label={t('settings.docs.language')} value={language} options={LANGUAGE_OPTIONS} onChange={setLanguage} />
       </div>
     </Dialog>
   );
@@ -280,6 +274,7 @@ interface NoticeProps {
 // ADR-020 item 4: documents found in the project folder. One set is used at once and only
 // announced; several are listed for the user to pick.
 export function DocsFoundNotice({ project, notice, onChanged, onElsewhere, onCreate, onClose, onError }: NoticeProps) {
+  const { t } = useI18n();
   async function use(path: string): Promise<void> {
     onError(undefined);
     try {
@@ -292,44 +287,44 @@ export function DocsFoundNotice({ project, notice, onChanged, onElsewhere, onCre
 
   if (notice.kind === 'applied') {
     return (
-      <div className="banner notice" role="status" aria-label="Tài liệu có sẵn">
+      <div className="banner notice" role="status" aria-label={t('docs.found')}>
         <p>
-          Đã dùng bộ tài liệu có sẵn trong folder project: <span className="path">{notice.path}</span>
+          {t('docs.found.applied')} <span className="path">{notice.path}</span>
         </p>
         <p className="hint">
-          Agent sẽ đọc và ghi vào folder này.
-          {inside(notice.path, project.path) && ' Folder nằm trong repo, nên thay đổi của agent sẽ hiện trong git status.'}
+          {t('docs.found.writes')}
+          {inside(notice.path, project.path) && ` ${t('docs.found.inRepo')}`}
         </p>
         <div className="row">
           <button type="button" onClick={onElsewhere}>
-            Dùng nơi khác
+            {t('docs.found.elsewhere')}
           </button>
           <button type="button" onClick={onClose}>
-            Đóng
+            {t('common.close')}
           </button>
         </div>
       </div>
     );
   }
   return (
-    <div className="banner notice" role="group" aria-label="Tài liệu có sẵn">
-      <p>Folder project có {notice.found.length} bộ tài liệu cùng khuôn với AgentHub. Chọn bộ project này dùng:</p>
+    <div className="banner notice" role="group" aria-label={t('docs.found')}>
+      <p>{t('docs.found.several', { count: notice.found.length })}</p>
       <ul className="found-list">
         {notice.found.map((path) => (
           <li key={path} className="row nowrap">
             <span className="path grow">{path}</span>
             <button type="button" onClick={() => void use(path)}>
-              Dùng folder này
+              {t('docs.found.use')}
             </button>
           </li>
         ))}
       </ul>
       <div className="row">
         <button type="button" onClick={onCreate}>
-          Tạo bộ mới
+          {t('docs.found.createNew')}
         </button>
         <button type="button" onClick={onClose}>
-          Bỏ qua
+          {t('docs.found.skip')}
         </button>
       </div>
     </div>

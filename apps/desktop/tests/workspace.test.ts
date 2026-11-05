@@ -4,11 +4,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type MetadataStore, type Workspace, createWorkspace } from '@agenthub/application';
 import { DomainError } from '@agenthub/domain';
-import { appendHandoff, conflictingFiles, contextFiles, copyContextFiles, detectContext, openMetadataStore, readContextOverview, listNotes, moveNote, readNote, saveNote } from '@agenthub/persistence';
+import { appendHandoff, conflictingFiles, contextFiles, copyContextFiles, detectContext, openMetadataStore, readContextOverview, listNotes, moveNote, readNote, saveNote, listContext, readContext, writeContext } from '@agenthub/persistence';
 import { createGitObserver, createMacPlatform, createPathInspector } from '@agenthub/platform';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-const documentPorts = { overview: readContextOverview, detect: (path: string) => detectContext(path), files: contextFiles, conflicts: conflictingFiles, copy: copyContextFiles };
+const documentPorts = {
+  overview: readContextOverview,
+  detect: (path: string) => detectContext(path),
+  files: contextFiles,
+  conflicts: conflictingFiles,
+  copy: copyContextFiles,
+  list: (folder: string) => listContext(folder),
+  read: readContext,
+  write: writeContext,
+};
 
 // Real persistence and platform adapters on temporary folders; only Electron is absent.
 let root: string;
@@ -445,10 +454,136 @@ describe('settings', () => {
 
     restart();
 
-    expect(workspace.getSettings()).toEqual({ deviceId, theme: 'dark', claudeCliPath: null, codexCliPath: null });
+    expect(workspace.getSettings()).toEqual({ deviceId, theme: 'dark', uiLanguage: 'en', chatLanguage: null, claudeCliPath: null, codexCliPath: null });
+  });
+
+  it('keeps the interface and chat languages, chat following the interface until chosen (ADR-020 item 6)', () => {
+    expect(workspace.getSettings()).toMatchObject({ uiLanguage: 'en', chatLanguage: null });
+    workspace.updateSettings({ uiLanguage: 'ko' });
+    const project = workspace.addProject({ path: projectDir });
+    expect(workspace.listProjects()[0]).toMatchObject({ chatLanguage: null, chatLocale: 'ko' });
+
+    workspace.updateSettings({ chatLanguage: 'vi' });
+    workspace.updateProjectContext({ id: project.id, chatLanguage: 'en' });
+    restart();
+
+    expect(workspace.getSettings()).toMatchObject({ uiLanguage: 'ko', chatLanguage: 'vi' });
+    expect(workspace.listProjects()[0]).toMatchObject({ chatLanguage: 'en', chatLocale: 'en' });
+    workspace.updateProjectContext({ id: project.id, chatLanguage: null });
+    expect(workspace.listProjects()[0]?.chatLocale).toBe('vi');
+    workspace.updateSettings({ chatLanguage: null });
+    expect(workspace.getSettings().chatLanguage).toBeNull();
+  });
+
+  it('writes the checkpoint prompt in the project chat language', async () => {
+    const project = workspace.addProject({ path: projectDir });
+    workspace.updateProjectContext({ id: project.id, chatLanguage: 'vi' });
+
+    const { checkpointPrompt } = await workspace.projectContext(project.id);
+
+    expect(checkpointPrompt).toContain('context_save_handoff');
+    expect(checkpointPrompt).toMatch(/^Viết handoff/);
+    expect(checkpointPrompt).toMatch(/Hãy trả lời tôi bằng tiếng Việt\.$/);
   });
 
   it('defaults to the system theme', () => {
     expect(workspace.getSettings().theme).toBe('system');
+  });
+});
+
+describe('managing tasks and documents (ADR-021)', () => {
+  const REF = 'Workstreams/combo/Tasks/TASK-001-counter.md';
+
+  function withDocuments(language: 'en' | 'vi' = 'en'): { id: string; folder: string } {
+    const project = workspace.addProject({ path: projectDir });
+    const folder = workspace.updateProjectContext({ id: project.id, enabled: true, language }).context.path;
+    mkdirSync(join(folder, 'Workstreams', 'combo', 'Tasks'), { recursive: true });
+    mkdirSync(join(folder, 'Workstreams', 'intro', 'Tasks'), { recursive: true });
+    writeFileSync(join(folder, 'README.md'), '# Context');
+    writeFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), '# Combo\n\n| Task | State |\n|---|---|\n| TASK-001 | in progress |\n');
+    writeFileSync(join(folder, 'Workstreams', 'combo', 'Tasks', 'TASK-001-counter.md'), '# TASK-001 Counter\n\n## Goal\n\nCount combos.\n\n## Handoff log\n');
+    writeFileSync(join(folder, 'Workstreams', 'intro', 'STATUS.md'), '# Intro\n');
+    writeFileSync(join(folder, 'Workstreams', 'intro', 'Tasks', 'TASK-016-intro.md'), '# TASK-016 Intro\n\n## Handoff log\n');
+    return { id: project.id, folder };
+  }
+
+  const detailOf = (action: () => unknown): string | undefined => {
+    try {
+      action();
+    } catch (error) {
+      if (error instanceof DomainError) return error.detail.key;
+      throw error;
+    }
+    return undefined;
+  };
+
+  it('reads a task by sections, with its state from STATUS', () => {
+    const { id } = withDocuments();
+    const task = workspace.readTask(id, REF);
+    expect(task).toMatchObject({ id: 'TASK-001', workstream: 'Workstreams/combo', state: 'in progress', group: 'active' });
+    expect(task.document.sections.map((section) => [section.kind, section.body])).toEqual([
+      ['goal', 'Count combos.'],
+      ['handoff', ''],
+    ]);
+  });
+
+  it('creates a task numbered after every other, from the template, listed as To do', () => {
+    const { id, folder } = withDocuments('vi');
+    const task = workspace.createTask({ id, workstream: 'Workstreams/combo', title: 'Đếm combo trên màn hình', goal: 'Hiện số combo.' });
+
+    expect(task.ref).toBe('Workstreams/combo/Tasks/TASK-017-dem-combo-tren-man-hinh.md');
+    expect(task).toMatchObject({ id: 'TASK-017', state: 'Chờ', group: 'todo' });
+    expect(readFileSync(join(folder, task.ref), 'utf8')).toMatch(/^# TASK-017 Đếm combo trên màn hình\n\n## Mục tiêu\n\nHiện số combo\.\n/);
+    expect(readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toContain('| TASK-001 | in progress |\n| TASK-017 Đếm combo trên màn hình | Chờ |\n');
+    expect(codeOf(() => workspace.createTask({ id, workstream: 'Workstreams/none', title: 'x', goal: '' }))).toBe('NOT_FOUND');
+    expect(codeOf(() => workspace.createTask({ id, workstream: 'Workstreams/combo', title: '  ', goal: '' }))).toBe('VALIDATION_FAILED');
+  });
+
+  it('saves edited sections, and refuses when the file changed since it was read', () => {
+    const { id, folder } = withDocuments();
+    const task = workspace.readTask(id, REF);
+    const saved = workspace.saveTask({ id, ref: REF, baseSha256: task.sha256, edit: { title: 'TASK-001 Combo counter', bodies: [{ id: 0, body: 'Count and show combos.' }], added: [{ kind: 'criteria', body: '- [ ] Shows x2 after two hits' }] } });
+
+    expect(saved.document.title).toBe('TASK-001 Combo counter');
+    expect(saved.document.sections.map((section) => section.kind)).toEqual(['goal', 'criteria', 'handoff']);
+
+    writeFileSync(join(folder, REF), `${readFileSync(join(folder, REF), 'utf8')}\n### 2026-11-06 10:00 — Claude\n- agent wrote this\n`);
+    expect(detailOf(() => workspace.saveTask({ id, ref: REF, baseSha256: saved.sha256, edit: { title: 'Mine', bodies: [], added: [] } }))).toBe('documents.changed');
+    expect(readFileSync(join(folder, REF), 'utf8')).toContain('agent wrote this');
+  });
+
+  it('writes the state word of the documents language, and records Done as the user\'s confirmation once', () => {
+    const { id, folder } = withDocuments('vi');
+    const active = workspace.setTaskState({ id, ref: REF, state: 'blocked' });
+    expect(active).toMatchObject({ state: 'Bị chặn', group: 'blocked' });
+
+    const done = workspace.setTaskState({ id, ref: REF, state: 'done' });
+    workspace.setTaskState({ id, ref: REF, state: 'done' });
+
+    expect(done).toMatchObject({ state: 'Xong', group: 'done' });
+    const text = readFileSync(join(folder, REF), 'utf8');
+    expect(text.match(/Người dùng xác nhận trong AgentHub/g)).toHaveLength(1);
+    expect(text).toMatch(/## Handoff log\n\n### \d{4}-\d{2}-\d{2} \d{2}:\d{2} — AgentHub\n/);
+    // A task with no row yet gets one; a workstream without STATUS gets the table.
+    const intro = workspace.setTaskState({ id, ref: 'Workstreams/intro/Tasks/TASK-016-intro.md', state: 'active' });
+    expect(intro.state).toBe('Đang làm');
+    expect(readFileSync(join(folder, 'Workstreams', 'intro', 'STATUS.md'), 'utf8')).toBe('# Intro\n\n## Tasks\n\n| Task | Status |\n|---|---|\n| TASK-016 Intro | Đang làm |\n');
+  });
+
+  it('lists, reads and writes any Markdown document inside the folder, and nothing outside it', () => {
+    const { id, folder } = withDocuments();
+    expect(workspace.listDocuments(id).map((entry) => entry.path)).toContain('Workstreams/combo/STATUS.md');
+
+    const created = workspace.writeDocument({ id, path: 'Notes/idea.md', content: '# Idea\n', baseSha256: null });
+    expect(readFileSync(join(folder, 'Notes', 'idea.md'), 'utf8')).toBe('# Idea\n');
+    expect(workspace.documentChecksum(id, 'Notes/idea.md')).toBe(created.sha256);
+    expect(workspace.documentChecksum(id, 'Notes/missing.md')).toBeNull();
+
+    expect(detailOf(() => workspace.writeDocument({ id, path: 'Notes/idea.md', content: '# Again\n', baseSha256: null }))).toBe('documents.exists');
+    const read = workspace.readDocument(id, 'README.md');
+    workspace.writeDocument({ id, path: 'README.md', content: '# Context v2\n', baseSha256: read.sha256 });
+    expect(detailOf(() => workspace.writeDocument({ id, path: 'README.md', content: '# Stale\n', baseSha256: read.sha256 }))).toBe('documents.changed');
+    expect(codeOf(() => workspace.writeDocument({ id, path: '../escape.md', content: 'x', baseSha256: null }))).toBe('VALIDATION_FAILED');
+    expect(codeOf(() => workspace.writeDocument({ id, path: 'script.sh', content: 'x', baseSha256: null }))).toBe('VALIDATION_FAILED');
   });
 });

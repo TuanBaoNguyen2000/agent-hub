@@ -1,6 +1,7 @@
 import type { AccountLaunchPreviewDto, ClientModeDto, LaunchOutcomeDto, ProfileDto } from '@agenthub/contracts';
 import { type ReactNode, useState } from 'react';
 import { api, unwrap } from './api';
+import { useI18n } from './i18n';
 import { Close } from './icons';
 import { Dialog } from './ui';
 
@@ -8,7 +9,8 @@ export const PROVIDER_LABELS = { claude: 'Claude', codex: 'Codex' } as const;
 export const MODE_LABELS: Record<ClientModeDto, string> = { desktop: 'Desktop', cli: 'Terminal' };
 
 // Which Desktop window the account opens in; the two differ in what AgentHub can do (ADR-013).
-export const windowLabel = (account: ProfileDto): string => (account.desktopDataDir ? 'Cửa sổ riêng' : 'App chính');
+export const windowLabel = (t: ReturnType<typeof useI18n>['t'], account: ProfileDto): string =>
+  t(account.desktopDataDir ? 'account.ownWindow' : 'account.mainApp');
 
 export function AccountAvatar({ account, size = 'md' }: { account: ProfileDto; size?: 'sm' | 'md' }) {
   const letter = (account.accountEmail ?? PROVIDER_LABELS[account.provider]).charAt(0).toUpperCase();
@@ -35,6 +37,7 @@ export function useAccountLauncher(onError: (message: string) => void): {
   launch: (account: ProfileDto, mode: ClientModeDto) => void;
   view: ReactNode;
 } {
+  const { t, tr } = useI18n();
   const [pending, setPending] = useState<Pending>();
   const [confirmed, setConfirmed] = useState<string[]>([]);
   const [result, setResult] = useState<{ account: ProfileDto; mode: ClientModeDto; outcome: LaunchOutcomeDto }>();
@@ -76,13 +79,13 @@ export function useAccountLauncher(onError: (message: string) => void): {
     <>
       {pending && (
         <Dialog
-          label="Cần bạn quyết định"
-          title={`Mở ${pending.account.name} trong ${MODE_LABELS[pending.mode]}`}
+          label={t('launch.decide')}
+          title={t('account.openIn', { account: tr(pending.account.name), mode: MODE_LABELS[pending.mode] })}
           onClose={() => setPending(undefined)}
           actions={
             <>
               <button type="button" onClick={() => setPending(undefined)}>
-                Huỷ
+                {t('common.cancel')}
               </button>
               {!pending.preview.blocker && (
                 <button
@@ -91,7 +94,7 @@ export function useAccountLauncher(onError: (message: string) => void): {
                   disabled={missing || busy}
                   onClick={() => void execute(pending.account, pending.mode, confirmed)}
                 >
-                  Tiếp tục mở
+                  {t('launch.continue')}
                 </button>
               )}
             </>
@@ -99,14 +102,14 @@ export function useAccountLauncher(onError: (message: string) => void): {
         >
           {pending.preview.blocker && (
             <p className="banner error" role="alert">
-              {pending.preview.blocker.message}
+              {tr(pending.preview.blocker.message)}
             </p>
           )}
           {pending.preview.steps
             .filter((step) => step.warning)
-            .map((step) => (
-              <p key={step.label} className="banner warning">
-                {step.warning}
+            .map((step, index) => (
+              <p key={index} className="banner warning">
+                {tr(step.warning)}
               </p>
             ))}
           {pending.preview.requiredConfirmations.map((item) => (
@@ -118,31 +121,31 @@ export function useAccountLauncher(onError: (message: string) => void): {
                   setConfirmed((current) => (event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id)))
                 }
               />
-              {item.label}
+              {tr(item.label)}
             </label>
           ))}
         </Dialog>
       )}
       {result && (
-        <div className="toast" role="status" aria-label="Kết quả mở account">
+        <div className="toast" role="status" aria-label={t('account.launchResult')}>
           <div className="toast-header">
             <AccountAvatar account={result.account} size="sm" />
             <strong className="grow truncate">
-              Đã mở {MODE_LABELS[result.mode]} · {result.account.name}
+              {t('account.opened', { mode: MODE_LABELS[result.mode], account: tr(result.account.name) })}
             </strong>
-            <button type="button" className="icon-button" aria-label="Đóng" onClick={() => setResult(undefined)}>
+            <button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setResult(undefined)}>
               <Close />
             </button>
           </div>
-          {result.outcome.warnings.map((warning) => (
-            <p key={warning} className="banner warning">
-              {warning}
+          {result.outcome.warnings.map((warning, index) => (
+            <p key={index} className="banner warning">
+              {tr(warning)}
             </p>
           ))}
           {result.outcome.userActionRequired.length > 0 && (
             <ul className="todo">
-              {result.outcome.userActionRequired.map((item) => (
-                <li key={item}>{item}</li>
+              {result.outcome.userActionRequired.map((item, index) => (
+                <li key={index}>{tr(item)}</li>
               ))}
             </ul>
           )}

@@ -41,11 +41,29 @@ export const IpcChannel = {
   launchConfirmAccount: 'launch:confirm-account',
   launchAccountPlan: 'launch:account-plan',
   launchAccountExecute: 'launch:account-execute',
+  toolsOverview: 'tools:overview',
+  toolsInstall: 'tools:install',
+  toolsUninstall: 'tools:uninstall',
+  toolsSetAutoInstall: 'tools:set-auto-install',
+  toolsAddSkill: 'tools:add-skill',
+  toolsRemoveSkill: 'tools:remove-skill',
+  documentsList: 'documents:list',
+  documentsRead: 'documents:read',
+  documentsChecksum: 'documents:checksum',
+  documentsWrite: 'documents:write',
+  documentsOpen: 'documents:open',
+  tasksRead: 'tasks:read',
+  tasksSave: 'tasks:save',
+  tasksSetState: 'tasks:set-state',
+  tasksCreate: 'tasks:create',
 } as const;
 
-export const CONTEXT_LANGUAGES = ['en', 'vi'] as const;
-// Same id as the application's CONTEXT_TOOLS_CONFIRMATION: consent to change the main config folder.
-export const CONTEXT_TOOLS_CONFIRMATION = 'context-tools-main-config';
+// The four task states AgentHub writes into STATUS (ADR-021 item 4).
+export const TASK_STATES = ['todo', 'active', 'blocked', 'done'] as const;
+
+export const CONTEXT_LANGUAGES = ['en', 'vi', 'ko'] as const;
+// Interface and chat languages (ADR-020 item 6).
+export const UI_LANGUAGES = ['en', 'vi', 'ko'] as const;
 export const THEMES = ['system', 'light', 'dark'] as const;
 export const PROVIDERS = ['claude', 'codex'] as const;
 export const CLIENT_MODES = ['desktop', 'cli'] as const;

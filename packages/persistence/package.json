@@ -12,6 +12,7 @@
   "dependencies": {
     "@agenthub/application": "*",
     "@agenthub/domain": "*",
+    "@agenthub/i18n": "*",
     "better-sqlite3": "13.0.3"
   },
   "devDependencies": {

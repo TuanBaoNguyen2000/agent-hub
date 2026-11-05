@@ -1,6 +1,6 @@
 # ADR-019 — Context do agent duy trì qua tài liệu, skill và MCP của AgentHub
 
-**Status:** Accepted for MVP (conditional, chờ spike ở mục Conditions)  
+**Status:** Accepted for MVP (conditional, chờ spike ở mục Conditions); mục 3, 4 sửa bởi [ADR-021](021-task-and-document-management.md) (AgentHub đọc, sửa tài liệu và task)  
 **Date:** 2026-11-04  
 **Decision source:** Người dùng thảo luận hướng Phase 3 (2026-11-03 đến 2026-11-04) và chốt các mục dưới đây. Mẫu tham khảo là bộ `AgentContext/` người dùng đã dùng ở một dự án Unity trước (README quy trình, `PROJECT_CONTEXT`, mỗi đợt việc có `BRIEF`, `STATUS`, `DECISIONS`, `Tasks/` với handoff log).
 

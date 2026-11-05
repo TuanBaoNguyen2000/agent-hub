@@ -1,12 +1,14 @@
 import type { LaunchAttemptDto } from '@agenthub/contracts';
+import type { MessageKey } from '@agenthub/i18n';
 import { api, unwrap } from './api';
+import { useI18n } from './i18n';
 
-const LAUNCH_LABELS = {
-  planned: 'Đang mở',
-  launched: 'Đã mở',
-  manual_step: 'Đã mở',
-  failed: 'Thất bại',
-} as const;
+const LAUNCH_LABELS: Record<LaunchAttemptDto['status'], MessageKey> = {
+  planned: 'history.status.planned',
+  launched: 'history.status.launched',
+  manual_step: 'history.status.launched',
+  failed: 'history.status.failed',
+};
 
 interface Props {
   history: LaunchAttemptDto[];
@@ -16,6 +18,7 @@ interface Props {
 
 // The project's earlier launches (ADR-020 item 2): only shown when the user opens this tab.
 export function ProjectHistory({ history, onChanged, onError }: Props) {
+  const { t, tr, date } = useI18n();
   async function confirmAccount(attemptId: string): Promise<void> {
     onError(undefined);
     try {
@@ -27,28 +30,28 @@ export function ProjectHistory({ history, onChanged, onError }: Props) {
   }
 
   return (
-    <section className="settings-group" aria-label="Lịch sử mở">
+    <section className="settings-group" aria-label={t('history.title')}>
       <div className="settings-group-header">
         <div className="grow settings-row-text">
-          <h2>Lịch sử mở</h2>
-          <p className="hint">AgentHub không thấy app đang dùng account nào; bạn xác nhận khi đã kiểm tra trong app.</p>
+          <h2>{t('history.title')}</h2>
+          <p className="hint">{t('history.hint')}</p>
         </div>
       </div>
-      {history.length === 0 && <p className="settings-empty hint">Project này chưa được mở lần nào.</p>}
+      {history.length === 0 && <p className="settings-empty hint">{t('history.empty')}</p>}
       <ul className="settings-list">
         {history.map((attempt) => (
           <li key={attempt.id} className="history-item">
             <span className="grow">
-              {new Date(attempt.createdAt).toLocaleString('vi-VN')} — {attempt.profileAlias}, {attempt.mode === 'cli' ? 'Terminal' : 'Desktop'}:{' '}
-              {LAUNCH_LABELS[attempt.status]}
+              {date(attempt.createdAt)} — {tr(attempt.profileAlias)}, {attempt.mode === 'cli' ? 'Terminal' : 'Desktop'}:{' '}
+              {t(LAUNCH_LABELS[attempt.status])}
               {attempt.errorCode ? ` (${attempt.errorCode})` : ''}
               {attempt.taskRef ? ` · ${attempt.taskRef.split('/').at(-1)?.replace(/\.md$/, '')}` : ''}
             </span>
             {/* Never says "switched": AgentHub cannot observe which account an app uses (TDD §8.4). */}
-            {attempt.accountConfirmedAt ? <span className="badge">Bạn đã xác nhận account</span> : <span className="badge manual">Account chưa xác minh</span>}
+            {attempt.accountConfirmedAt ? <span className="badge">{t('history.confirmed')}</span> : <span className="badge manual">{t('history.unverified')}</span>}
             {!attempt.accountConfirmedAt && attempt.status !== 'failed' && (
               <button type="button" onClick={() => void confirmAccount(attempt.id)}>
-                Xác nhận đúng account
+                {t('history.confirm')}
               </button>
             )}
           </li>

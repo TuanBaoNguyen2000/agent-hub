@@ -8,7 +8,7 @@ Entities, value objects và business rules cho Project, AccountProfile và Launc
 
 ## Boundary
 
-- Không phụ thuộc package nội bộ khác.
+- Chỉ phụ thuộc `@agenthub/i18n`: lỗi và thông báo mang khoá dịch (`DomainError.detail`), không mang chữ (ADR-020 mục 6).
 - Không import Electron, React, Node filesystem/process, SQLite hoặc provider CLI implementation.
 - Không chứa transport DTOs hoặc IPC handlers; chúng thuộc contracts và Electron Main.
 - Application sử dụng domain; các adapter map dữ liệu lưu trữ hoặc kết quả bên ngoài sang kiểu cần thiết.

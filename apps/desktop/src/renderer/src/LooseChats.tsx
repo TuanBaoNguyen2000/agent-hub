@@ -2,12 +2,9 @@ import type { NoteDto, NoteWithContentDto, ProjectDto } from '@agenthub/contract
 import { useEffect, useState } from 'react';
 import { api, unwrap } from './api';
 import { CopyButton } from './CopyButton';
+import { useI18n } from './i18n';
 import { noteDate } from './ProjectHandoffs';
 import { Select } from './ui';
-
-// What another account's chat should be told to pick a loose chat up (TDD §9.4 scenario 5).
-const continuePrompt = (note: NoteDto): string =>
-  `Read the AgentHub loose chat "${note.title}" with the agenthub MCP tool context_loose_chats (id ${note.id}) and continue from it. Tell me what you understand before doing anything.`;
 
 interface ViewProps {
   id: string;
@@ -20,6 +17,8 @@ interface ViewProps {
 // One chat that belongs to no project (TDD §7.5): saved by an agent through MCP or pasted here, read
 // back by any account, and moved into a project when it turns out to belong to one.
 export function LooseChatView({ id, projects, onMoved, onError }: ViewProps) {
+  const i18n = useI18n();
+  const { t } = i18n;
   const [note, setNote] = useState<NoteWithContentDto | null>();
   const [target, setTarget] = useState('');
   const [moving, setMoving] = useState(false);
@@ -54,8 +53,8 @@ export function LooseChatView({ id, projects, onMoved, onError }: ViewProps) {
   if (note === null) {
     return (
       <div className="empty">
-        <h1>Không tìm thấy chat rời này</h1>
-        <p className="hint">Có thể nó đã được chuyển vào một project.</p>
+        <h1>{t('looseChat.notFound')}</h1>
+        <p className="hint">{t('looseChat.notFoundHint')}</p>
       </div>
     );
   }
@@ -65,40 +64,39 @@ export function LooseChatView({ id, projects, onMoved, onError }: ViewProps) {
   return (
     <div className="stack page">
       <header className="page-header">
-        <p className="breadcrumb">Chat rời</p>
+        <p className="breadcrumb">{t('looseChat.section')}</p>
         <h1 className="page-title">{note.title}</h1>
         <p className="hint">
-          {noteDate(note.createdAt)} · {note.source}
+          {noteDate(i18n, note.createdAt)} · {note.source}
         </p>
       </header>
 
-      <section className="settings-group" aria-label="Nội dung chat rời">
+      <section className="settings-group" aria-label={t('looseChat.content')}>
         <pre className="note-text loose-chat-text">{note.content}</pre>
         <div className="settings-row">
-          <p className="hint grow">Dán vào chat của account khác (có MCP của AgentHub) để làm tiếp từ đây.</p>
+          <p className="hint grow">{t('looseChat.pasteHint')}</p>
           <div className="row nowrap">
-            <CopyButton text={continuePrompt(note)} label="Copy lời nhắc tiếp tục" />
-            <CopyButton text={`# ${note.title}\n\n${note.content}`} label="Copy nội dung" />
+            {/* What another account's chat is told to pick the chat up (TDD §9.4 scenario 5). */}
+            <CopyButton text={i18n.prompt(i18n.chatLocale, 'prompt.looseChat', { title: note.title, id: note.id })} label={t('looseChat.copyPrompt')} />
+            <CopyButton text={`# ${note.title}\n\n${note.content}`} label={t('looseChat.copyContent')} />
           </div>
         </div>
       </section>
 
-      <section className="settings-group" aria-label="Chuyển vào project">
+      <section className="settings-group" aria-label={t('looseChat.move')}>
         <div className="settings-group-header">
           <div className="grow settings-row-text">
-            <h2>Chuyển vào project</h2>
-            <p className="hint">
-              Project có tài liệu: chat vào thư mục Inbox/ của tài liệu, để agent biến nó thành task. Project không có tài liệu: chat thành một handoff.
-            </p>
+            <h2>{t('looseChat.move')}</h2>
+            <p className="hint">{t('looseChat.moveHint')}</p>
           </div>
         </div>
         {projectOptions.length === 0 ? (
-          <p className="settings-empty hint">Chưa có project nào.</p>
+          <p className="settings-empty hint">{t('projects.empty')}</p>
         ) : (
           <div className="settings-row">
-            <Select label="Project đích" value={target} options={[{ value: '', label: 'Chọn project' }, ...projectOptions]} onChange={setTarget} />
+            <Select label={t('looseChat.target')} value={target} options={[{ value: '', label: t('looseChat.pickProject') }, ...projectOptions]} onChange={setTarget} />
             <button type="button" disabled={!target || moving} onClick={() => void move()}>
-              Chuyển vào project
+              {t('looseChat.move')}
             </button>
           </div>
         )}
@@ -113,6 +111,7 @@ interface NewProps {
 }
 
 export function NewLooseChat({ onSaved, onError }: NewProps) {
+  const { t } = useI18n();
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
@@ -132,19 +131,17 @@ export function NewLooseChat({ onSaved, onError }: NewProps) {
   return (
     <div className="stack page">
       <header className="page-header">
-        <h1 className="page-title">Chat rời mới</h1>
-        <p className="hint">
-          Agent tự lưu chat rời bằng skill context-capture (tool MCP context_capture). Ở đây bạn dán ghi chú mà agent in ra khi không lưu được qua MCP.
-        </p>
+        <h1 className="page-title">{t('looseChat.new')}</h1>
+        <p className="hint">{t('looseChat.newHint')}</p>
       </header>
-      <section className="settings-group" aria-label="Thêm chat rời">
+      <section className="settings-group" aria-label={t('looseChat.add')}>
         <div className="settings-row">
           <div className="stack grow">
-            <input aria-label="Tiêu đề chat rời" placeholder="Tiêu đề" value={title} onChange={(event) => setTitle(event.target.value)} />
-            <textarea aria-label="Nội dung chat rời" rows={10} value={content} onChange={(event) => setContent(event.target.value)} />
+            <input aria-label={t('looseChat.titleField')} placeholder={t('common.title')} value={title} onChange={(event) => setTitle(event.target.value)} />
+            <textarea aria-label={t('looseChat.content')} rows={10} value={content} onChange={(event) => setContent(event.target.value)} />
             <div className="row">
               <button type="button" className="primary" disabled={saving || title.trim() === '' || content.trim() === ''} onClick={() => void save()}>
-                Lưu chat rời
+                {t('looseChat.save')}
               </button>
             </div>
           </div>

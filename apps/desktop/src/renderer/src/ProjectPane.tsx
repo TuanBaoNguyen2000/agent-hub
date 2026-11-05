@@ -1,8 +1,11 @@
 import type { LaunchAttemptDto, ProfileDto, ProjectContextDto, ProjectDto } from '@agenthub/contracts';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import type { MessageKey } from '@agenthub/i18n';
 import { api, unwrap } from './api';
+import { useI18n } from './i18n';
 import { Folder, More } from './icons';
 import { CreateDocsDialog, type DocsNotice, DocsFoundNotice, ProjectDocs } from './ProjectDocs';
+import { ProjectDocuments } from './ProjectDocuments';
 import { ProjectHandoffs } from './ProjectHandoffs';
 import { ProjectHistory } from './ProjectHistory';
 import { ProjectLaunch } from './ProjectLaunch';
@@ -10,26 +13,29 @@ import { ProjectSettings } from './ProjectSettings';
 import { ProjectTasks, allTasks } from './ProjectTasks';
 import { Menu, MenuItem, TabPanel, Tabs } from './ui';
 
-type Tab = 'overview' | 'tasks' | 'handoffs' | 'history' | 'settings';
+type Tab = 'overview' | 'tasks' | 'documents' | 'handoffs' | 'history' | 'settings';
 
-const TABS: readonly { value: Tab; label: string }[] = [
-  { value: 'overview', label: 'Tổng quan' },
-  { value: 'tasks', label: 'Task' },
-  { value: 'handoffs', label: 'Handoff' },
-  { value: 'history', label: 'Lịch sử' },
-  { value: 'settings', label: 'Cài đặt' },
+const TABS: readonly { value: Tab; label: MessageKey }[] = [
+  { value: 'overview', label: 'project.tab.overview' },
+  { value: 'tasks', label: 'project.tab.tasks' },
+  { value: 'documents', label: 'project.tab.documents' },
+  { value: 'handoffs', label: 'project.tab.handoffs' },
+  { value: 'history', label: 'project.tab.history' },
+  { value: 'settings', label: 'project.tab.settings' },
 ];
 
 interface Props {
   project: ProjectDto;
   accounts: ProfileDto[] | undefined;
   onOpenSettings: () => void;
+  onOpenTools: () => void;
   onChanged: (project: ProjectDto) => void;
   onRemoved: (id: string) => void;
   onError: (message: string | undefined) => void;
 }
 
-export function ProjectPane({ project, accounts, onOpenSettings, onChanged, onRemoved, onError }: Props) {
+export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, onChanged, onRemoved, onError }: Props) {
+  const { t } = useI18n();
   const idBase = useId();
   const [tab, setTab] = useState<Tab>('overview');
   const [name, setName] = useState(project.name);
@@ -42,13 +48,18 @@ export function ProjectPane({ project, accounts, onOpenSettings, onChanged, onRe
   const searched = useRef(false);
 
   // Documents and Git change outside the app, so they are read again when the window regains focus.
+  // Reads can overlap (focus, a settings change); only the newest one may land.
+  const contextRead = useRef(0);
   const loadContext = useCallback(async () => {
+    const read = ++contextRead.current;
     try {
-      setContext(await unwrap(api.getProjectContext({ id: project.id })));
+      const loaded = await unwrap(api.getProjectContext({ id: project.id }));
+      if (read === contextRead.current) setContext(loaded);
     } catch (reason) {
-      onError((reason as Error).message);
+      if (read === contextRead.current) onError((reason as Error).message);
     }
-  }, [project.id, project.context.enabled, project.context.path, onError]);
+    // The checkpoint prompt is written in the project's chat language, so a change reads it again.
+  }, [project.id, project.context.enabled, project.context.path, project.chatLocale, onError]);
 
   useEffect(() => {
     void loadContext();
@@ -139,9 +150,7 @@ export function ProjectPane({ project, accounts, onOpenSettings, onChanged, onRe
   }
 
   async function remove(): Promise<void> {
-    const accepted = window.confirm(
-      `Gỡ "${project.name}" khỏi AgentHub?\n\nFolder của project và tài liệu context không bị xoá, nhưng hiện chưa có cách khôi phục project trong app.`,
-    );
+    const accepted = window.confirm(t('project.removeConfirm', { project: project.name }));
     if (!accepted) return;
     const done = await attempt(async () => {
       await unwrap(api.removeProject({ id: project.id }));
@@ -152,10 +161,10 @@ export function ProjectPane({ project, accounts, onOpenSettings, onChanged, onRe
 
   const taskSummary = project.context.enabled && tasks.length > 0 && (
     <p className="task-summary" data-testid="launch-task">
-      <span className="hint">Task cho lần mở:</span>
-      <span className="grow truncate">{selectedTask ? selectedTask.title : 'Không chọn (agent hỏi bạn)'}</span>
+      <span className="hint">{t('project.launchTask')}</span>
+      <span className="grow truncate">{selectedTask ? selectedTask.title : t('project.noTask')}</span>
       <button type="button" className="link" onClick={() => setTab('tasks')}>
-        Đổi
+        {t('project.changeTask')}
       </button>
     </p>
   );
@@ -166,22 +175,22 @@ export function ProjectPane({ project, accounts, onOpenSettings, onChanged, onRe
         <div className="header-row">
           <p className="breadcrumb grow" id="project-path">
             <Folder />
-            <span className="truncate">{project.path ?? 'Chưa có đường dẫn trên máy này'}</span>
+            <span className="truncate">{project.path ?? t('project.noPath')}</span>
           </p>
-          <Menu label="Thao tác với project" triggerClassName="icon-button" align="end" trigger={<More />}>
+          <Menu label={t('project.actions')} triggerClassName="icon-button" align="end" trigger={<More />}>
             {project.pathStatus === 'directory' && (
               <MenuItem icon={<Folder />} onSelect={() => void relink()}>
-                Đổi folder
+                {t('project.changeFolder')}
               </MenuItem>
             )}
             <MenuItem tone="danger" onSelect={() => void remove()}>
-              Gỡ khỏi AgentHub
+              {t('project.remove')}
             </MenuItem>
           </Menu>
         </div>
         <input
           className="bare-input page-title"
-          aria-label="Tên project"
+          aria-label={t('field.projectName')}
           value={name}
           onChange={(event) => setName(event.target.value)}
           onBlur={() => void rename()}
@@ -191,9 +200,9 @@ export function ProjectPane({ project, accounts, onOpenSettings, onChanged, onRe
         />
         {project.pathStatus !== 'directory' && (
           <div className="banner warning" role="alert">
-            <p>Không tìm thấy folder của project. Tài liệu context và lịch sử vẫn còn nguyên.</p>
+            <p>{t('project.folderGone')}</p>
             <button type="button" onClick={() => void relink()}>
-              Chọn lại folder
+              {t('project.relink')}
             </button>
           </div>
         )}
@@ -217,13 +226,14 @@ export function ProjectPane({ project, accounts, onOpenSettings, onChanged, onRe
         />
       )}
 
-      <Tabs label="Trang project" idBase={idBase} value={tab} options={TABS} onChange={setTab} />
+      <Tabs label={t('project.tabs')} idBase={idBase} value={tab} options={TABS.map((item) => ({ value: item.value, label: t(item.label) }))} onChange={setTab} />
 
       <TabPanel idBase={idBase} value="overview" selected={tab}>
         <ProjectLaunch
           project={project}
           accounts={accounts}
           onOpenSettings={onOpenSettings}
+          onOpenTools={onOpenTools}
           taskRef={taskRef}
           history={history}
           onLaunched={() => {
@@ -246,13 +256,27 @@ export function ProjectPane({ project, accounts, onOpenSettings, onChanged, onRe
         <ProjectTasks
           project={project}
           context={context}
+          active={tab === 'tasks'}
           selected={taskRef}
           onSelect={(ref) => {
             chosen.current = true;
             setTaskRef(ref);
           }}
           onCreateDocs={() => void startCreating()}
+          onReload={loadContext}
+          onError={onError}
+          accounts={accounts}
+          history={history}
+          onOpenSettings={onOpenSettings}
+          onOpenTools={onOpenTools}
+          onLaunched={() => {
+            void loadHistory();
+            void loadContext();
+          }}
         />
+      </TabPanel>
+      <TabPanel idBase={idBase} value="documents" selected={tab}>
+        <ProjectDocuments project={project} active={tab === 'documents'} onCreateDocs={() => void startCreating()} onChanged={loadContext} onError={onError} />
       </TabPanel>
       <TabPanel idBase={idBase} value="handoffs" selected={tab}>
         <ProjectHandoffs

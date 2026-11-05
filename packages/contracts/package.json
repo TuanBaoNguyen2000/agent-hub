@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@agenthub/i18n": "*",
     "zod": "4.6.7"
   }
 }

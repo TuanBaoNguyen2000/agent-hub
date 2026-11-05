@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { type LaunchService, type MetadataStore, createLaunchService, createWorkspace } from '@agenthub/application';
+import { DomainError } from '@agenthub/domain';
 import { createLauncher } from '@agenthub/integrations';
 import {
   appendHandoff,
@@ -20,8 +21,12 @@ import {
   readContextOverview,
   readNote,
   saveNote,
+  listContext,
+  readContext,
+  writeContext,
 } from '@agenthub/persistence';
-import { createGitObserver, createMacPlatform, createPathInspector, createSkillInstaller, shellQuote } from '@agenthub/platform';
+import { createGitObserver, createMacPlatform, createPathInspector, createSkillInstaller, readSkillManifest, shellQuote } from '@agenthub/platform';
+import { type Locale, resolveLocale, translate } from '@agenthub/i18n';
 import { BrowserWindow, app, dialog, nativeTheme, session, shell } from 'electron';
 import { registerIpcHandlers } from './ipc';
 
@@ -33,6 +38,8 @@ if (!app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
 let store: MetadataStore | undefined;
 let launchService: LaunchService | undefined;
 let mainWindow: BrowserWindow | undefined;
+// The interface language for what Main shows itself (ADR-020 item 6); the system's until the store opens.
+let uiLocale: () => Locale = () => resolveLocale(app.getLocale());
 
 const devServerUrl = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL'];
 
@@ -66,9 +73,9 @@ function createWindow(): void {
   window.webContents.on('will-prevent-unload', (event) => {
     const choice = dialog.showMessageBoxSync(window, {
       type: 'warning',
-      message: 'Bạn có thay đổi chưa lưu.',
-      detail: 'Nếu đóng bây giờ, các thay đổi này sẽ mất.',
-      buttons: ['Ở lại', 'Đóng và bỏ thay đổi'],
+      message: translate(uiLocale(), 'main.unsaved.message'),
+      detail: translate(uiLocale(), 'main.unsaved.detail'),
+      buttons: [translate(uiLocale(), 'main.unsaved.stay'), translate(uiLocale(), 'main.unsaved.discard')],
       defaultId: 0,
       cancelId: 0,
     });
@@ -108,6 +115,8 @@ function start(): void {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
 
   const dataDirectory = app.getPath('userData');
+  // English outside the three interface languages; `--lang` sets it, as E2E does.
+  const systemLocale = resolveLocale(app.getLocale());
   const openedStore = openMetadataStore(join(dataDirectory, 'agenthub.sqlite'), {
     backupDirectory: join(dataDirectory, 'backups'),
   });
@@ -137,6 +146,9 @@ function start(): void {
     files: contextFiles,
     conflicts: conflictingFiles,
     copy: copyContextFiles,
+    list: (folder: string) => listContext(folder),
+    read: readContext,
+    write: writeContext,
     appendHandoff: (folder: string, taskRef: string, entry: string) => {
       appendHandoff(folder, taskRef, entry);
     },
@@ -157,18 +169,28 @@ function start(): void {
     trash: testTrash ? async (path) => renameSync(path, join(testTrash, `${Date.now()}-${basename(path)}`)) : (path) => shell.trashItem(path),
     newId,
     now,
+    defaultLocale: systemLocale,
   });
+  uiLocale = () => workspace.getSettings().uiLanguage;
   const accountsRoot = usesOwnData ? join(dataDirectory, 'accounts') : join(homedir(), '.agenthub', 'accounts');
+  // Packaged skills sit beside app.asar; a dev run reads them from the source tree.
+  const skills = createSkillInstaller({
+    source: app.isPackaged ? join(process.resourcesPath, 'skills') : join(app.getAppPath(), 'skills'),
+    shared: join(dataDirectory, 'skills'),
+  });
+  try {
+    // Accounts link to AgentHub's copy, so this brings an app update to all of them.
+    skills.refresh();
+  } catch (error) {
+    console.error(error);
+  }
   const launching = createLaunchService({
     store: openedStore,
     launcher: createLauncher(platform),
     platform,
     paths,
-    // Packaged skills sit beside app.asar; a dev run reads them from the source tree.
-    skills: createSkillInstaller({
-      source: app.isPackaged ? join(process.resourcesPath, 'skills') : join(app.getAppPath(), 'skills'),
-      shared: join(dataDirectory, 'skills'),
-    }),
+    skills,
+    readSkill: readSkillManifest,
     mcpServer: (profileId) =>
       mcpShim === null
         ? null
@@ -183,6 +205,7 @@ function start(): void {
     newId,
     now,
     accountDirectories: (id) => ({ cli: join(accountsRoot, id, 'cli'), desktop: join(accountsRoot, id, 'desktop') }),
+    defaultLocale: systemLocale,
   });
   launchService = launching;
   nativeTheme.themeSource = workspace.getSettings().theme;
@@ -218,7 +241,10 @@ if (!app.requestSingleInstanceLock()) {
     .whenReady()
     .then(start)
     .catch((error: unknown) => {
-      dialog.showErrorBox('AgentHub không khởi động được', error instanceof Error ? error.message : String(error));
+      dialog.showErrorBox(
+        translate(uiLocale(), 'main.startFailed'),
+        error instanceof DomainError ? translate(uiLocale(), error.detail) : error instanceof Error ? error.message : String(error),
+      );
       app.quit();
     });
 }
