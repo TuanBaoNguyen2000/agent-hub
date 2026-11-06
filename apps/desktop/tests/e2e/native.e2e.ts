@@ -38,12 +38,14 @@ async function prepareProject(projectPath: string, cliPath: string): Promise<voi
   await page.getByRole('button', { name: 'Thêm project' }).click();
   await expect(page.locator('#project-path')).toHaveText(projectPath);
 
-  await page.getByRole('button', { name: 'Cài đặt' }).click();
-  await page.getByText('Nâng cao').click();
+  await page.keyboard.press('Meta+Comma');
+  const settings = page.getByRole('dialog', { name: 'Cài đặt' });
+  await settings.getByRole('tab', { name: 'Nâng cao' }).click();
   const cliField = page.getByLabel('Claude CLI');
   await cliField.fill(cliPath);
   await cliField.blur();
-  const accounts = page.getByRole('region', { name: 'Accounts' });
+  await settings.getByRole('tab', { name: 'Account', exact: true }).click();
+  const accounts = page.getByRole('region', { name: 'Account', exact: true });
   await accounts.getByRole('button', { name: 'Thêm account' }).click();
   await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
   await accounts.getByRole('button', { name: 'Dùng account này' }).click();
@@ -52,7 +54,8 @@ async function prepareProject(projectPath: string, cliPath: string): Promise<voi
   await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
   await expect(accounts.locator('.settings-list > li')).toHaveCount(2);
 
-  await page.getByRole('navigation', { name: 'Projects' }).getByRole('button', { name: /Dự án/ }).click();
+  await settings.getByRole('button', { name: 'Đóng' }).click();
+  await page.getByRole('navigation', { name: 'Điều hướng' }).getByRole('button', { name: /Dự án/ }).click();
   await page.getByRole('button', { name: 'Account', exact: true }).click();
   await page.getByRole('menuitemradio').nth(1).click();
 }
@@ -73,7 +76,7 @@ if [ "$1" = "--version" ]; then echo 1; exit 0; fi
   await prepareProject(project, cli);
 
   await page.getByRole('button', { name: 'Mở trong Terminal' }).click();
-  await page.getByRole('group', { name: 'Cần bạn quyết định' }).getByRole('button', { name: 'Cho phép', exact: true }).click();
+  await page.getByRole('group', { name: 'Trước khi mở' }).getByRole('button', { name: 'Cho phép', exact: true }).click();
 
   await expect(page.getByRole('status', { name: 'Kết quả lần mở' })).toContainText('Đã mở tại folder');
   await page.getByRole('tab', { name: 'Lịch sử' }).click();
@@ -92,7 +95,7 @@ if [ "$1" = "--version" ]; then echo 1; exit 0; fi
   // The second click opens straight away: permission is only asked once.
   await page.getByRole('button', { name: 'Mở trong Terminal' }).click();
   await expect(page.getByRole('status', { name: 'Kết quả lần mở' })).toContainText('Đã mở tại folder');
-  await expect(page.getByRole('group', { name: 'Cần bạn quyết định' })).toHaveCount(0);
+  await expect(page.getByRole('group', { name: 'Trước khi mở' })).toHaveCount(0);
 });
 
 test('a second account opens its own Claude Desktop window beside the main app', async () => {
@@ -111,9 +114,9 @@ test('a second account opens its own Claude Desktop window beside the main app',
       .split(/\s+/, 1)[0];
 
   await page.getByRole('button', { name: 'Mở trong Desktop' }).click();
-  const decision = page.getByRole('group', { name: 'Cần bạn quyết định' });
+  const decision = page.getByRole('group', { name: 'Trước khi mở' });
   await decision.getByRole('button', { name: 'Cho phép', exact: true }).click();
-  const proceed = decision.getByRole('button', { name: 'Tiếp tục mở' });
+  const proceed = decision.getByRole('button', { name: 'Mở', exact: true });
   await expect(proceed.or(page.getByRole('status', { name: 'Kết quả lần mở' })).first()).toBeVisible();
   const version = decision.getByRole('checkbox');
   if (await version.count()) await version.check();

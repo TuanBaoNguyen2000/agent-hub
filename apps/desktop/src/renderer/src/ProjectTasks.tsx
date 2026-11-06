@@ -16,7 +16,7 @@ import { useExternalChange } from './documentWatch';
 import { useI18n } from './i18n';
 import { Markdown } from './Markdown';
 import { ProjectLaunch } from './ProjectLaunch';
-import { Dialog, Segmented, Select } from './ui';
+import { Dialog, PathText, Segmented, Select } from './ui';
 
 type I18n = ReturnType<typeof useI18n>;
 
@@ -350,7 +350,9 @@ function TaskDetail({ project, taskRef, active, selected, onSelect, onReload, on
       <div className="settings-group-header">
         <div className="grow settings-row-text">
           <h2>{task.document.title || task.id}</h2>
-          <span className="path">{taskRef}</span>
+          <span className="path">
+            <PathText path={taskRef} />
+          </span>
         </div>
         <Select label={t('tasks.stateField')} value={task.group ?? 'todo'} options={stateOptions} onChange={(state) => void changeState(state)} align="end" />
       </div>

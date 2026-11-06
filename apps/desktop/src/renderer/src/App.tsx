@@ -4,15 +4,24 @@ import { AccountAvatar, PROVIDER_LABELS, useAccountLauncher, windowLabel } from 
 import { compareText } from '@agenthub/i18n';
 import { api, unwrap } from './api';
 import { useI18n } from './i18n';
-import { Chat, Folder, Gear, Monitor, Plus, Terminal } from './icons';
+import { Chat, Folder, Gear, Monitor, Plus, Sidebar as SidebarIcon, Terminal } from './icons';
 import { LooseChatView, NewLooseChat } from './LooseChats';
 import { ProjectPane } from './ProjectPane';
-import { SettingsView } from './SettingsView';
-import { Menu, MenuItem, MenuSeparator } from './ui';
+import { SettingsDialog, type SettingsTab } from './SettingsView';
+import { Menu, MenuItem, MenuSeparator, Segmented } from './ui';
 import { highestUsage, resetText, usageTone, windowTitle } from './usage';
 
 // Each read starts the account's CLI, so the sidebar only checks now and then.
 const USAGE_REFRESH_MS = 10 * 60_000;
+
+const SIDEBAR_KEY = 'agenthub.sidebar';
+function readSidebar(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) !== 'closed';
+  } catch {
+    return true;
+  }
+}
 
 function usageSummary(i18n: ReturnType<typeof useI18n>, usage: UsageDto): string {
   return usage.windows
@@ -24,8 +33,6 @@ type Screen =
   | { kind: 'project'; id: string }
   | { kind: 'loose-chat'; id: string }
   | { kind: 'new-loose-chat' }
-  // section: where the page opens, such as the Agent tools a launch points to.
-  | { kind: 'settings'; section?: 'tools' }
   | { kind: 'none' };
 
 export function App() {
@@ -37,6 +44,9 @@ export function App() {
   const [looseChats, setLooseChats] = useState<NoteDto[]>();
   const [screen, setScreen] = useState<Screen>({ kind: 'none' });
   const [error, setError] = useState<string>();
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(readSidebar);
+  const [mode, setMode] = useState<'projects' | 'notes'>('projects');
 
   const showError = useCallback((message: string | undefined) => setError(message), []);
   const launcher = useAccountLauncher(showError);
@@ -121,7 +131,35 @@ export function App() {
   function navigate(next: Screen): void {
     setError(undefined);
     setScreen(next);
+    if (next.kind === 'project') setMode('projects');
+    if (next.kind === 'loose-chat' || next.kind === 'new-loose-chat') setMode('notes');
   }
+
+  const openSettings = useCallback((tab: SettingsTab = 'general') => setSettingsTab(tab), []);
+
+  // Cmd+B shows or hides the sidebar and Cmd+, opens Settings, as in Claude, Codex and most editors.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      if (event.key === 'b') {
+        event.preventDefault();
+        setSidebarOpen((open) => !open);
+      } else if (event.key === ',') {
+        event.preventDefault();
+        setSettingsTab((tab) => tab ?? 'general');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_KEY, sidebarOpen ? 'open' : 'closed');
+    } catch {
+      // Only a convenience: the sidebar opens again next time.
+    }
+  }, [sidebarOpen]);
 
   async function addProject(): Promise<void> {
     setError(undefined);
@@ -130,93 +168,126 @@ export function App() {
       if (!path) return;
       const project = await unwrap(api.addProject({ path }));
       setProjects((current) => [...(current ?? []), project].sort(byName));
-      setScreen({ kind: 'project', id: project.id });
+      navigate({ kind: 'project', id: project.id });
     } catch (reason) {
       setError((reason as Error).message);
     }
   }
 
   const selectedProject = screen.kind === 'project' ? projects?.find((project) => project.id === screen.id) : undefined;
+  const selectedNote = screen.kind === 'loose-chat' ? looseChats?.find((note) => note.id === screen.id) : undefined;
+  const title = selectedProject?.name ?? selectedNote?.title ?? (screen.kind === 'new-loose-chat' ? t('looseChat.new') : '');
 
   return (
-    <div className="layout">
-      <nav className="sidebar" aria-label={t('nav.label')}>
-        <div className="sidebar-header">
-          <span className="brand">AgentHub</span>
+    <div className={`layout${sidebarOpen ? '' : ' sidebar-hidden'}`}>
+      <header className="titlebar">
+        <button
+          type="button"
+          className="icon-button titlebar-button"
+          aria-label={t(sidebarOpen ? 'nav.hideSidebar' : 'nav.showSidebar')}
+          title={`${t(sidebarOpen ? 'nav.hideSidebar' : 'nav.showSidebar')} (⌘B)`}
+          aria-expanded={sidebarOpen}
+          aria-controls="sidebar"
+          onClick={() => setSidebarOpen((open) => !open)}
+        >
+          <SidebarIcon />
+        </button>
+        <div className="titlebar-title">
+          {title && <span className="titlebar-name truncate">{title}</span>}
+          {selectedProject && (
+            <span className="titlebar-path truncate" id="project-path" title={selectedProject.path ?? undefined}>
+              {selectedProject.path ?? t('project.noPath')}
+            </span>
+          )}
         </div>
+      </header>
+      <nav className="sidebar" id="sidebar" aria-label={t('nav.label')} hidden={!sidebarOpen}>
+        <div className="sidebar-switch">
+          <Segmented
+            label={t('nav.show')}
+            value={mode}
+            options={[
+              { value: 'projects', label: t('nav.projects') },
+              { value: 'notes', label: t('looseChat.section') },
+            ]}
+            onChange={setMode}
+          />
+        </div>
+        {mode === 'projects' ? (
+          <button type="button" className="nav-item new-item" onClick={() => void addProject()}>
+            <span className="nav-icon">
+              <Plus />
+            </span>
+            {t('nav.addProject')}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="nav-item new-item"
+            aria-current={screen.kind === 'new-loose-chat' ? 'true' : undefined}
+            onClick={() => navigate({ kind: 'new-loose-chat' })}
+          >
+            <span className="nav-icon">
+              <Plus />
+            </span>
+            {t('looseChat.add')}
+          </button>
+        )}
         <div className="sidebar-scroll">
-          <section className="sidebar-section" aria-labelledby="sidebar-projects">
-            <div className="sidebar-section-header">
-              <p className="sidebar-label grow" id="sidebar-projects">
-                {t('nav.projects')}
-              </p>
-              <button type="button" className="icon-button sidebar-add" aria-label={t('nav.addProject')} title={t('nav.addProject')} onClick={() => void addProject()}>
-                <Plus />
-              </button>
-            </div>
-            <ul className="list">
-              {projects?.map((project) => (
-                <li key={project.id}>
-                  <button
-                    type="button"
-                    className="nav-item"
-                    aria-current={screen.kind === 'project' && screen.id === project.id ? 'true' : undefined}
-                    onClick={() => navigate({ kind: 'project', id: project.id })}
-                  >
-                    <span className="nav-icon">
-                      <Folder />
-                    </span>
-                    <span className="grow truncate">{project.name}</span>
-                    {project.pathStatus !== 'directory' && (
-                      <span className="badge warning" title={t('nav.folderMissing')}>
-                        !
+          {mode === 'projects' && (
+            <>
+              <ul className="list">
+                {projects?.map((project) => (
+                  <li key={project.id}>
+                    <button
+                      type="button"
+                      className="nav-item"
+                      aria-current={screen.kind === 'project' && screen.id === project.id ? 'true' : undefined}
+                      title={project.path ?? undefined}
+                      onClick={() => navigate({ kind: 'project', id: project.id })}
+                    >
+                      <span className="nav-icon">
+                        <Folder />
                       </span>
-                    )}
-                  </button>
-                </li>
-              ))}
-            </ul>
-            {projects?.length === 0 && <p className="sidebar-empty">{t('projects.empty')}</p>}
-          </section>
-          <section className="sidebar-section" aria-labelledby="sidebar-loose-chats">
-            <div className="sidebar-section-header">
-              <p className="sidebar-label grow" id="sidebar-loose-chats">
-                {t('looseChat.section')}
-              </p>
-              <button
-                type="button"
-                className="icon-button sidebar-add"
-                aria-label={t('looseChat.add')}
-                title={t('looseChat.add')}
-                aria-current={screen.kind === 'new-loose-chat' ? 'true' : undefined}
-                onClick={() => navigate({ kind: 'new-loose-chat' })}
-              >
-                <Plus />
-              </button>
-            </div>
-            <ul className="list">
-              {looseChats?.map((note) => (
-                <li key={note.id}>
-                  <button
-                    type="button"
-                    className="nav-item"
-                    data-testid="loose-chat"
-                    aria-current={screen.kind === 'loose-chat' && screen.id === note.id ? 'true' : undefined}
-                    onClick={() => navigate({ kind: 'loose-chat', id: note.id })}
-                  >
-                    <span className="nav-icon">
-                      <Chat />
-                    </span>
-                    <span className="grow truncate">{note.title}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-            {looseChats?.length === 0 && <p className="sidebar-empty">{t('nav.noLooseChats')}</p>}
-          </section>
+                      <span className="grow truncate">{project.name}</span>
+                      {project.pathStatus !== 'directory' && (
+                        <span className="badge warning" title={t('nav.folderMissing')}>
+                          !
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {projects?.length === 0 && <p className="sidebar-empty">{t('projects.empty')}</p>}
+            </>
+          )}
+          {mode === 'notes' && (
+            <>
+              <ul className="list">
+                {looseChats?.map((note) => (
+                  <li key={note.id}>
+                    <button
+                      type="button"
+                      className="nav-item"
+                      data-testid="loose-chat"
+                      aria-current={screen.kind === 'loose-chat' && screen.id === note.id ? 'true' : undefined}
+                      onClick={() => navigate({ kind: 'loose-chat', id: note.id })}
+                    >
+                      <span className="nav-icon">
+                        <Chat />
+                      </span>
+                      <span className="grow truncate">{note.title}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {looseChats?.length === 0 && <p className="sidebar-empty">{t('nav.noLooseChats')}</p>}
+            </>
+          )}
         </div>
         <div className="sidebar-footer">
-          <p className="sidebar-label">Accounts</p>
+          <p className="sidebar-label">{t('nav.accounts')}</p>
           <ul className="list" aria-label={t('nav.openAccount')}>
             {accounts?.map((account) => (
               <li key={account.id}>
@@ -238,7 +309,7 @@ export function App() {
                     {t('launch.openTerminal')}
                   </MenuItem>
                   <MenuSeparator />
-                  <MenuItem icon={<Gear />} onSelect={() => navigate({ kind: 'settings' })}>
+                  <MenuItem icon={<Gear />} onSelect={() => openSettings('accounts')}>
                     {t('accounts.manage')}
                   </MenuItem>
                 </Menu>
@@ -246,7 +317,7 @@ export function App() {
             ))}
             {accounts?.length === 0 && (
               <li>
-                <button type="button" className="nav-item muted" onClick={() => navigate({ kind: 'settings' })}>
+                <button type="button" className="nav-item muted" onClick={() => openSettings('accounts')}>
                   <span className="nav-icon">
                     <Plus />
                   </span>
@@ -255,12 +326,7 @@ export function App() {
               </li>
             )}
           </ul>
-          <button
-            type="button"
-            className="nav-item"
-            aria-current={screen.kind === 'settings' ? 'true' : undefined}
-            onClick={() => navigate({ kind: 'settings' })}
-          >
+          <button type="button" className="nav-item" aria-current={settingsTab ? 'true' : undefined} title={`${t('settings.title')} (⌘,)`} onClick={() => openSettings()}>
             <span className="nav-icon">
               <Gear />
             </span>
@@ -268,69 +334,71 @@ export function App() {
           </button>
         </div>
       </nav>
-      <main className="content">
-        <div className="content-inner">
-          {error && (
-            <p className="banner error" role="alert">
-              {error}
-            </p>
-          )}
-          {screen.kind === 'loose-chat' && (
-            <LooseChatView
-              key={screen.id}
-              id={screen.id}
-              projects={projects ?? []}
-              onMoved={(projectId) => {
-                void loadLooseChats();
-                navigate({ kind: 'project', id: projectId });
-              }}
-              onError={showError}
-            />
-          )}
-          {screen.kind === 'new-loose-chat' && (
-            <NewLooseChat
-              onSaved={(note) => {
-                void loadLooseChats();
-                navigate({ kind: 'loose-chat', id: note.id });
-              }}
-              onError={showError}
-            />
-          )}
-          {screen.kind === 'settings' && <SettingsView onError={showError} onAccountsChanged={reloadAccounts} section={screen.section} />}
-          {screen.kind === 'project' && selectedProject && (
-            <ProjectPane
-              key={selectedProject.id}
-              project={selectedProject}
-              accounts={accounts}
-              onOpenSettings={() => navigate({ kind: 'settings' })}
-              onOpenTools={() => navigate({ kind: 'settings', section: 'tools' })}
-              onError={showError}
-              onChanged={(updated) =>
-                setProjects((current) => current?.map((project) => (project.id === updated.id ? updated : project)).sort(byName))
-              }
-              onRemoved={(id) => {
-                const remaining = projects?.filter((project) => project.id !== id) ?? [];
-                setProjects(remaining);
-                setScreen(remaining[0] ? { kind: 'project', id: remaining[0].id } : { kind: 'none' });
-              }}
-            />
-          )}
-          {screen.kind === 'none' && projects !== undefined && (
-            <div className="empty">
-              <span className="empty-icon" aria-hidden="true">
-                <Folder />
-              </span>
-              <h1>{t(projects.length === 0 ? 'nav.emptyTitle' : 'nav.noneSelected')}</h1>
-              <p className="hint">{t(projects.length === 0 ? 'nav.emptyHint' : 'nav.noneSelectedHint')}</p>
-              {projects.length === 0 && (
-                <button type="button" className="primary" onClick={() => void addProject()}>
-                  {t('nav.chooseFolder')}
-                </button>
+      <main className="main">
+        {error && (
+          <p className="banner error main-banner" role="alert">
+            {error}
+          </p>
+        )}
+        {screen.kind === 'project' && selectedProject && (
+          <ProjectPane
+            key={selectedProject.id}
+            project={selectedProject}
+            accounts={accounts}
+            onOpenSettings={() => openSettings('accounts')}
+            onOpenTools={() => openSettings('tools')}
+            onError={showError}
+            onChanged={(updated) => setProjects((current) => current?.map((project) => (project.id === updated.id ? updated : project)).sort(byName))}
+            onRemoved={(id) => {
+              const remaining = projects?.filter((project) => project.id !== id) ?? [];
+              setProjects(remaining);
+              setScreen(remaining[0] ? { kind: 'project', id: remaining[0].id } : { kind: 'none' });
+            }}
+          />
+        )}
+        {screen.kind !== 'project' && (
+          <div className="page-scroll">
+            <div className="content-inner">
+              {screen.kind === 'loose-chat' && (
+                <LooseChatView
+                  key={screen.id}
+                  id={screen.id}
+                  projects={projects ?? []}
+                  onMoved={(projectId) => {
+                    void loadLooseChats();
+                    navigate({ kind: 'project', id: projectId });
+                  }}
+                  onError={showError}
+                />
+              )}
+              {screen.kind === 'new-loose-chat' && (
+                <NewLooseChat
+                  onSaved={(note) => {
+                    void loadLooseChats();
+                    navigate({ kind: 'loose-chat', id: note.id });
+                  }}
+                  onError={showError}
+                />
+              )}
+              {screen.kind === 'none' && projects !== undefined && (
+                <div className="empty">
+                  <span className="empty-icon" aria-hidden="true">
+                    <Folder />
+                  </span>
+                  <h1>{t(projects.length === 0 ? 'nav.emptyTitle' : 'nav.noneSelected')}</h1>
+                  <p className="hint">{t(projects.length === 0 ? 'nav.emptyHint' : 'nav.noneSelectedHint')}</p>
+                  {projects.length === 0 && (
+                    <button type="button" className="primary" onClick={() => void addProject()}>
+                      {t('nav.chooseFolder')}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </main>
+      {settingsTab && <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={() => setSettingsTab(null)} onAccountsChanged={reloadAccounts} />}
       {launcher.view}
     </div>
   );

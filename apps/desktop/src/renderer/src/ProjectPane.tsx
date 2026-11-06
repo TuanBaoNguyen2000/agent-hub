@@ -1,5 +1,5 @@
 import type { LaunchAttemptDto, ProfileDto, ProjectContextDto, ProjectDto } from '@agenthub/contracts';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { MessageKey } from '@agenthub/i18n';
 import { api, unwrap } from './api';
 import { useI18n } from './i18n';
@@ -38,7 +38,6 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
   const { t } = useI18n();
   const idBase = useId();
   const [tab, setTab] = useState<Tab>('overview');
-  const [name, setName] = useState(project.name);
   const [context, setContext] = useState<ProjectContextDto>();
   const [history, setHistory] = useState<LaunchAttemptDto[]>([]);
   const [taskRef, setTaskRef] = useState<string | null>(null);
@@ -128,20 +127,6 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
     }
   }
 
-  async function rename(): Promise<void> {
-    if (name.trim() === project.name) {
-      setName(project.name);
-      return;
-    }
-    const updated = await attempt(() => unwrap(api.updateProject({ id: project.id, name })));
-    if (updated) {
-      onChanged(updated);
-      setName(updated.name);
-    } else {
-      setName(project.name);
-    }
-  }
-
   async function relink(): Promise<void> {
     const path = await attempt(() => unwrap(api.pickProjectFolder()));
     if (!path) return;
@@ -169,90 +154,87 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
     </p>
   );
 
-  return (
-    <div className="stack page">
-      <header className="page-header">
-        <div className="header-row">
-          <p className="breadcrumb grow" id="project-path">
-            <Folder />
-            <span className="truncate">{project.path ?? t('project.noPath')}</span>
-          </p>
-          <Menu label={t('project.actions')} triggerClassName="icon-button" align="end" trigger={<More />}>
-            {project.pathStatus === 'directory' && (
-              <MenuItem icon={<Folder />} onSelect={() => void relink()}>
-                {t('project.changeFolder')}
-              </MenuItem>
-            )}
-            <MenuItem tone="danger" onSelect={() => void remove()}>
-              {t('project.remove')}
-            </MenuItem>
-          </Menu>
-        </div>
-        <input
-          className="bare-input page-title"
-          aria-label={t('field.projectName')}
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          onBlur={() => void rename()}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') event.currentTarget.blur();
-          }}
-        />
-        {project.pathStatus !== 'directory' && (
-          <div className="banner warning" role="alert">
-            <p>{t('project.folderGone')}</p>
-            <button type="button" onClick={() => void relink()}>
-              {t('project.relink')}
-            </button>
-          </div>
-        )}
-      </header>
+  // Overview, Handoff, History and Settings read as pages; Task and Documents fill the pane like an editor.
+  const page = (value: Tab, children: ReactNode) => (
+    <TabPanel idBase={idBase} value={value} selected={tab} className="panel-page">
+      <div className="content-inner">{children}</div>
+    </TabPanel>
+  );
 
-      {notice && (
-        <DocsFoundNotice
-          project={project}
-          notice={notice}
-          onChanged={onChanged}
-          onElsewhere={() => {
-            setNotice(undefined);
-            setTab('settings');
-          }}
-          onCreate={() => {
-            setNotice(undefined);
-            setCreating(true);
-          }}
-          onClose={() => setNotice(undefined)}
-          onError={onError}
-        />
+  return (
+    <div className="workspace">
+      <div className="workspace-bar">
+        <Tabs label={t('project.tabs')} idBase={idBase} value={tab} options={TABS.map((item) => ({ value: item.value, label: t(item.label) }))} onChange={setTab} />
+        <Menu label={t('project.actions')} triggerClassName="icon-button" align="end" trigger={<More />}>
+          {project.pathStatus === 'directory' && (
+            <MenuItem icon={<Folder />} onSelect={() => void relink()}>
+              {t('project.changeFolder')}
+            </MenuItem>
+          )}
+          <MenuItem tone="danger" onSelect={() => void remove()}>
+            {t('project.remove')}
+          </MenuItem>
+        </Menu>
+      </div>
+
+      {(project.pathStatus !== 'directory' || notice) && (
+        <div className="workspace-notices">
+          {project.pathStatus !== 'directory' && (
+            <div className="banner warning" role="alert">
+              <p>{t('project.folderGone')}</p>
+              <button type="button" onClick={() => void relink()}>
+                {t('project.relink')}
+              </button>
+            </div>
+          )}
+          {notice && (
+            <DocsFoundNotice
+              project={project}
+              notice={notice}
+              onChanged={onChanged}
+              onElsewhere={() => {
+                setNotice(undefined);
+                setTab('settings');
+              }}
+              onCreate={() => {
+                setNotice(undefined);
+                setCreating(true);
+              }}
+              onClose={() => setNotice(undefined)}
+              onError={onError}
+            />
+          )}
+        </div>
       )}
 
-      <Tabs label={t('project.tabs')} idBase={idBase} value={tab} options={TABS.map((item) => ({ value: item.value, label: t(item.label) }))} onChange={setTab} />
-
-      <TabPanel idBase={idBase} value="overview" selected={tab}>
-        <ProjectLaunch
-          project={project}
-          accounts={accounts}
-          onOpenSettings={onOpenSettings}
-          onOpenTools={onOpenTools}
-          taskRef={taskRef}
-          history={history}
-          onLaunched={() => {
-            void loadHistory();
-            void loadContext();
-          }}
-          taskSummary={taskSummary}
-        />
-        <ProjectDocs
-          project={project}
-          context={context}
-          onChanged={onChanged}
-          onCreate={() => void startCreating()}
-          onCheck={loadContext}
-          onShowTasks={() => setTab('tasks')}
-          onError={onError}
-        />
-      </TabPanel>
-      <TabPanel idBase={idBase} value="tasks" selected={tab}>
+      {page(
+        'overview',
+        <>
+          <ProjectLaunch
+            project={project}
+            accounts={accounts}
+            onOpenSettings={onOpenSettings}
+            onOpenTools={onOpenTools}
+            taskRef={taskRef}
+            history={history}
+            onLaunched={() => {
+              void loadHistory();
+              void loadContext();
+            }}
+            taskSummary={taskSummary}
+          />
+          <ProjectDocs
+            project={project}
+            context={context}
+            onChanged={onChanged}
+            onCreate={() => void startCreating()}
+            onCheck={loadContext}
+            onShowTasks={() => setTab('tasks')}
+            onError={onError}
+          />
+        </>,
+      )}
+      <TabPanel idBase={idBase} value="tasks" selected={tab} className="panel-split">
         <ProjectTasks
           project={project}
           context={context}
@@ -275,10 +257,11 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
           }}
         />
       </TabPanel>
-      <TabPanel idBase={idBase} value="documents" selected={tab}>
+      <TabPanel idBase={idBase} value="documents" selected={tab} className="panel-split">
         <ProjectDocuments project={project} active={tab === 'documents'} onCreateDocs={() => void startCreating()} onChanged={loadContext} onError={onError} />
       </TabPanel>
-      <TabPanel idBase={idBase} value="handoffs" selected={tab}>
+      {page(
+        'handoffs',
         <ProjectHandoffs
           project={project}
           context={context}
@@ -286,14 +269,10 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
           onPickTask={() => setTab('tasks')}
           onReload={() => void loadContext()}
           onError={onError}
-        />
-      </TabPanel>
-      <TabPanel idBase={idBase} value="history" selected={tab}>
-        <ProjectHistory history={history} onChanged={() => void loadHistory()} onError={onError} />
-      </TabPanel>
-      <TabPanel idBase={idBase} value="settings" selected={tab}>
-        <ProjectSettings project={project} onChanged={onChanged} onCreateDocs={() => void startCreating()} onError={onError} />
-      </TabPanel>
+        />,
+      )}
+      {page('history', <ProjectHistory history={history} onChanged={() => void loadHistory()} onError={onError} />)}
+      {page('settings', <ProjectSettings project={project} onChanged={onChanged} onCreateDocs={() => void startCreating()} onError={onError} />)}
 
       {creating && (
         <CreateDocsDialog

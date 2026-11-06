@@ -95,3 +95,43 @@ export const Chat = () => (
     <path d="M3 3.5h10v7H7.5L4.5 13v-2.5H3z" />
   </Icon>
 );
+
+export const Sidebar = () => (
+  <Icon>
+    <rect x="2" y="3" width="12" height="10" rx="2" />
+    <path d="M6.5 3v10" />
+  </Icon>
+);
+
+export const Puzzle = () => (
+  <Icon>
+    <path d="M6 2.5h4v2a1 1 0 0 0 2 0V4h1.5v4H12a1 1 0 0 0 0 2h1.5v3.5h-4V12a1 1 0 0 0-2 0v1.5H3V10h1.5a1 1 0 0 0 0-2H3V4h3z" />
+  </Icon>
+);
+
+export const Plug = () => (
+  <Icon>
+    <path d="M6 2v3M10 2v3M4.5 5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11v3" />
+  </Icon>
+);
+
+export const Person = () => (
+  <Icon>
+    <circle cx="8" cy="5.5" r="2.5" />
+    <path d="M3 13.5c.8-2.4 2.7-3.5 5-3.5s4.2 1.1 5 3.5" />
+  </Icon>
+);
+
+export const Sliders = () => (
+  <Icon>
+    <path d="M3 4.5h10M3 11.5h10" />
+    <circle cx="6" cy="4.5" r="1.5" />
+    <circle cx="10.5" cy="11.5" r="1.5" />
+  </Icon>
+);
+
+export const Wrench = () => (
+  <Icon>
+    <path d="M10.5 2.5a3 3 0 0 0-2.8 4L3 11.2 4.8 13l4.7-4.7a3 3 0 0 0 4-2.8l-1.7 1.7-1.8-.5-.5-1.8z" />
+  </Icon>
+);

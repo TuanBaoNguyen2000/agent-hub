@@ -29,6 +29,7 @@ import { createGitObserver, createMacPlatform, createPathInspector, createSkillI
 import { type Locale, resolveLocale, translate } from '@agenthub/i18n';
 import { BrowserWindow, app, dialog, nativeTheme, session, shell } from 'electron';
 import { registerIpcHandlers } from './ipc';
+import { MIN_HEIGHT, MIN_WIDTH, loadWindowState, trackWindowState } from './window-state';
 
 // Dev runs keep their own data, so unreleased migrations never touch real data.
 if (!app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
@@ -48,11 +49,12 @@ function isAppUrl(url: string): boolean {
 }
 
 function createWindow(): void {
+  const dataDirectory = app.getPath('userData');
+  const state = loadWindowState(dataDirectory);
   const window = new BrowserWindow({
-    width: 1100,
-    height: 760,
-    minWidth: 760,
-    minHeight: 480,
+    ...state.bounds,
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT,
     title: 'AgentHub',
     // The sidebar runs up under the traffic lights, as in Claude and Codex.
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 16 } } : {}),
@@ -64,6 +66,8 @@ function createWindow(): void {
     },
   });
   mainWindow = window;
+  if (state.maximized) window.maximize();
+  trackWindowState(window, dataDirectory);
 
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event, url) => {
@@ -131,6 +135,9 @@ function start(): void {
     // Without the shim, opening still works; only the MCP step is skipped.
     console.error(error);
   }
+  const mcpLog = join(dataDirectory, 'logs', 'mcp.log');
+  const mcpServer = (profileId: string): { command: string; args: string[] } | null =>
+    mcpShim === null ? null : { command: mcpShim, args: [`--account=${profileId}`, `--data=${dataDirectory}`, `--log=${mcpLog}`] };
   const newId = randomUUID;
   const now = (): string => new Date().toISOString();
   const defaultContextDirectory = (projectId: string): string => defaultContextFolder(dataDirectory, projectId);
@@ -191,10 +198,7 @@ function start(): void {
     paths,
     skills,
     readSkill: readSkillManifest,
-    mcpServer: (profileId) =>
-      mcpShim === null
-        ? null
-        : { command: mcpShim, args: [`--account=${profileId}`, `--data=${dataDirectory}`, `--log=${join(dataDirectory, 'logs', 'mcp.log')}`] },
+    mcpServer,
     defaultContextDirectory,
     documents,
     git,
@@ -216,6 +220,7 @@ function start(): void {
     engineStatus: () => openedStore.status(),
     dataDirectory,
     isTrustedSender: (event) => isAppUrl(event.senderFrame?.url ?? ''),
+    mcp: { server: mcpServer, logFile: mcpLog },
   });
 
   createWindow();

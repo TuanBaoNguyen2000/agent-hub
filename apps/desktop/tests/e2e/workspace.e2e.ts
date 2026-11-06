@@ -50,7 +50,23 @@ async function answerFolderDialog(path: string): Promise<void> {
   }, path);
 }
 
+type SettingsTab = 'Chung' | 'Account' | 'Công cụ agent' | 'MCP server' | 'Nâng cao';
+
+// Settings open over the window (Cmd+,); each topic has its own tab.
+async function settings(page: Page, tab: SettingsTab): Promise<void> {
+  const dialog = page.getByRole('dialog', { name: /^(Cài đặt|Settings)$/ });
+  if (!(await dialog.isVisible())) await page.keyboard.press('Meta+Comma');
+  await dialog.getByRole('tab', { name: tab, exact: true }).click();
+}
+
+async function closeSettings(page: Page): Promise<void> {
+  const dialog = page.getByRole('dialog', { name: /^(Cài đặt|Settings)$/ });
+  if (await dialog.isVisible()) await dialog.getByRole('button', { name: /^(Đóng|Close)$/ }).click();
+  await expect(dialog).toBeHidden();
+}
+
 async function addProject(page: Page, path = projectDir): Promise<void> {
+  await closeSettings(page);
   await answerFolderDialog(path);
   await page.getByRole('button', { name: 'Thêm project' }).click();
   await expect(page.locator('#project-path')).toHaveText(path);
@@ -58,8 +74,10 @@ async function addProject(page: Page, path = projectDir): Promise<void> {
 
 const tree = (page: Page) => page.getByRole('navigation', { name: 'Điều hướng' });
 
-const openTab = (page: Page, name: 'Tổng quan' | 'Task' | 'Tài liệu' | 'Handoff' | 'Lịch sử' | 'Cài đặt') =>
-  page.getByRole('tablist', { name: 'Trang project' }).getByRole('tab', { name, exact: true }).click();
+async function openTab(page: Page, name: 'Tổng quan' | 'Task' | 'Tài liệu' | 'Handoff' | 'Lịch sử' | 'Cài đặt'): Promise<void> {
+  await closeSettings(page);
+  await page.getByRole('tablist', { name: 'Trang project' }).getByRole('tab', { name, exact: true }).click();
+}
 
 const docsCard = (page: Page) => page.getByRole('region', { name: 'Tài liệu context' });
 const contextSettings = (page: Page) => page.getByRole('region', { name: 'Cài đặt tài liệu context' });
@@ -106,9 +124,9 @@ test('Phase 1 exit criteria: a project and its context settings survive a restar
 
   await addProject(page);
   // The history waits in its own tab (ADR-020 item 2).
-  await expect(page.getByText('Project này chưa được mở lần nào')).toBeHidden();
+  await expect(page.getByText('Chưa mở project này lần nào')).toBeHidden();
   await openTab(page, 'Lịch sử');
-  await expect(page.getByText('Project này chưa được mở lần nào')).toBeVisible();
+  await expect(page.getByText('Chưa mở project này lần nào')).toBeVisible();
 
   const defaultFolder = await createDocs(page, { language: 'Tiếng Việt' });
   expect(defaultFolder.startsWith(join(userData, 'projects'))).toBe(true);
@@ -144,7 +162,7 @@ test('tasks and handoffs come from the documents, and a pasted handoff lands at 
   await expect(card.getByTestId('context-summary')).toHaveText('1 workstream · 1 task');
   await expect(card.getByTestId('git-observation')).toHaveText('Folder project không phải Git repo.');
   await expect(card.getByRole('list', { name: 'Cảnh báo' })).toContainText('Tài liệu thiếu PROJECT_CONTEXT.md.');
-  await expect(card.getByText('cảnh báo ở từng task')).toBeVisible();
+  await expect(card.getByText('cảnh báo ở các task')).toBeVisible();
   await expect(card.getByRole('status')).toContainText('cảnh báo');
 
   writeFileSync(join(folder, 'PROJECT_CONTEXT.md'), '# Project');
@@ -153,20 +171,20 @@ test('tasks and handoffs come from the documents, and a pasted handoff lands at 
   await expect(card.getByRole('list', { name: 'Cảnh báo' })).toBeHidden();
 
   await card.getByRole('button', { name: 'Xem ở tab Task' }).click();
-  const tasks = page.getByRole('region', { name: 'Task trong tài liệu' });
+  const tasks = page.getByRole('region', { name: 'Danh sách task' });
   const row = tasks.getByTestId('context-task');
   await expect(row).toContainText('TASK-001 Combo counter');
   await expect(row).toContainText('in progress');
   await expect(row).toContainText('chưa có handoff');
   await row.click();
-  await page.getByRole('region', { name: 'Chi tiết task' }).getByRole('button', { name: 'Dùng cho lần mở' }).click();
-  await expect(row).toContainText('cho lần mở');
+  await page.getByRole('region', { name: 'Chi tiết task' }).getByRole('button', { name: 'Làm ở lần mở tới' }).click();
+  await expect(row).toContainText('lần mở tới');
 
   await openTab(page, 'Tổng quan');
   await expect(page.getByTestId('launch-task')).toContainText('TASK-001 Combo counter');
 
   await openTab(page, 'Handoff');
-  const handoffs = page.getByRole('region', { name: 'Handoff của project' });
+  const handoffs = page.getByRole('region', { name: 'Handoff', exact: true });
   await handoffs.getByLabel('Nội dung handoff').fill('### 2026-11-05 10:00 — Chat / Claude\n- **Done:** pasted');
   await handoffs.getByRole('button', { name: 'Thêm handoff', exact: true }).click();
 
@@ -195,7 +213,7 @@ test('tasks are read, created, edited and moved between states in AgentHub, and 
   await expect(detail.locator('.markdown strong')).toHaveText('combos');
 
   // Create, then the list and STATUS show it as To do.
-  const tasks = page.getByRole('region', { name: 'Task trong tài liệu' });
+  const tasks = page.getByRole('region', { name: 'Danh sách task' });
   await tasks.getByRole('button', { name: 'Tạo task' }).click();
   const dialog = page.getByRole('dialog', { name: 'Tạo task' });
   await dialog.getByLabel('Tên task').fill('Hiện combo');
@@ -223,7 +241,7 @@ test('tasks are read, created, edited and moved between states in AgentHub, and 
   await detail.getByRole('button', { name: 'Sửa', exact: true }).click();
   await detail.getByLabel('Tên task').fill('TASK-001 Mine');
   writeFileSync(join(folder, ref), `${readFileSync(join(folder, ref), 'utf8')}\n### 2026-11-06 10:00 — Claude\n- agent was here\n`);
-  await expect(detail.getByRole('alert')).toContainText('vừa được sửa bên ngoài');
+  await expect(detail.getByRole('alert')).toContainText('vừa bị sửa bên ngoài');
   await expect(detail.getByRole('button', { name: 'Lưu' })).toBeDisabled();
   await detail.getByRole('button', { name: 'Tải lại' }).click();
   await expect(detail.getByText('agent was here')).toBeVisible();
@@ -239,7 +257,7 @@ test('tasks are read, created, edited and moved between states in AgentHub, and 
   // Asking an agent opens an account the usual way; nothing runs in the background.
   await detail.getByRole('button', { name: 'Nhờ agent' }).click();
   const ask = detail.getByRole('group', { name: 'Nhờ agent' });
-  await expect(ask.getByText('Chưa có account nào để mở project này.')).toBeVisible();
+  await expect(ask.getByText('Chưa có account nào. Thêm account để mở project này.')).toBeVisible();
 });
 
 test('every Markdown document can be read, edited and created in AgentHub, and shows what an agent writes (ADR-021 item 8)', async () => {
@@ -289,10 +307,10 @@ test('a project without documents keeps pasted handoffs, newest first, and a loo
   await addProject(page);
 
   await openTab(page, 'Task');
-  await expect(page.getByRole('region', { name: 'Task trong tài liệu' }).getByRole('button', { name: 'Tạo tài liệu context' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Danh sách task' }).getByRole('button', { name: 'Tạo tài liệu context' })).toBeVisible();
 
   await openTab(page, 'Handoff');
-  const handoffs = page.getByRole('region', { name: 'Handoff của project' });
+  const handoffs = page.getByRole('region', { name: 'Handoff', exact: true });
   await expect(handoffs.getByText('Chưa có handoff nào.')).toBeVisible();
   await handoffs.getByRole('button', { name: 'Copy lời nhắc tóm tắt' }).click();
   await expect(handoffs.getByRole('button', { name: 'Đã copy' })).toBeVisible();
@@ -308,19 +326,20 @@ test('a project without documents keeps pasted handoffs, newest first, and a loo
   await first.getByRole('button').click();
   await expect(first).toContainText('- **Done:** pasted');
 
-  // Each loose chat is its own entry in the sidebar (ADR-020 item 2).
-  await expect(tree(page).getByText('Chưa có chat rời nào.')).toBeVisible();
-  await tree(page).getByRole('button', { name: 'Thêm chat rời' }).click();
-  await page.getByLabel('Tiêu đề chat rời').fill('Ý tưởng combo');
-  await page.getByLabel('Nội dung chat rời').fill('Combo reset sau 2 giây');
-  await page.getByRole('button', { name: 'Lưu chat rời' }).click();
+  // Each loose chat is its own entry in the sidebar (ADR-020 item 2), under its own switch.
+  await tree(page).getByRole('radio', { name: 'Ghi chú' }).click();
+  await expect(tree(page).getByText('Chưa có ghi chú nào.')).toBeVisible();
+  await tree(page).getByRole('button', { name: 'Thêm ghi chú' }).click();
+  await page.getByLabel('Tiêu đề ghi chú').fill('Ý tưởng combo');
+  await page.getByLabel('Nội dung ghi chú').fill('Combo reset sau 2 giây');
+  await page.getByRole('button', { name: 'Lưu ghi chú' }).click();
   const entry = tree(page).getByTestId('loose-chat');
   await expect(entry).toHaveText('Ý tưởng combo');
   await expect(entry).toHaveAttribute('aria-current', 'true');
   await expect(page.getByRole('heading', { name: 'Ý tưởng combo' })).toBeVisible();
   await expect(page.getByText('Combo reset sau 2 giây')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Copy lời nhắc tiếp tục' }).click();
+  await page.getByRole('button', { name: 'Copy lời nhắc làm tiếp' }).click();
   expect(await app?.evaluate(({ clipboard }) => clipboard.readText())).toContain('context_loose_chats');
   await page.getByLabel('Project đích').click();
   await page.getByRole('menuitemradio', { name: /Dự án/ }).click();
@@ -328,7 +347,9 @@ test('a project without documents keeps pasted handoffs, newest first, and a loo
 
   // The app goes to the project the chat went into.
   await expect(page.locator('#project-path')).toHaveText(projectDir);
-  await expect(tree(page).getByText('Chưa có chat rời nào.')).toBeVisible();
+  await expect(tree(page).getByRole('radio', { name: 'Project' })).toBeChecked();
+  await tree(page).getByRole('radio', { name: 'Ghi chú' }).click();
+  await expect(tree(page).getByText('Chưa có ghi chú nào.')).toBeVisible();
   await openTab(page, 'Handoff');
   await expect(handoffs.getByTestId('project-handoff').first()).toContainText('Ý tưởng combo');
   expect(readdirSync(projectDir)).toEqual([]);
@@ -374,7 +395,8 @@ test('documents already in the repo in AgentHub\'s layout are used right away, u
   await addProject(page);
 
   const notice = page.getByRole('status', { name: 'Tài liệu có sẵn' });
-  await expect(notice).toContainText(docs);
+  // Inside the project, the folder reads from the project's own folder.
+  await expect(notice).toContainText('trong project: AgentContext');
   await expect(notice).toContainText('git status');
   await expect(docsCard(page).getByTestId('context-summary')).toHaveText('1 workstream · 1 task');
   await openTab(page, 'Task');
@@ -441,6 +463,7 @@ test('renaming and removing a project leaves its folder alone', async () => {
   const page = await launch();
   await addProject(page);
 
+  await openTab(page, 'Cài đặt');
   const name = page.getByLabel('Tên project');
   await name.fill('Game A');
   await name.press('Enter');
@@ -454,12 +477,12 @@ test('renaming and removing a project leaves its folder alone', async () => {
   expect(existsSync(projectDir)).toBe(true);
 });
 
-const accounts = (page: Page) => page.getByRole('region', { name: 'Accounts' });
+const accounts = (page: Page) => page.getByRole('region', { name: 'Account', exact: true });
 // One per account: each row also lists its usage windows, which are list items too.
 const accountRows = (page: Page) => accounts(page).locator('.settings-list > li');
 
 async function addAccount(page: Page, kind: 'Claude' | 'Codex'): Promise<void> {
-  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await settings(page, 'Account');
   const before = await accountRows(page).count();
   await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
   await page.getByRole('menuitem', { name: kind, exact: true }).click();
@@ -471,12 +494,12 @@ async function addAccount(page: Page, kind: 'Claude' | 'Codex'): Promise<void> {
 }
 
 async function setCli(page: Page, label: 'Claude CLI' | 'Codex CLI', path: string): Promise<void> {
-  await page.getByRole('button', { name: 'Cài đặt' }).click();
-  await page.getByText('Nâng cao').click();
+  await settings(page, 'Nâng cao');
   const field = page.getByLabel(label);
   await field.fill(path);
   await field.blur();
   await expect(field).toHaveValue(path);
+  await closeSettings(page);
 }
 
 // Keeps its login per config folder, as the real CLI does. `auth login` asks for a browser, then
@@ -536,6 +559,8 @@ function approveLogin(email: string): void {
 const browserLog = (): string => readFileSync(join(browserDir, 'log'), 'utf8');
 
 async function openProject(page: Page): Promise<void> {
+  await closeSettings(page);
+  await tree(page).getByRole('radio', { name: 'Project' }).click();
   await tree(page).getByRole('button', { name: /Dự án/ }).click();
 }
 
@@ -543,9 +568,10 @@ test('a machine login is only used after asking, and accounts go by their email'
   let page = await launch();
   await setCli(page, 'Claude CLI', fakeClaude());
 
+  await settings(page, 'Account');
   await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
   await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
-  const offer = accounts(page).getByRole('group', { name: 'Chọn account để thêm' });
+  const offer = accounts(page).getByRole('group', { name: 'Thêm account nào?' });
   await expect(offer).toContainText('someone@example.com');
   await expect(accountRows(page)).toHaveCount(0);
 
@@ -567,7 +593,7 @@ test('a machine login is only used after asking, and accounts go by their email'
   await expect(page.getByRole('menuitemradio')).toHaveText([/someone@example\.com/]);
 
   page = await restart();
-  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await settings(page, 'Account');
   await expect(accounts(page).getByTestId('account-identity')).toHaveText('someone@example.com');
 });
 
@@ -575,6 +601,7 @@ test('another account signs in through a private window and shows up under its o
   const page = await launch();
   await setCli(page, 'Claude CLI', fakeClaude());
 
+  await settings(page, 'Account');
   await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
   await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
   await accounts(page).getByRole('button', { name: 'Đăng nhập account khác' }).click();
@@ -618,13 +645,14 @@ test('each account shows its usage limits from its own CLI, and refreshes on req
   writeFileSync(join(root, 'machine-claude', 'used'), '100');
   await usage.getByRole('button', { name: 'Làm mới' }).click();
   await expect(usage.getByRole('meter', { name: 'Phiên 5 giờ: đã dùng 100%' })).toBeVisible();
-  await expect(usage.getByRole('status')).toContainText('đã chạm hạn mức');
+  await expect(usage.getByRole('status')).toContainText('đã hết hạn mức');
 });
 
 test('cancelling a sign-in cancels adding the account', async () => {
   const page = await launch();
   await setCli(page, 'Claude CLI', fakeClaude(null));
 
+  await settings(page, 'Account');
   await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
   await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
   await accounts(page).getByRole('button', { name: 'Huỷ' }).click();
@@ -638,13 +666,13 @@ test('a sign-in in progress is still there after leaving Settings', async () => 
   await setCli(page, 'Claude CLI', fakeClaude(null));
   await addProject(page);
 
-  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await settings(page, 'Account');
   await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
   await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
   await expect(accounts(page).getByRole('group', { name: 'Đang đăng nhập' })).toBeVisible();
 
   await openProject(page);
-  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await settings(page, 'Account');
 
   await expect(accounts(page).getByRole('group', { name: 'Đang đăng nhập' })).toBeVisible();
   await accounts(page).getByRole('button', { name: 'Huỷ' }).click();
@@ -688,12 +716,12 @@ test('a first launch asks about the project once, and a denied pair stays blocke
   await openProject(page);
 
   await page.getByRole('button', { name: 'Mở trong Terminal' }).click();
-  const decision = page.getByRole('group', { name: 'Cần bạn quyết định' });
-  await expect(decision.getByText('Account này sẽ đọc được source code')).toBeVisible();
+  const decision = page.getByRole('group', { name: 'Trước khi mở' });
+  await expect(decision.getByText('Agent của account này sẽ đọc được source code')).toBeVisible();
 
   await decision.getByRole('button', { name: 'Không cho phép' }).click();
   await expect(decision.getByText('không được phép dùng project')).toBeVisible();
-  await expect(decision.getByRole('button', { name: 'Tiếp tục mở' })).toHaveCount(0);
+  await expect(decision.getByRole('button', { name: 'Mở', exact: true })).toHaveCount(0);
 
   await decision.getByRole('button', { name: 'Đổi thành cho phép' }).click();
   await expect(decision.getByText('không được phép dùng project')).toBeHidden();
@@ -713,14 +741,14 @@ test('opening never installs tools into the main account; the plan points to Age
   await createDocs(page);
 
   await page.getByRole('button', { name: 'Mở trong Terminal' }).click();
-  const decision = page.getByRole('group', { name: 'Cần bạn quyết định' });
+  const decision = page.getByRole('group', { name: 'Trước khi mở' });
   await decision.getByRole('button', { name: 'Cho phép', exact: true }).click();
 
   // Skills already linked by an earlier run on this machine are not named again; MCP always is.
   await expect(decision).toContainText(/chưa có .*MCP "agenthub".*Công cụ agent/);
   await expect(decision.getByRole('checkbox')).toHaveCount(0);
   await expect(decision.getByRole('button', { name: 'Mở mà không cài' })).toHaveCount(0);
-  await expect(decision.getByRole('button', { name: 'Tiếp tục mở' })).toBeEnabled();
+  await expect(decision.getByRole('button', { name: 'Mở', exact: true })).toBeEnabled();
 
   // This test stops before opening, and never installs into the machine's real config.
   await decision.getByRole('button', { name: 'Mở Công cụ agent' }).click();
@@ -730,7 +758,7 @@ test('opening never installs tools into the main account; the plan points to Age
 });
 
 async function addSeparateClaude(page: Page, email: string): Promise<string> {
-  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await settings(page, 'Account');
   await accounts(page).getByRole('button', { name: 'Thêm account' }).click();
   await page.getByRole('menuitem', { name: 'Claude', exact: true }).click();
   await accounts(page).getByRole('button', { name: 'Đăng nhập account khác' }).click();
@@ -746,6 +774,7 @@ test('agent tools are installed and removed per account, and a skill of your own
   await setCli(page, 'Claude CLI', fakeClaude());
   const email = 'second@example.com';
   const folder = await addSeparateClaude(page, email);
+  await settings(page, 'Công cụ agent');
   // Read from the current page, as a restart opens a new one.
   const toolsOf = () => page.getByRole('region', { name: 'Công cụ agent' });
   const cell = (tool: string) => toolsOf().getByRole('cell', { name: `${tool} · ${email}:` });
@@ -775,7 +804,7 @@ test('agent tools are installed and removed per account, and a skill of your own
   await tools.getByRole('checkbox', { name: `Tự cài khi mở cho ${email}` }).click();
   await expect(tools.getByRole('checkbox', { name: `Tự cài khi mở cho ${email}` })).not.toBeChecked();
   page = await restart();
-  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await settings(page, 'Công cụ agent');
   tools = toolsOf();
   await expect(tools.getByRole('checkbox', { name: `Tự cài khi mở cho ${email}` })).not.toBeChecked();
   await expect(cell('context-resume')).toContainText('Trùng tên');
@@ -803,6 +832,39 @@ test('agent tools are installed and removed per account, and a skill of your own
   expect(existsSync(mine)).toBe(true);
 });
 
+test('the MCP page shows how the server runs, installs it per account and checks the connection the way the account would', async () => {
+  const page = await launch();
+  await setCli(page, 'Claude CLI', fakeClaude());
+  const email = 'second@example.com';
+  const folder = await addSeparateClaude(page, email);
+  await settings(page, 'Công cụ agent');
+  await page.getByRole('region', { name: 'Công cụ agent' }).getByRole('button', { name: 'Chi tiết MCP server agenthub' }).click();
+  await expect(page.getByRole('heading', { name: 'MCP server agenthub' })).toBeVisible();
+
+  const tools = page.getByRole('region', { name: 'Tool agent dùng được' });
+  await expect(tools).toContainText('context_projects');
+  await expect(tools).toContainText('Ghi cả một tài liệu');
+  await expect(page.getByTestId('mcp-command')).toHaveText(join(userData, 'bin', 'agenthub-mcp'));
+
+  const account = page.getByRole('region', { name: 'Theo account' }).getByRole('listitem', { name: email });
+  await expect(account).toContainText('Chưa cài');
+  await account.getByRole('button', { name: 'Cài', exact: true }).click();
+  await expect(account).toContainText('Đã cài');
+  await expect(account).toContainText('thoát rồi mở lại');
+  expect(readFileSync(join(folder, '.claude.json'), 'utf8')).toContain('agenthub-mcp');
+
+  // The real shim, run with the app binary in Node mode, as the account's client would.
+  await account.getByRole('button', { name: `Thử kết nối cho ${email}` }).click();
+  await expect(account.getByRole('status')).toContainText('Kết nối được · 8 tool', { timeout: 15_000 });
+  await expect(account.getByRole('status')).toContainText('Chưa thấy project nào');
+  await expect(page.getByTestId('mcp-log')).toContainText('agenthub-check');
+
+  await account.getByRole('button', { name: 'Gỡ', exact: true }).click();
+  await expect(account).toContainText('Chưa cài');
+  await settings(page, 'Công cụ agent');
+  await expect(page.getByRole('region', { name: 'Công cụ agent' })).toBeVisible();
+});
+
 test('a missing CLI blocks the Terminal launch with a clear reason', async () => {
   const page = await launch();
   await addProject(page);
@@ -811,7 +873,7 @@ test('a missing CLI blocks the Terminal launch with a clear reason', async () =>
   await openProject(page);
 
   await page.getByRole('button', { name: 'Mở trong Terminal' }).click();
-  const decision = page.getByRole('group', { name: 'Cần bạn quyết định' });
+  const decision = page.getByRole('group', { name: 'Trước khi mở' });
   await expect(decision.getByRole('alert')).toContainText('Không tìm thấy Claude CLI');
 });
 
@@ -824,9 +886,9 @@ function isDark(page: Page): Promise<boolean> {
 
 test('the theme setting applies and survives a restart', async () => {
   let page = await launch();
-  await page.getByRole('button', { name: 'Cài đặt' }).click();
-  await page.getByText('Nâng cao').click();
+  await settings(page, 'Nâng cao');
   await expect(page.locator('#schema-version')).toHaveText('7');
+  await settings(page, 'Chung');
 
   const theme = (label: string) => page.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: label });
   await theme('Tối').click();
@@ -844,7 +906,7 @@ test('the theme setting applies and survives a restart', async () => {
   page = await restart();
   await expect.poll(() => isDark(page)).toBe(true);
   expect(await app?.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('dark');
-  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await settings(page, 'Chung');
   await expect(page.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: 'Tối' })).toBeChecked();
 });
 
@@ -860,9 +922,9 @@ test('the interface language changes every text at once and survives a restart; 
   // Chat follows the interface until chosen.
   expect(await copyPrompt('Copy lời nhắc tóm tắt')).toMatch(/^Viết handoff .*Hãy trả lời tôi bằng tiếng Việt\.$/s);
 
-  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await settings(page, 'Chung');
   await page.getByRole('radiogroup', { name: 'Ngôn ngữ giao diện' }).getByRole('radio', { name: 'English' }).click();
-  await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   // The sidebar and every other screen switch with it, without a reload.
   await expect(page.getByRole('navigation', { name: 'Navigation' }).getByRole('button', { name: 'Add project' })).toBeVisible();
@@ -875,6 +937,7 @@ test('the interface language changes every text at once and survives a restart; 
   const chat = page.getByRole('radiogroup', { name: 'Chat language' });
   await chat.getByRole('radio', { name: '한국어' }).click();
   await expect(chat.getByRole('radio', { name: '한국어' })).toBeChecked();
+  await page.getByRole('dialog', { name: 'Settings' }).getByRole('button', { name: 'Close' }).click();
   await page.getByRole('navigation', { name: 'Navigation' }).getByRole('button', { name: /Dự án/ }).click();
   await page.getByRole('tablist', { name: 'Project page' }).getByRole('tab', { name: 'Handoff', exact: true }).click();
   expect(await copyPrompt('Copy summary prompt')).toMatch(/^다른 계정이 이어갈 수 있도록.*한국어로 답해 주세요\.$/s);

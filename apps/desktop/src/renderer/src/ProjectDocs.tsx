@@ -4,7 +4,7 @@ import { api, unwrap } from './api';
 import { CopyButton } from './CopyButton';
 import { useI18n } from './i18n';
 import { LANGUAGE_OPTIONS } from './ProjectSettings';
-import { Dialog, Segmented } from './ui';
+import { Dialog, PathText, Segmented } from './ui';
 
 function gitText(t: ReturnType<typeof useI18n>['t'], git: ProjectContextDto['git']): string {
   if (git.state === 'not_repo') return t('docs.git.notRepo');
@@ -86,7 +86,7 @@ export function ProjectDocs({ project, context, onChanged, onCreate, onCheck, on
             <h2>{t('settings.docs.title')}</h2>
             <p className="hint">{t('docs.pendingHint')}</p>
             <span className="path" data-testid="context-path">
-              {settings.path}
+              <PathText path={settings.path} />
             </span>
             {settings.pathStatus !== 'directory' && <span className="warning-text">{t('settings.docs.folderGone')}</span>}
           </div>
@@ -116,7 +116,7 @@ export function ProjectDocs({ project, context, onChanged, onCreate, onCheck, on
             {overview.workstreams.length} workstream · {tasks} task
           </p>
           <span className="path" data-testid="context-path">
-            {settings.path}
+            <PathText path={settings.path} />
           </span>
         </div>
         <div className="row nowrap">
@@ -241,7 +241,7 @@ export function CreateDocsDialog({ project, onClose, onCreated, onError }: Creat
         {place === 'folder' && (
           <div className="row">
             <span className="path grow" data-testid="create-docs-folder">
-              {folder ?? t('docs.create.noFolder')}
+              {folder ? <PathText path={folder} /> : t('docs.create.noFolder')}
             </span>
             <button type="button" onClick={() => void chooseFolder()}>
               {t('docs.create.chooseFolder')}
@@ -289,7 +289,9 @@ export function DocsFoundNotice({ project, notice, onChanged, onElsewhere, onCre
     return (
       <div className="banner notice" role="status" aria-label={t('docs.found')}>
         <p>
-          {t('docs.found.applied')} <span className="path">{notice.path}</span>
+          {t('docs.found.applied')} <span className="path">
+            <PathText path={project.path && notice.path.startsWith(`${project.path}/`) ? notice.path.slice(project.path.length + 1) : notice.path} />
+          </span>
         </p>
         <p className="hint">
           {t('docs.found.writes')}
@@ -312,7 +314,9 @@ export function DocsFoundNotice({ project, notice, onChanged, onElsewhere, onCre
       <ul className="found-list">
         {notice.found.map((path) => (
           <li key={path} className="row nowrap">
-            <span className="path grow">{path}</span>
+            <span className="path grow">
+              <PathText path={path} />
+            </span>
             <button type="button" onClick={() => void use(path)}>
               {t('docs.found.use')}
             </button>

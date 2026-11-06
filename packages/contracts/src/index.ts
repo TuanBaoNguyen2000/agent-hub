@@ -133,6 +133,10 @@ export const ipcInput = {
   [IpcChannel.toolsSetAutoInstall]: z.strictObject({ profileId: idSchema, on: z.boolean() }),
   [IpcChannel.toolsAddSkill]: z.strictObject({ path: pathSchema }),
   [IpcChannel.toolsRemoveSkill]: z.strictObject({ name: skillNameSchema }),
+  [IpcChannel.mcpInfo]: noInput,
+  [IpcChannel.mcpProbe]: z.strictObject({ profileId: idSchema }),
+  [IpcChannel.mcpLog]: noInput,
+  [IpcChannel.mcpRevealLog]: noInput,
   [IpcChannel.documentsList]: z.strictObject({ id: idSchema }),
   [IpcChannel.documentsRead]: z.strictObject({ id: idSchema, path: documentPathSchema }),
   [IpcChannel.documentsChecksum]: z.strictObject({ id: idSchema, path: documentPathSchema }),
@@ -411,6 +415,37 @@ export interface AgentToolsDto {
   leaked: { directory: string; names: string[] }[];
 }
 
+// AgentHub's own MCP server (ADR-019 item 6), as the MCP page in Settings shows it.
+export interface McpServerDto {
+  name: string;
+  version: string;
+  // The shim clients start; null when AgentHub could not write it on this machine.
+  command: string | null;
+  // With <account> standing for each account's id.
+  args: string[];
+  protocolVersions: string[];
+  tools: { name: string; readOnly: boolean }[];
+  logFile: string;
+}
+
+// One start of the server as an account's client would start it: initialize, tools/list, context_projects.
+export interface McpProbeDto {
+  ok: boolean;
+  durationMs: number;
+  serverVersion: string | null;
+  protocolVersion: string | null;
+  tools: string[];
+  // Names of the projects this account sees; null when the call did not answer.
+  projects: string[] | null;
+  error: MessageDto | null;
+}
+
+export interface McpLogDto {
+  exists: boolean;
+  // The newest lines last.
+  lines: string[];
+}
+
 export interface IpcOutput {
   [IpcChannel.systemStatus]: SystemStatusDto;
   [IpcChannel.systemCopyText]: null;
@@ -459,6 +494,10 @@ export interface IpcOutput {
   [IpcChannel.toolsSetAutoInstall]: AccountToolsDto;
   [IpcChannel.toolsAddSkill]: AgentToolsDto;
   [IpcChannel.toolsRemoveSkill]: AgentToolsDto;
+  [IpcChannel.mcpInfo]: McpServerDto;
+  [IpcChannel.mcpProbe]: McpProbeDto;
+  [IpcChannel.mcpLog]: McpLogDto;
+  [IpcChannel.mcpRevealLog]: null;
   [IpcChannel.documentsList]: DocumentEntryDto[];
   [IpcChannel.documentsRead]: DocumentDto;
   [IpcChannel.documentsChecksum]: string | null;
@@ -529,6 +568,10 @@ export interface AgentHubApi {
   setToolsAutoInstall(input: IpcInput<typeof IpcChannel.toolsSetAutoInstall>): Reply<typeof IpcChannel.toolsSetAutoInstall>;
   addSkill(input: IpcInput<typeof IpcChannel.toolsAddSkill>): Reply<typeof IpcChannel.toolsAddSkill>;
   removeSkill(input: IpcInput<typeof IpcChannel.toolsRemoveSkill>): Reply<typeof IpcChannel.toolsRemoveSkill>;
+  getMcpServer(): Reply<typeof IpcChannel.mcpInfo>;
+  probeMcpServer(input: IpcInput<typeof IpcChannel.mcpProbe>): Reply<typeof IpcChannel.mcpProbe>;
+  readMcpLog(): Reply<typeof IpcChannel.mcpLog>;
+  revealMcpLog(): Reply<typeof IpcChannel.mcpRevealLog>;
   listDocuments(input: IpcInput<typeof IpcChannel.documentsList>): Reply<typeof IpcChannel.documentsList>;
   readDocument(input: IpcInput<typeof IpcChannel.documentsRead>): Reply<typeof IpcChannel.documentsRead>;
   documentChecksum(input: IpcInput<typeof IpcChannel.documentsChecksum>): Reply<typeof IpcChannel.documentsChecksum>;

@@ -381,10 +381,25 @@ export function Tabs<T extends string>({ label, idBase, value, options, onChange
 
 // Every panel stays mounted and the others are only hidden, so a launch waiting for a decision
 // keeps its state while the user looks at another tab.
-export function TabPanel({ idBase, value, selected, children }: { idBase: string; value: string; selected: string; children: ReactNode }) {
+export function TabPanel({ idBase, value, selected, children, className = 'stack' }: { idBase: string; value: string; selected: string; children: ReactNode; className?: string }) {
   return (
-    <div id={panelId(idBase, value)} role="tabpanel" aria-labelledby={tabId(idBase, value)} className="tab-panel stack" hidden={value !== selected}>
+    <div id={panelId(idBase, value)} role="tabpanel" aria-labelledby={tabId(idBase, value)} className={`tab-panel ${className}`} hidden={value !== selected}>
       {children}
     </div>
+  );
+}
+
+// A long path wraps after a slash, never inside a folder name.
+export function PathText({ path }: { path: string }) {
+  const parts = path.split(/(?<=\/)/);
+  return (
+    <>
+      {parts.map((part, index) => (
+        <span key={index}>
+          {part}
+          {index < parts.length - 1 && <wbr />}
+        </span>
+      ))}
+    </>
   );
 }

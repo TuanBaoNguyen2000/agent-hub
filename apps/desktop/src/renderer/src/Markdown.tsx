@@ -4,7 +4,7 @@ import { Fragment, type ReactNode } from 'react';
 // file ever reaches the page, and links are shown, not opened (ADR-021 item 8). Enough of
 // CommonMark for documents: headings, paragraphs, lists with checkboxes, quotes, code, tables.
 
-const INLINE = /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*\s][^*]*?)\*|_([^_\s][^_]*?)_|\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+const INLINE = /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|\*\*([^*]+)\*\*|(?<![\p{L}\p{N}])__([^_]+)__(?![\p{L}\p{N}])|\*([^*\s][^*]*?)\*|(?<![\p{L}\p{N}])_([^_\s][^_]*?)_(?![\p{L}\p{N}])|\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/gu;
 
 function inline(text: string): ReactNode[] {
   const parts: ReactNode[] = [];

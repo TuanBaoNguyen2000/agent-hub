@@ -142,6 +142,7 @@ export function useAccountLauncher(onError: (message: string) => void): {
               {tr(warning)}
             </p>
           ))}
+          {result.outcome.userActionRequired.length > 0 && <p className="hint">{t('account.todo')}</p>}
           {result.outcome.userActionRequired.length > 0 && (
             <ul className="todo">
               {result.outcome.userActionRequired.map((item, index) => (

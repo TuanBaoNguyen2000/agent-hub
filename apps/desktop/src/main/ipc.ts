@@ -2,6 +2,8 @@ import type { LaunchService, Workspace } from '@agenthub/application';
 import { IpcChannel, type IpcErrorDto, type IpcInput, type IpcOutput, type IpcResult, ipcInput } from '@agenthub/contracts';
 import { type AccountProfile, DomainError, accountName, msg, raw } from '@agenthub/domain';
 import { type IpcMainInvokeEvent, app, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron';
+import { PROTOCOL_VERSIONS, SERVER_NAME, TOOLS } from '../mcp/server';
+import { probeMcpServer, readLogTail } from './mcp-probe';
 
 interface IpcDependencies {
   workspace: Workspace;
@@ -9,6 +11,8 @@ interface IpcDependencies {
   engineStatus: () => IpcOutput[typeof IpcChannel.systemStatus]['storage'];
   dataDirectory: string;
   isTrustedSender: (event: IpcMainInvokeEvent) => boolean;
+  // AgentHub's MCP server: how an account's client starts it, null without the shim.
+  mcp: { server: (profileId: string) => { command: string; args: string[] } | null; logFile: string };
 }
 
 const profileDto = (profile: AccountProfile) => ({ ...profile, name: accountName(profile) });
@@ -20,7 +24,7 @@ function toErrorDto(error: unknown): IpcErrorDto {
   return { code: 'UNEXPECTED', message: 'Unexpected error.', detail: msg('error.unexpected') };
 }
 
-export function registerIpcHandlers({ workspace, launching, engineStatus, dataDirectory, isTrustedSender }: IpcDependencies): void {
+export function registerIpcHandlers({ workspace, launching, engineStatus, dataDirectory, isTrustedSender, mcp }: IpcDependencies): void {
   function handle<C extends keyof typeof ipcInput & keyof IpcOutput>(
     channel: C,
     run: (input: IpcInput<C>) => IpcOutput[C] | Promise<IpcOutput[C]>,
@@ -218,6 +222,29 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
   handle(IpcChannel.toolsAddSkill, ({ path }) => {
     tools.addSkill(path);
     return tools.view();
+  });
+  handle(IpcChannel.mcpInfo, () => {
+    const template = mcp.server('<account>');
+    return {
+      name: SERVER_NAME,
+      version: app.getVersion(),
+      command: template?.command ?? null,
+      args: template?.args ?? [],
+      protocolVersions: [...PROTOCOL_VERSIONS],
+      tools: TOOLS.map((tool) => ({ name: tool.name, readOnly: tool.annotations.readOnlyHint })),
+      logFile: mcp.logFile,
+    };
+  });
+  handle(IpcChannel.mcpProbe, async ({ profileId }) => {
+    if (!launching.listProfiles().some((profile) => profile.id === profileId)) throw new DomainError('NOT_FOUND', 'error.accountNotFound');
+    const server = mcp.server(profileId);
+    if (!server) throw new DomainError('BIN_NOT_FOUND', 'tools.mcpUnavailable');
+    return probeMcpServer(server.command, server.args);
+  });
+  handle(IpcChannel.mcpLog, () => readLogTail(mcp.logFile));
+  handle(IpcChannel.mcpRevealLog, () => {
+    shell.showItemInFolder(mcp.logFile);
+    return null;
   });
   handle(IpcChannel.toolsRemoveSkill, ({ name }) => {
     tools.removeSkill(name);

@@ -3,7 +3,7 @@ import { LANGUAGE_LABELS, LOCALES } from '@agenthub/i18n';
 import { useState } from 'react';
 import { api, unwrap } from './api';
 import { useI18n } from './i18n';
-import { Dialog, Segmented } from './ui';
+import { Dialog, PathText, Segmented } from './ui';
 
 // Each language by its own name, whatever the interface language.
 export const LANGUAGE_OPTIONS: readonly { value: ContextLanguageDto; label: string }[] = LOCALES.map((value) => ({ value, label: LANGUAGE_LABELS[value] }));
@@ -23,6 +23,7 @@ export function ProjectSettings({ project, onChanged, onCreateDocs, onError }: P
   // A new place waiting for the user to say whether the files move with it (ADR-020 item 5).
   const [asking, setAsking] = useState<{ customPath: string | null; files: number }>();
   const [result, setResult] = useState<string>();
+  const [name, setName] = useState(project.name);
 
   // Every change of place goes through here: Main asks back when the old folder has files.
   async function changePlace(customPath: string | null, move: 'ask' | 'move' | 'leave' = 'ask'): Promise<void> {
@@ -91,9 +92,39 @@ export function ProjectSettings({ project, onChanged, onCreateDocs, onError }: P
     ...LOCALES.map((value) => ({ value, label: LANGUAGE_LABELS[value] })),
   ];
 
+  async function rename(): Promise<void> {
+    const next = name.trim();
+    if (next === project.name) {
+      setName(project.name);
+      return;
+    }
+    onError(undefined);
+    try {
+      const updated = await unwrap(api.updateProject({ id: project.id, name }));
+      onChanged(updated);
+      setName(updated.name);
+    } catch (reason) {
+      setName(project.name);
+      onError((reason as Error).message);
+    }
+  }
+
   return (
     <>
     <section className="settings-group" aria-label={t('settings.chat.projectRegion')}>
+      <label className="settings-row">
+        <span className="grow settings-row-label">{t('field.projectName')}</span>
+        <input
+          className="name-input"
+          aria-label={t('field.projectName')}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          onBlur={() => void rename()}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') event.currentTarget.blur();
+          }}
+        />
+      </label>
       <div className="settings-row">
         <div className="grow settings-row-text">
           <span className="settings-row-label">{t('settings.chat.label')}</span>
@@ -129,7 +160,7 @@ export function ProjectSettings({ project, onChanged, onCreateDocs, onError }: P
               <span className="settings-row-label">{t('settings.docs.place')}</span>
               <span className="hint">{t(context.custom ? 'settings.docs.placeCustom' : 'settings.docs.placeDefault')}</span>
               <span className="path" data-testid="context-path">
-                {context.path}
+                <PathText path={context.path} />
               </span>
               {context.pathStatus !== 'directory' && context.custom && <span className="warning-text">{t('settings.docs.folderGone')}</span>}
               {result && (

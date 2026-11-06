@@ -4,7 +4,7 @@ import { api, unwrap } from './api';
 import { useExternalChange } from './documentWatch';
 import { useI18n } from './i18n';
 import { Markdown } from './Markdown';
-import { Dialog } from './ui';
+import { Dialog, PathText } from './ui';
 
 interface Props {
   project: ProjectDto;
@@ -18,6 +18,9 @@ interface Props {
 
 const isMarkdown = (path: string): boolean => /\.md$/i.test(path);
 const depthOf = (path: string): number => path.replace(/\/$/, '').split('/').length - 1;
+// Inside the project folder, the documents' folder reads from there; the full path is in the tooltip.
+const shortPath = (path: string, projectPath: string | null): string =>
+  projectPath && path.startsWith(`${projectPath}/`) ? path.slice(projectPath.length + 1) : path;
 const nameOf = (path: string): string => path.replace(/\/$/, '').split('/').at(-1) ?? path;
 
 // ADR-021 item 8: every Markdown file of the documents, read and edited in AgentHub. Deleting and
@@ -105,7 +108,9 @@ export function ProjectDocuments({ project, active, onCreateDocs, onChanged, onE
         <div className="settings-group-header">
           <div className="grow settings-row-text">
             <h2>{t('documents.title')}</h2>
-            <span className="path">{project.context.path}</span>
+            <span className="path" title={project.context.path}>
+              <PathText path={shortPath(project.context.path, project.path)} />
+            </span>
           </div>
           <button type="button" onClick={() => setCreating(true)}>
             {t('documents.new')}
@@ -115,11 +120,11 @@ export function ProjectDocuments({ project, active, onCreateDocs, onChanged, onE
         <ul className="document-tree" aria-label={t('documents.files')}>
           {entries?.map((entry) =>
             entry.kind === 'folder' ? (
-              <li key={entry.path} className="document-folder" style={{ paddingLeft: `${depthOf(entry.path) * 14 + 12}px` }}>
+              <li key={entry.path} className="document-folder" style={{ paddingLeft: `${depthOf(entry.path) * 12 + 10}px` }}>
                 {nameOf(entry.path)}/
               </li>
             ) : (
-              <li key={entry.path} style={{ paddingLeft: `${depthOf(entry.path) * 14}px` }}>
+              <li key={entry.path} style={{ paddingLeft: `${depthOf(entry.path) * 12}px` }}>
                 <button
                   type="button"
                   className="task-item document-item"
@@ -136,13 +141,14 @@ export function ProjectDocuments({ project, active, onCreateDocs, onChanged, onE
         </ul>
       </section>
 
+      {!open && <div className="tasks-placeholder">{t('documents.pick')}</div>}
       {open && (
         <section className="settings-group task-detail" aria-label={t('documents.viewer')}>
           <div className="settings-group-header">
             <div className="grow settings-row-text">
               <h2>{nameOf(open.path)}</h2>
               <span className="path" data-testid="document-path">
-                {open.path}
+                <PathText path={open.path} />
               </span>
             </div>
             {!editing && (

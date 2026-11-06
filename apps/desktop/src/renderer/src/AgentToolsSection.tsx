@@ -31,10 +31,11 @@ interface Props {
   accountsVersion: number;
   // Scrolled into view when a launch sent the user here.
   focused: boolean;
+  onOpenMcp: () => void;
 }
 
 // ADR-020 item 1: which skills and MCP server each account has, read from its own folders.
-export function AgentToolsSection({ onError, accountsVersion, focused }: Props) {
+export function AgentToolsSection({ onError, accountsVersion, focused, onOpenMcp }: Props) {
   const { t, tr } = useI18n();
   const [tools, setTools] = useState<AgentToolsDto>();
   const [busy, setBusy] = useState<string>();
@@ -210,6 +211,9 @@ export function AgentToolsSection({ onError, accountsVersion, focused }: Props) 
                       <code>{MCP_LABEL}</code>
                     </span>
                     <span className="hint tools-description">{t('tools.mcpDescription')}</span>
+                    <button type="button" className="link tools-details" aria-label={t('mcpPage.openLabel')} onClick={onOpenMcp}>
+                      {t('mcpPage.open')}
+                    </button>
                   </div>
                 </th>
                 {tools.accounts.map((account) => {

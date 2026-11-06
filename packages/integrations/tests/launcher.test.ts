@@ -223,7 +223,7 @@ describe('the opening prompt (TDD §8.2, SPIKE-13)', () => {
     const outcome = await launcher.launch(await launcher.plan(target({ prompt })));
 
     expect((callsOf(fake, 'openTerminal')[0]?.[0] as { args: string[] }).args).toEqual([`--add-dir=${prompt.addDir}`, prompt.text]);
-    expect(outcome.userActionRequired.map(text).join()).toContain('tin tưởng folder');
+    expect(outcome.userActionRequired.map(text).join()).toContain('tin folder này');
     expect(outcome.userActionRequired.map(text).join()).not.toContain('Nhập prompt');
   });
 

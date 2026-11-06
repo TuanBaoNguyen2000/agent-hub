@@ -27,6 +27,7 @@ Giữ mã ADR ổn định; phân biệt quyết định đã chốt với lựa
 | ADR-019 | Context do agent duy trì qua tài liệu, skill và MCP của AgentHub | Accepted for MVP (conditional, chờ spike); sửa đổi một phần bởi ADR-020, ADR-021 | [019-agent-maintained-context.md](019-agent-maintained-context.md) |
 | ADR-020 | Sửa Phase 3 theo đánh giá của người dùng | Accepted | [020-phase3-review-changes.md](020-phase3-review-changes.md) |
 | ADR-021 | AgentHub quản lý tài liệu và task của project | Accepted | [021-task-and-document-management.md](021-task-and-document-management.md) |
+| ADR-022 | Bố cục cửa sổ theo kiểu Claude/Codex Desktop và IDE | Accepted | [022-desktop-shell-layout.md](022-desktop-shell-layout.md) |
 
 Kết quả capability cần evidence trong [feasibility.md](../feasibility.md), kể cả khi quyết định kiến trúc đã Accepted.
 

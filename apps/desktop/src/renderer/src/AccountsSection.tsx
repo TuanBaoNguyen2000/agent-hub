@@ -369,10 +369,10 @@ export function AccountsSection({ onError, onChanged }: { onError: (message: str
   }
 
   return (
-    <section className="settings-group" aria-label="Accounts">
+    <section className="settings-group" aria-label={t('nav.accounts')}>
       <div className="settings-group-header">
         <div className="grow">
-          <h2>Accounts</h2>
+          <h2>{t('nav.accounts')}</h2>
           <p className="hint">{t('accounts.hint')}</p>
         </div>
         {!offer && !checking && (
