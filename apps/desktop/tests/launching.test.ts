@@ -20,7 +20,24 @@ import { translate } from '@agenthub/i18n';
 
 // What the user reads, in the language the E2E tests and these expectations use.
 const text = (message: Message | undefined): string => (message ? translate('vi', message) : '');
-import { appendHandoff, conflictingFiles, contextFiles, copyContextFiles, detectContext, openMetadataStore, readContextOverview, listNotes, moveNote, readNote, saveNote, listContext, readContext, writeContext } from '@agenthub/persistence';
+import {
+  appendHandoff,
+  conflictingFiles,
+  contextFiles,
+  copyContextFiles,
+  detectContext,
+  isContextFolder,
+  listContext,
+  listNotes,
+  makeContextFolder,
+  moveNote,
+  openMetadataStore,
+  readContext,
+  readContextOverview,
+  readNote,
+  saveNote,
+  writeContext,
+} from '@agenthub/persistence';
 import { createMacPlatform, createPathInspector, createSkillInstaller, readSkillManifest } from '@agenthub/platform';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -33,6 +50,8 @@ const documentPorts = {
   list: (folder: string) => listContext(folder),
   read: readContext,
   write: writeContext,
+  makeFolder: makeContextFolder,
+  isContextFolder,
 };
 
 // Real persistence with a scripted launcher: this tests the rules around a launch.
@@ -807,12 +826,24 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
     const inside = join(projectDir, 'AgentContext');
     mkdirSync(inside);
     writeFileSync(join(inside, 'README.md'), '# Context');
+    writeFileSync(join(inside, 'PROJECT_CONTEXT.md'), '# Project\n\nUnity 6, URP.\n');
     workspace.updateProjectContext({ id: project.id, enabled: true, customPath: inside });
 
     const result = await launching.execute(request, []);
 
     expect(result.prompt).toMatch(/^Use the context-resume skill\. Context documents: /);
     expect(plannedPrompts.at(-1)?.addDir).toBeNull();
+  });
+
+  it('asks an agent to fill the empty layout AgentHub wrote, and again when the user asks for it (ADR-023 item 2)', async () => {
+    const { project, request } = allowedProject();
+    workspace.createContext({ id: project.id, location: 'repo', language: 'en' });
+
+    expect((await launching.execute(request, [])).prompt).toMatch(/^Use the context-init skill\. Context documents: .*AgentContext\. If AgentHub already wrote the empty layout/);
+
+    writeFileSync(join(projectDir, 'AgentContext', 'PROJECT_CONTEXT.md'), '# Project\n\nUnity 6.\n');
+    expect((await launching.execute(request, [])).prompt).toMatch(/^Use the context-resume skill/);
+    expect((await launching.execute({ ...request, purpose: 'init' }, [])).prompt).toMatch(/^Use the context-init skill/);
   });
 
   it('links the four skills into the account it opens, and only that account', async () => {

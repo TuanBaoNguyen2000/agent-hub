@@ -47,12 +47,20 @@ const taskEditSchema = z.strictObject({
 
 const noteIdSchema = z.string().regex(/^\d{8}T\d{9}Z-[0-9a-f]{6}(?:-[a-z0-9-]{1,48})?$/, 'Not a note id');
 const noteTextSchema = z.string().min(1).max(200_000);
+// ADR-023: repo is <project>/AgentContext, app is AgentHub's own data, custom a folder the user picks.
+export const CONTEXT_LOCATIONS = ['repo', 'app', 'custom'] as const;
+export type ContextLocationDto = (typeof CONTEXT_LOCATIONS)[number];
+const contextChoiceSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('none') }),
+  z.strictObject({ kind: z.literal('existing'), path: pathSchema }),
+  z.strictObject({ kind: z.literal('create'), location: z.enum(CONTEXT_LOCATIONS), customPath: pathSchema.optional(), language: z.enum(CONTEXT_LANGUAGES) }),
+]);
 
 const launchRequestSchema = z.strictObject({
   projectId: idSchema,
   taskRef: taskRefSchema.nullable().optional(),
   useTranscript: z.boolean().optional(),
-  purpose: z.literal('refine').optional(),
+  purpose: z.enum(['refine', 'init']).optional(),
   profileId: idSchema,
   mode: z.enum(CLIENT_MODES),
 });
@@ -72,7 +80,12 @@ export const ipcInput = {
   [IpcChannel.systemCopyText]: z.strictObject({ text: z.string().min(1).max(20_000) }),
   [IpcChannel.projectsList]: noInput,
   [IpcChannel.projectsPickFolder]: noInput,
-  [IpcChannel.projectsAdd]: z.strictObject({ path: pathSchema, name: labelSchema.optional() }),
+  [IpcChannel.projectsAdd]: z.strictObject({
+    path: pathSchema,
+    name: labelSchema.optional(),
+    // ADR-023 item 1: what the user chose for documents in the add dialog.
+    context: contextChoiceSchema.optional(),
+  }),
   [IpcChannel.projectsUpdate]: z.strictObject({ id: idSchema, name: labelSchema.optional(), path: pathSchema.optional() }),
   [IpcChannel.projectsRemove]: z.strictObject({ id: idSchema }),
   [IpcChannel.projectsUpdateContext]: z.strictObject({
@@ -85,6 +98,10 @@ export const ipcInput = {
   [IpcChannel.projectsOpenContextFolder]: z.strictObject({ id: idSchema }),
   [IpcChannel.projectsContext]: z.strictObject({ id: idSchema }),
   [IpcChannel.projectsDetectContext]: z.strictObject({ id: idSchema, apply: z.boolean() }),
+  [IpcChannel.projectsScanFolder]: z.strictObject({ path: pathSchema, projectId: idSchema.optional() }),
+  [IpcChannel.projectsCreateContext]: z.strictObject({ id: idSchema, location: z.enum(CONTEXT_LOCATIONS), customPath: pathSchema.optional(), language: z.enum(CONTEXT_LANGUAGES) }),
+  [IpcChannel.projectsUseContext]: z.strictObject({ id: idSchema, path: pathSchema }),
+  [IpcChannel.projectsScaffoldContext]: z.strictObject({ id: idSchema }),
   [IpcChannel.projectsMoveContext]: z.strictObject({ id: idSchema, customPath: pathSchema.nullable(), move: z.enum(['ask', 'move', 'leave']) }),
   [IpcChannel.projectsReadHandoff]: z.strictObject({ id: idSchema, noteId: noteIdSchema }),
   [IpcChannel.projectsSaveHandoff]: z.strictObject({ id: idSchema, title: labelSchema.optional(), content: noteTextSchema }),
@@ -146,6 +163,7 @@ export const ipcInput = {
   [IpcChannel.tasksSave]: z.strictObject({ id: idSchema, ref: taskRefSchema, baseSha256: shaSchema, edit: taskEditSchema }),
   [IpcChannel.tasksSetState]: z.strictObject({ id: idSchema, ref: taskRefSchema, state: z.enum(TASK_STATES) }),
   [IpcChannel.tasksCreate]: z.strictObject({ id: idSchema, workstream: documentPathSchema, title: labelSchema.min(1), goal: z.string().max(20_000) }),
+  [IpcChannel.tasksCreateWorkstream]: z.strictObject({ id: idSchema, title: labelSchema.min(1) }),
 } as const;
 
 export type IpcInput<C extends keyof typeof ipcInput> = z.infer<(typeof ipcInput)[C]>;
@@ -193,6 +211,20 @@ export interface DetectedContextDto {
   found: string[];
   others: string[];
   applied: string | null;
+}
+
+// ADR-023 item 1: what a folder holds before it is added as a project.
+export interface FolderScanDto {
+  path: string;
+  name: string;
+  // Sets of documents in AgentHub's layout, with what they hold.
+  found: { path: string; workstreams: number; tasks: number }[];
+  // Notes in another shape, relative to the folder.
+  others: string[];
+  complete: boolean;
+  // Where "in the repo" would create the documents, and whether something is already there.
+  repoContextPath: string;
+  repoContextTaken: boolean;
 }
 
 export type ContextFolderChangeDto =
@@ -277,6 +309,7 @@ export interface ContextTaskDto {
   id: string;
   title: string;
   state: string | null;
+  criteria: { done: number; total: number } | null;
   lastHandoff: { heading: string; at: string | null } | null;
 }
 
@@ -284,6 +317,7 @@ export type ContextIssueKindDto = 'no_project_context' | 'no_workstream' | 'no_s
 
 export interface ContextOverviewDto {
   initialized: boolean;
+  filled: boolean;
   workstreams: { slug: string; title: string; branch: string | null; tasks: ContextTaskDto[] }[];
   issues: { kind: ContextIssueKindDto; workstream: string | null; taskRef: string | null }[];
 }
@@ -458,6 +492,10 @@ export interface IpcOutput {
   [IpcChannel.projectsOpenContextFolder]: null;
   [IpcChannel.projectsContext]: ProjectContextDto;
   [IpcChannel.projectsDetectContext]: DetectedContextDto;
+  [IpcChannel.projectsScanFolder]: FolderScanDto;
+  [IpcChannel.projectsCreateContext]: ProjectDto;
+  [IpcChannel.projectsUseContext]: ProjectDto;
+  [IpcChannel.projectsScaffoldContext]: ProjectDto;
   [IpcChannel.projectsMoveContext]: ContextFolderChangeDto;
   [IpcChannel.projectsAddHandoff]: ContextOverviewDto;
   [IpcChannel.projectsReadHandoff]: NoteWithContentDto;
@@ -507,6 +545,7 @@ export interface IpcOutput {
   [IpcChannel.tasksSave]: TaskViewDto;
   [IpcChannel.tasksSetState]: TaskViewDto;
   [IpcChannel.tasksCreate]: TaskViewDto;
+  [IpcChannel.tasksCreateWorkstream]: ContextOverviewDto;
 }
 
 export interface IpcErrorDto {
@@ -532,6 +571,10 @@ export interface AgentHubApi {
   openContextFolder(input: IpcInput<typeof IpcChannel.projectsOpenContextFolder>): Reply<typeof IpcChannel.projectsOpenContextFolder>;
   getProjectContext(input: IpcInput<typeof IpcChannel.projectsContext>): Reply<typeof IpcChannel.projectsContext>;
   detectProjectContext(input: IpcInput<typeof IpcChannel.projectsDetectContext>): Reply<typeof IpcChannel.projectsDetectContext>;
+  scanFolder(input: IpcInput<typeof IpcChannel.projectsScanFolder>): Reply<typeof IpcChannel.projectsScanFolder>;
+  createProjectContext(input: IpcInput<typeof IpcChannel.projectsCreateContext>): Reply<typeof IpcChannel.projectsCreateContext>;
+  useProjectContext(input: IpcInput<typeof IpcChannel.projectsUseContext>): Reply<typeof IpcChannel.projectsUseContext>;
+  scaffoldProjectContext(input: IpcInput<typeof IpcChannel.projectsScaffoldContext>): Reply<typeof IpcChannel.projectsScaffoldContext>;
   moveProjectContext(input: IpcInput<typeof IpcChannel.projectsMoveContext>): Reply<typeof IpcChannel.projectsMoveContext>;
   addHandoff(input: IpcInput<typeof IpcChannel.projectsAddHandoff>): Reply<typeof IpcChannel.projectsAddHandoff>;
   readProjectHandoff(input: IpcInput<typeof IpcChannel.projectsReadHandoff>): Reply<typeof IpcChannel.projectsReadHandoff>;
@@ -581,4 +624,5 @@ export interface AgentHubApi {
   saveTask(input: IpcInput<typeof IpcChannel.tasksSave>): Reply<typeof IpcChannel.tasksSave>;
   setTaskState(input: IpcInput<typeof IpcChannel.tasksSetState>): Reply<typeof IpcChannel.tasksSetState>;
   createTask(input: IpcInput<typeof IpcChannel.tasksCreate>): Reply<typeof IpcChannel.tasksCreate>;
+  createWorkstream(input: IpcInput<typeof IpcChannel.tasksCreateWorkstream>): Reply<typeof IpcChannel.tasksCreateWorkstream>;
 }

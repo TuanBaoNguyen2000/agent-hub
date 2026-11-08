@@ -5,12 +5,12 @@ import { PROVIDER_LABELS } from './accounts';
 import { api, unwrap } from './api';
 import { CopyButton } from './CopyButton';
 import { useI18n } from './i18n';
-import { PathText } from './ui';
+import { PathText, StatusText, type StatusTone } from './ui';
 
-const STATES: Record<AccountToolsDto['mcp'], { text: MessageKey; tone: string }> = {
+const STATES: Record<AccountToolsDto['mcp'], { text: MessageKey; tone: StatusTone }> = {
   installed: { text: 'tools.state.installed', tone: 'ok' },
   partial: { text: 'tools.state.partial', tone: 'warning' },
-  missing: { text: 'tools.state.missing', tone: '' },
+  missing: { text: 'tools.state.missing', tone: 'neutral' },
   unknown: { text: 'tools.state.unknown', tone: 'warning' },
   unavailable: { text: 'tools.state.unavailable', tone: 'warning' },
 };
@@ -132,6 +132,7 @@ export function McpServerPage({ onError }: Props) {
                     {PROVIDER_LABELS[account.provider]}
                     {account.mainConfig ? ` · ${t('tools.mainConfig')}` : ''}
                   </span>
+                  <StatusText tone={state.tone}>{t(state.text)}</StatusText>
                   {account.mcpDetail.map((detail, index) => (
                     <span key={index} className="hint">
                       {tr(detail)}
@@ -141,7 +142,6 @@ export function McpServerPage({ onError }: Props) {
                   {result && result !== 'running' && <ProbeResult result={result} />}
                 </div>
                 <div className="row nowrap mcp-account-actions">
-                  <span className={`badge ${state.tone}`}>{t(state.text)}</span>
                   {canInstall && (
                     <button type="button" className="small" disabled={busy !== undefined || !server?.command} onClick={() => void change(account, true)}>
                       {t('tools.install')}

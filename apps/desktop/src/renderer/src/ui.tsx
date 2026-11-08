@@ -403,3 +403,15 @@ export function PathText({ path }: { path: string }) {
     </>
   );
 }
+
+export type StatusTone = 'ok' | 'warning' | 'neutral' | 'active' | 'danger';
+
+// ADR-023 item 8: a state is a coloured dot and words, never something that looks clickable.
+export function StatusText({ tone, children, title }: { tone: StatusTone; children: ReactNode; title?: string | undefined }) {
+  return (
+    <span className={`status-text status-${tone}`} title={title}>
+      <span className="status-dot" aria-hidden="true" />
+      {children}
+    </span>
+  );
+}

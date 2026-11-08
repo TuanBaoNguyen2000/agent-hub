@@ -84,7 +84,7 @@ export interface ContextEntry {
 // Newest entry first, right under the "Handoff log" heading (TDD §7.2).
 export function insertHandoff(document: string, entry: string): string {
   const block = `${entry.trim()}\n`;
-  const heading = /^(#{1,6})[ \t]+Handoff log[ \t]*$/im.exec(document);
+  const heading = /^(#{1,6})[ \t]+Handoff log(?:[ \t]*(?:\([^)\n]*\)|[-–—:][^\n]*))?[ \t]*$/im.exec(document);
   if (!heading) {
     const base = document.replace(/\s*$/, '');
     return `${base}${base === '' ? '' : '\n\n'}## Handoff log\n\n${block}`;
@@ -162,4 +162,10 @@ export function appendHandoff(root: string, relativePath: string, entry: string)
     }
   }
   throw new DomainError('CONTEXT_CONFLICT', raw(`${relativePath} kept changing; try again.`));
+}
+
+// An empty folder inside the documents, such as a workstream's Tasks/ (ADR-023 item 2).
+export function makeContextFolder(root: string, relativePath: string): void {
+  const { path } = resolveInside(root, relativePath);
+  mkdirSync(path, { recursive: true, mode: 0o700 });
 }

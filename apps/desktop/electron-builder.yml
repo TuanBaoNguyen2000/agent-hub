@@ -12,6 +12,7 @@ extraResources:
   - from: skills
     to: skills
 mac:
+  icon: resources/icon.png
   target: dir
   # Ad hoc signature for this machine; distribution is out of scope (TDD §16).
   identity: '-'

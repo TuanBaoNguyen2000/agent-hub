@@ -15,6 +15,10 @@ const api: AgentHubApi = {
   openContextFolder: (input) => ipcRenderer.invoke(IpcChannel.projectsOpenContextFolder, input),
   getProjectContext: (input) => ipcRenderer.invoke(IpcChannel.projectsContext, input),
   detectProjectContext: (input) => ipcRenderer.invoke(IpcChannel.projectsDetectContext, input),
+  scanFolder: (input) => ipcRenderer.invoke(IpcChannel.projectsScanFolder, input),
+  createProjectContext: (input) => ipcRenderer.invoke(IpcChannel.projectsCreateContext, input),
+  useProjectContext: (input) => ipcRenderer.invoke(IpcChannel.projectsUseContext, input),
+  scaffoldProjectContext: (input) => ipcRenderer.invoke(IpcChannel.projectsScaffoldContext, input),
   moveProjectContext: (input) => ipcRenderer.invoke(IpcChannel.projectsMoveContext, input),
   addHandoff: (input) => ipcRenderer.invoke(IpcChannel.projectsAddHandoff, input),
   readProjectHandoff: (input) => ipcRenderer.invoke(IpcChannel.projectsReadHandoff, input),
@@ -64,6 +68,7 @@ const api: AgentHubApi = {
   saveTask: (input) => ipcRenderer.invoke(IpcChannel.tasksSave, input),
   setTaskState: (input) => ipcRenderer.invoke(IpcChannel.tasksSetState, input),
   createTask: (input) => ipcRenderer.invoke(IpcChannel.tasksCreate, input),
+  createWorkstream: (input) => ipcRenderer.invoke(IpcChannel.tasksCreateWorkstream, input),
 };
 
 contextBridge.exposeInMainWorld('agentHub', api);

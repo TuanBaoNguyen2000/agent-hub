@@ -2,6 +2,7 @@ import type { LaunchAttemptDto } from '@agenthub/contracts';
 import type { MessageKey } from '@agenthub/i18n';
 import { api, unwrap } from './api';
 import { useI18n } from './i18n';
+import { StatusText } from './ui';
 
 const LAUNCH_LABELS: Record<LaunchAttemptDto['status'], MessageKey> = {
   planned: 'history.status.planned',
@@ -48,7 +49,7 @@ export function ProjectHistory({ history, onChanged, onError }: Props) {
               {attempt.taskRef ? ` · ${attempt.taskRef.split('/').at(-1)?.replace(/\.md$/, '')}` : ''}
             </span>
             {/* Never says "switched": AgentHub cannot observe which account an app uses (TDD §8.4). */}
-            {attempt.accountConfirmedAt ? <span className="badge">{t('history.confirmed')}</span> : <span className="badge manual">{t('history.unverified')}</span>}
+            {attempt.accountConfirmedAt ? <StatusText tone="ok">{t('history.confirmed')}</StatusText> : <StatusText tone="warning">{t('history.unverified')}</StatusText>}
             {!attempt.accountConfirmedAt && attempt.status !== 'failed' && (
               <button type="button" onClick={() => void confirmAccount(attempt.id)}>
                 {t('history.confirm')}

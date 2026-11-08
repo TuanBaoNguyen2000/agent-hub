@@ -1,10 +1,9 @@
-import type { ContextLanguageDto, ProjectContextDto, ProjectDto } from '@agenthub/contracts';
-import { useState } from 'react';
+import type { ProjectContextDto, ProjectDto } from '@agenthub/contracts';
+import { type ReactNode, useState } from 'react';
 import { api, unwrap } from './api';
 import { CopyButton } from './CopyButton';
 import { useI18n } from './i18n';
-import { LANGUAGE_OPTIONS } from './ProjectSettings';
-import { Dialog, PathText, Segmented } from './ui';
+import { PathText, StatusText } from './ui';
 
 function gitText(t: ReturnType<typeof useI18n>['t'], git: ProjectContextDto['git']): string {
   if (git.state === 'not_repo') return t('docs.git.notRepo');
@@ -15,62 +14,100 @@ function gitText(t: ReturnType<typeof useI18n>['t'], git: ProjectContextDto['git
   return parts.join(' · ');
 }
 
+// Problems AgentHub can fix itself by writing the empty layout (ADR-023 item 2).
+const FIXABLE = new Set(['no_project_context', 'no_workstream', 'no_status']);
+
 interface Props {
   project: ProjectDto;
   context: ProjectContextDto | undefined;
   onChanged: (project: ProjectDto) => void;
-  onCreate: () => void;
+  // Opens the dialog that asks where the documents are (ADR-023 item 1).
+  onSetUp: () => void;
   // Reads the documents and Git again.
   onCheck: () => Promise<void>;
   onShowTasks: () => void;
+  // The next launch asks the agent to fill the documents in (context-init).
+  onFill: () => void;
   onError: (message: string | undefined) => void;
 }
 
-// The documents card on the overview: buttons instead of an on/off switch (ADR-020 item 3).
-export function ProjectDocs({ project, context, onChanged, onCreate, onCheck, onShowTasks, onError }: Props) {
+// The documents card on the overview: Not used, Ready, Needs filling or Has problems, each with
+// what to do next (ADR-023 item 2).
+export function ProjectDocs({ project, context, onChanged, onSetUp, onCheck, onShowTasks, onFill, onError }: Props) {
   const i18n = useI18n();
   const { t, tr, date } = i18n;
   const [checkedAt, setCheckedAt] = useState<Date>();
-  const [checking, setChecking] = useState(false);
+  const [busy, setBusy] = useState(false);
   const settings = project.context;
 
-  async function cancelCreate(): Promise<void> {
+  async function run(action: () => Promise<void>): Promise<void> {
+    setBusy(true);
     onError(undefined);
     try {
-      onChanged(await unwrap(api.updateProjectContext({ id: project.id, enabled: false })));
+      await action();
     } catch (reason) {
       onError((reason as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
-  async function check(): Promise<void> {
-    setChecking(true);
-    await onCheck();
-    setChecking(false);
-    setCheckedAt(new Date());
-  }
+  const check = () =>
+    run(async () => {
+      await onCheck();
+      setCheckedAt(new Date());
+    });
 
-  async function openFolder(): Promise<void> {
-    onError(undefined);
-    try {
-      await unwrap(api.openContextFolder({ id: project.id }));
-    } catch (reason) {
-      onError((reason as Error).message);
-    }
-  }
+  const scaffold = () =>
+    run(async () => {
+      onChanged(await unwrap(api.scaffoldProjectContext({ id: project.id })));
+      await onCheck();
+    });
+
+  const openFolder = () => run(async () => void (await unwrap(api.openContextFolder({ id: project.id }))));
+
+  const header = (state: { tone: 'ok' | 'warning' | 'neutral' | 'active'; text: string }, actions: ReactNode, hint?: ReactNode) => (
+    <div className="settings-group-header">
+      <div className="grow settings-row-text">
+        <h2 className="docs-title">
+          {t('settings.docs.title')}
+          <StatusText tone={state.tone}>{state.text}</StatusText>
+        </h2>
+        {hint}
+        {settings.enabled && (
+          <span className="path" data-testid="context-path">
+            <PathText path={settings.path} />
+          </span>
+        )}
+      </div>
+      <div className="row nowrap">{actions}</div>
+    </div>
+  );
 
   if (!settings.enabled) {
     return (
       <section className="settings-group" aria-label={t('settings.docs.title')}>
-        <div className="settings-group-header">
-          <div className="grow settings-row-text">
-            <h2>{t('settings.docs.title')}</h2>
-            <p className="hint">{t('docs.offHint')}</p>
-          </div>
-          <button type="button" className="primary" onClick={onCreate}>
+        {header(
+          { tone: 'neutral', text: t('docs.state.off') },
+          <button type="button" className="primary" onClick={onSetUp}>
             {t('docs.create')}
-          </button>
-        </div>
+          </button>,
+          <p className="hint">{t('docs.offHint')}</p>,
+        )}
+      </section>
+    );
+  }
+
+  if (settings.pathStatus !== 'directory') {
+    return (
+      <section className="settings-group" aria-label={t('settings.docs.title')}>
+        {header(
+          { tone: 'warning', text: t('docs.state.problem') },
+          <button type="button" className="primary" onClick={onSetUp}>
+            {t('docs.chooseAgain')}
+          </button>,
+          <p className="warning-text">{t('settings.docs.folderGone')}</p>,
+        )}
       </section>
     );
   }
@@ -81,24 +118,13 @@ export function ProjectDocs({ project, context, onChanged, onCreate, onCheck, on
   if (!overview.initialized) {
     return (
       <section className="settings-group" aria-label={t('settings.docs.title')}>
-        <div className="settings-group-header">
-          <div className="grow settings-row-text">
-            <h2>{t('settings.docs.title')}</h2>
-            <p className="hint">{t('docs.pendingHint')}</p>
-            <span className="path" data-testid="context-path">
-              <PathText path={settings.path} />
-            </span>
-            {settings.pathStatus !== 'directory' && <span className="warning-text">{t('settings.docs.folderGone')}</span>}
-          </div>
-          <div className="row nowrap">
-            <button type="button" disabled={checking} onClick={() => void check()}>
-              {t('docs.check')}
-            </button>
-            <button type="button" onClick={() => void cancelCreate()}>
-              {t('docs.cancelCreate')}
-            </button>
-          </div>
-        </div>
+        {header(
+          { tone: 'warning', text: t('docs.state.problem') },
+          <button type="button" className="primary" disabled={busy} onClick={() => void scaffold()}>
+            {t('docs.scaffold')}
+          </button>,
+          <p className="hint">{t('docs.noLayout')}</p>,
+        )}
       </section>
     );
   }
@@ -106,28 +132,37 @@ export function ProjectDocs({ project, context, onChanged, onCreate, onCheck, on
   const tasks = overview.workstreams.reduce((count, workstream) => count + workstream.tasks.length, 0);
   const projectWarnings = warnings.filter((warning) => warning.taskRef === null);
   const taskWarnings = warnings.length - projectWarnings.length;
+  const fixable = warnings.some((warning) => FIXABLE.has(warning.kind));
+  const state = fixable
+    ? { tone: 'warning' as const, text: t('docs.state.problem') }
+    : !overview.filled
+      ? { tone: 'active' as const, text: t('docs.state.needsFilling') }
+      : { tone: 'ok' as const, text: t('docs.state.ready') };
 
   return (
     <section className="settings-group" aria-label={t('settings.docs.title')}>
-      <div className="settings-group-header">
-        <div className="grow settings-row-text">
-          <h2>{t('settings.docs.title')}</h2>
-          <p className="hint" data-testid="context-summary">
-            {overview.workstreams.length} workstream · {tasks} task
-          </p>
-          <span className="path" data-testid="context-path">
-            <PathText path={settings.path} />
-          </span>
-        </div>
-        <div className="row nowrap">
-          <button type="button" disabled={checking} onClick={() => void check()}>
+      {header(
+        state,
+        <>
+          <button type="button" disabled={busy} onClick={() => void check()}>
             {t('docs.check')}
           </button>
-          <button type="button" onClick={() => void openFolder()}>
+          <button type="button" disabled={busy} onClick={() => void openFolder()}>
             {t('docs.openFolder')}
           </button>
+        </>,
+        <p className="hint" data-testid="context-summary">
+          {overview.workstreams.length} workstream · {tasks} task
+        </p>,
+      )}
+      {!overview.filled && (
+        <div className="settings-row">
+          <p className="hint grow">{t('docs.fillHint')}</p>
+          <button type="button" className="primary" onClick={onFill}>
+            {t('docs.fill')}
+          </button>
         </div>
-      </div>
+      )}
       <div className="settings-row">
         <p className="hint grow" data-testid="git-observation">
           {gitText(t, git)}
@@ -154,6 +189,11 @@ export function ProjectDocs({ project, context, onChanged, onCreate, onCheck, on
               </p>
             )}
           </div>
+          {fixable && (
+            <button type="button" disabled={busy} onClick={() => void scaffold()}>
+              {t('docs.fixMissing')}
+            </button>
+          )}
         </div>
       )}
       {checkedAt && (
@@ -167,165 +207,39 @@ export function ProjectDocs({ project, context, onChanged, onCreate, onCheck, on
         </div>
       )}
       <div className="settings-row">
-        <p className="hint grow">{t('docs.reconcileHint')}</p>
-        {/* An agent compares the documents with the code; AgentHub only checks their layout (ADR-020 item 3). */}
-        <CopyButton text={i18n.prompt(project.chatLocale, 'prompt.reconcile', { path: settings.path })} label={t('docs.copyReconcile')} />
+        <p className="hint grow">{t('handoffs.checkpointHint')}</p>
+        <CopyButton text={context.checkpointPrompt} label={t('handoffs.copyCheckpoint')} />
       </div>
+      {overview.filled && (
+        <div className="settings-row">
+          <p className="hint grow">{t('docs.reconcileHint')}</p>
+          {/* An agent compares the documents with the code; AgentHub only checks their layout (ADR-020 item 3). */}
+          <CopyButton text={i18n.prompt(project.chatLocale, 'prompt.reconcile', { path: settings.path })} label={t('docs.copyReconcile')} />
+          <button type="button" className="small" onClick={onFill}>
+            {t('docs.refill')}
+          </button>
+        </div>
+      )}
     </section>
   );
 }
 
-interface CreateProps {
-  project: ProjectDto;
-  onClose: () => void;
-  onCreated: (project: ProjectDto) => void;
-  onError: (message: string | undefined) => void;
-}
-
-// Chooses where the documents go and their language; the next launch runs context-init.
-export function CreateDocsDialog({ project, onClose, onCreated, onError }: CreateProps) {
-  const { t } = useI18n();
-  const places = [
-    { value: 'agenthub', label: t('docs.create.agentHub') },
-    { value: 'folder', label: t('docs.create.folder') },
-  ] as const;
-  const [place, setPlace] = useState<'agenthub' | 'folder'>(project.context.custom ? 'folder' : 'agenthub');
-  const [folder, setFolder] = useState<string | null>(project.context.custom ? project.context.path : null);
-  const [language, setLanguage] = useState<ContextLanguageDto>(project.context.language);
-  const [saving, setSaving] = useState(false);
-
-  async function chooseFolder(): Promise<void> {
-    try {
-      const path = await unwrap(api.pickProjectFolder());
-      if (path) setFolder(path);
-    } catch (reason) {
-      onError((reason as Error).message);
-    }
-  }
-
-  async function create(): Promise<void> {
-    setSaving(true);
-    onError(undefined);
-    try {
-      const customPath = place === 'folder' ? folder : null;
-      onCreated(await unwrap(api.updateProjectContext({ id: project.id, enabled: true, language, customPath })));
-    } catch (reason) {
-      onError((reason as Error).message);
-      onClose();
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Dialog
-      label={t('docs.create')}
-      title={t('docs.create')}
-      onClose={onClose}
-      actions={
-        <>
-          <button type="button" onClick={onClose}>
-            {t('common.cancel')}
-          </button>
-          <button type="button" className="primary" disabled={saving || (place === 'folder' && !folder)} onClick={() => void create()}>
-            {t('docs.create.submit')}
-          </button>
-        </>
-      }
-    >
-      <p className="hint">{t('docs.create.hint')}</p>
-      <div className="field">
-        <span className="field-label">{t('settings.docs.place')}</span>
-        <Segmented label={t('settings.docs.place')} value={place} options={places} onChange={setPlace} />
-        <span className="hint">{t(place === 'agenthub' ? 'docs.create.agentHubHint' : 'docs.create.folderHint')}</span>
-        {place === 'folder' && (
-          <div className="row">
-            <span className="path grow" data-testid="create-docs-folder">
-              {folder ? <PathText path={folder} /> : t('docs.create.noFolder')}
-            </span>
-            <button type="button" onClick={() => void chooseFolder()}>
-              {t('docs.create.chooseFolder')}
-            </button>
-          </div>
-        )}
-      </div>
-      <div className="field">
-        <span className="field-label">{t('settings.docs.language')}</span>
-        <Segmented label={t('settings.docs.language')} value={language} options={LANGUAGE_OPTIONS} onChange={setLanguage} />
-      </div>
-    </Dialog>
-  );
-}
-
-export type DocsNotice = { kind: 'applied'; path: string } | { kind: 'choose'; found: string[] };
-
-const inside = (path: string, folder: string | null): boolean => folder !== null && (path === folder || path.startsWith(`${folder}/`));
-
 interface NoticeProps {
-  project: ProjectDto;
-  notice: DocsNotice;
-  onChanged: (project: ProjectDto) => void;
-  onElsewhere: () => void;
-  onCreate: () => void;
+  count: number;
+  onSetUp: () => void;
   onClose: () => void;
-  onError: (message: string | undefined) => void;
 }
 
-// ADR-020 item 4: documents found in the project folder. One set is used at once and only
-// announced; several are listed for the user to pick.
-export function DocsFoundNotice({ project, notice, onChanged, onElsewhere, onCreate, onClose, onError }: NoticeProps) {
+// ADR-023 item 1: documents found in a project added before the dialog asked. AgentHub only says
+// so; the user decides in the same dialog as when adding a project.
+export function DocsFoundNotice({ count, onSetUp, onClose }: NoticeProps) {
   const { t } = useI18n();
-  async function use(path: string): Promise<void> {
-    onError(undefined);
-    try {
-      onChanged(await unwrap(api.updateProjectContext({ id: project.id, enabled: true, customPath: path })));
-      onClose();
-    } catch (reason) {
-      onError((reason as Error).message);
-    }
-  }
-
-  if (notice.kind === 'applied') {
-    return (
-      <div className="banner notice" role="status" aria-label={t('docs.found')}>
-        <p>
-          {t('docs.found.applied')} <span className="path">
-            <PathText path={project.path && notice.path.startsWith(`${project.path}/`) ? notice.path.slice(project.path.length + 1) : notice.path} />
-          </span>
-        </p>
-        <p className="hint">
-          {t('docs.found.writes')}
-          {inside(notice.path, project.path) && ` ${t('docs.found.inRepo')}`}
-        </p>
-        <div className="row">
-          <button type="button" onClick={onElsewhere}>
-            {t('docs.found.elsewhere')}
-          </button>
-          <button type="button" onClick={onClose}>
-            {t('common.close')}
-          </button>
-        </div>
-      </div>
-    );
-  }
   return (
     <div className="banner notice" role="group" aria-label={t('docs.found')}>
-      <p>{t('docs.found.several', { count: notice.found.length })}</p>
-      <ul className="found-list">
-        {notice.found.map((path) => (
-          <li key={path} className="row nowrap">
-            <span className="path grow">
-              <PathText path={path} />
-            </span>
-            <button type="button" onClick={() => void use(path)}>
-              {t('docs.found.use')}
-            </button>
-          </li>
-        ))}
-      </ul>
+      <p>{t('docs.found.ask', { count })}</p>
       <div className="row">
-        <button type="button" onClick={onCreate}>
-          {t('docs.found.createNew')}
+        <button type="button" className="primary" onClick={onSetUp}>
+          {t('docs.found.review')}
         </button>
         <button type="button" onClick={onClose}>
           {t('docs.found.skip')}

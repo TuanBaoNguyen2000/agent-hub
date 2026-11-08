@@ -21,7 +21,7 @@ Use the path from the opening prompt, or the AgentHub MCP tools if available, or
 
 ## Write
 
-- Task file: goal, acceptance criteria, what was learned in this chat (with provenance: verified / observed / reported), open questions, and an empty "Handoff log".
+- Task file: the title, a `Status: To do` line under it (in the documents' language: `Chờ`, `대기`), goal, acceptance criteria as a `- [ ]` checklist, what was learned in this chat (with provenance: verified / observed / reported), open questions, and an empty "Handoff log".
 - Add the task to the workstream's `STATUS.md` task table with the state `To do` (in the documents' language: `Chờ`, `대기`), using the next task number free across all workstreams. Re-read `STATUS.md` right before editing and merge with any newer content.
 - Keep it short: what someone needs to continue, not a transcript. Never paste secrets, tokens or personal data.
 

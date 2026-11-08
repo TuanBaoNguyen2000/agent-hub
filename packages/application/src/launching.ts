@@ -281,7 +281,7 @@ export interface LaunchRequest {
   // The user accepted the transcript offer of the preview (§7.6).
   useTranscript?: boolean | undefined;
   // 'refine': the agent fills in the chosen task instead of resuming it (ADR-021 item 7).
-  purpose?: 'refine' | undefined;
+  purpose?: 'refine' | 'init' | undefined;
   profileId: string;
   mode: ClientMode;
 }
@@ -465,7 +465,7 @@ export function createLaunchService({
     warnings: PlannedStep[];
   }
 
-  async function promptFor(project: StoredProject & { path: string }, taskRef: string | null, purpose?: 'refine'): Promise<PromptPlan | null> {
+  async function promptFor(project: StoredProject & { path: string }, taskRef: string | null, purpose?: 'refine' | 'init'): Promise<PromptPlan | null> {
     if (!project.context.enabled) {
       if (taskRef) throw new DomainError('VALIDATION_FAILED', 'launch.noDocsNoTask');
       // §8.2: without documents, the newest saved handoff is the context.
@@ -484,8 +484,9 @@ export function createLaunchService({
     const locale = chatLocale(project);
     const language = documentLanguageName(CONTEXT_LANGUAGES.includes(project.context.language) ? project.context.language : 'en');
     const initialised = platform.pathKind(`${folder}/README.md`) === 'file';
-    if (!initialised) {
-      if (taskRef) throw new DomainError('NOT_FOUND', 'launch.docsNotCreated');
+    // ADR-023 item 2: an empty layout AgentHub wrote still needs context-init to fill it.
+    if (!initialised || purpose === 'init' || (!taskRef && !documents.overview(folder).filled)) {
+      if (taskRef && !initialised) throw new DomainError('NOT_FOUND', 'launch.docsNotCreated');
       // Notes the project already keeps in another shape are linked, not copied (ADR-020 item 4).
       const existing = documents.detect(project.path).others.filter((path) => !isInside(`${project.path}/${path}`, folder));
       const text = promptIn(locale, existing.length > 0 ? 'prompt.initWithDocs' : 'prompt.init', { folder, language, docs: existing.join(', ') });

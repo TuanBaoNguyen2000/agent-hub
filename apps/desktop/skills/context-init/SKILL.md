@@ -9,7 +9,7 @@ Set up the documents every later session reads with `context-resume`. Quality he
 
 ## Find the context folder
 
-Use the path from the opening prompt, or the AgentHub MCP tools if available, or ask the user. If the folder already has documents, only add a new workstream, in the workstream folder they already use (`Workstreams/`, or another name such as `Playables/`); never overwrite existing files.
+Use the path from the opening prompt, or the AgentHub MCP tools if available, or ask the user. AgentHub may already have written the empty layout there (`README.md`, a `PROJECT_CONTEXT.md` with headings only, `Workstreams/main/` with an empty `STATUS.md` table and `Tasks/`): fill that layout in, rename nothing without asking, and keep `Workstreams/main/` as the first workstream unless the user wants another name. If the folder already has real documents, only add a new workstream, in the workstream folder they already use (`Workstreams/`, or another name such as `Playables/`); never overwrite existing files.
 
 ## Gather input
 
@@ -34,9 +34,9 @@ Use the path from the opening prompt, or the AgentHub MCP tools if available, or
             └── TASK-001-<slug>.md
 ```
 
-Each task file has: goal, acceptance criteria (testable), notes, and an empty "Handoff log" section where `context-checkpoint` adds entries newest first.
+Each task file has: the title (`# TASK-NNN Title`), a `Status: <state>` line right under the title, goal, acceptance criteria (testable, as a `- [ ]` checklist), notes, and an empty "Handoff log" section where `context-checkpoint` adds entries newest first.
 
-The task table in `STATUS.md` has the task id (with its title) in the first column and its state in the second, one row per task. Use exactly one of four states, in the documents' language: `To do`, `In progress`, `Blocked`, `Done` (Vietnamese: `Chờ`, `Đang làm`, `Bị chặn`, `Xong`; Korean: `대기`, `진행 중`, `막힘`, `완료`). AgentHub shows and edits this table, and the user may change states or add tasks from AgentHub too. Task numbers are unique across all workstreams.
+A task's state is written twice: in the `Status:` line of the task file, which AgentHub reads first, and in the task table of `STATUS.md` (task id with its title in the first column, state in the second, one row per task). Keep both the same. Use exactly one of four states, in the documents' language: `To do`, `In progress`, `Blocked`, `Done` (Vietnamese: `Chờ`, `Đang làm`, `Bị chặn`, `Xong`; Korean: `대기`, `진행 중`, `막힘`, `완료`). AgentHub shows and edits both, and the user may change states or add tasks from AgentHub too. Task numbers are unique across all workstreams.
 
 Use lowercase-hyphen slugs and three-digit task numbers. Write in the language the prompt asks for (English by default). Use absolute dates.
 

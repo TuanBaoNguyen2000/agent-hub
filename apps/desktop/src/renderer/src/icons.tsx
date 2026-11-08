@@ -135,3 +135,25 @@ export const Wrench = () => (
     <path d="M10.5 2.5a3 3 0 0 0-2.8 4L3 11.2 4.8 13l4.7-4.7a3 3 0 0 0 4-2.8l-1.7 1.7-1.8-.5-.5-1.8z" />
   </Icon>
 );
+
+export const Doc = () => (
+  <Icon>
+    <path d="M4 2.5h5L12 5.5v8a.5.5 0 0 1-.5.5h-7.5a.5.5 0 0 1-.5-.5v-10.5a.5.5 0 0 1 .5-.5z" />
+    <path d="M9 2.5v3h3" />
+  </Icon>
+);
+
+// The documents panel on the right, like the Files pane of Claude and Codex Desktop (ADR-023 item 6).
+export const PanelRight = () => (
+  <Icon>
+    <rect x="2" y="3" width="12" height="10" rx="1.5" />
+    <path d="M10 3v10" />
+  </Icon>
+);
+
+export const Refresh = () => (
+  <Icon>
+    <path d="M13 8a5 5 0 1 1-1.5-3.55" />
+    <path d="M13 2.5v3h-3" />
+  </Icon>
+);

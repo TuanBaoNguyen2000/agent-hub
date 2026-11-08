@@ -37,7 +37,8 @@ interface Parsed {
 }
 
 const KINDS: [TaskSectionKind, RegExp][] = [
-  ['handoff', /^handoff log$/i],
+  // "Handoff log (newest first)" too: agents often add a note after the name (ADR-023).
+  ['handoff', /^handoff log(?:[ \t]*(?:\([^)\n]*\)|[-–—:][^\n]*))?$/i],
   ['criteria', /acceptance|criteria|tiêu chí|điều kiện hoàn thành|완료 조건|수락 기준|인수 조건/i],
   ['goal', /^(goal|goals|objective|mục tiêu|목표)(?![\p{L}\p{N}])/iu],
   ['notes', /^(notes?|ghi chú|메모|참고)(?![\p{L}\p{N}])/iu],
@@ -156,6 +157,8 @@ export function newTaskDocument(input: { id: string; title: string; goal: string
   return [
     `# ${input.id} ${input.title.replace(/\s+/g, ' ').trim()}`,
     '',
+    `Status: ${STATE_WORDS[input.language].todo}`,
+    '',
     `## ${headings.goal}`,
     '',
     input.goal.trim(),
@@ -260,4 +263,107 @@ const pad = (value: number): string => String(value).padStart(2, '0');
 export function verifiedHandoff(at: Date, language: ContextLanguage): string {
   const stamp = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
   return `### ${stamp} — AgentHub\n${VERIFIED_LINES[language]}`;
+}
+
+// --- ADR-023 item 4: the task file's own "Status:" line. ---
+
+// Rewrites the "Status:" line between the title and the first section, or adds one under the title.
+export function setTaskFileState(text: string, word: string): string {
+  const all = lines(text);
+  let seenTitle = false;
+  let titleLine: (typeof all)[number] | null = null;
+  for (const line of all) {
+    if (/^#[ \t]/.test(line.text)) {
+      if (seenTitle) break;
+      seenTitle = true;
+      titleLine = line;
+      continue;
+    }
+    if (/^#{2,6}[ \t]/.test(line.text)) break;
+    const match = /^([ \t]*(?:[-*][ \t]+)?(?:\*\*|__)?(?:Status|Trạng thái|상태)(?:\*\*|__)?[ \t]*:(?:\*\*|__)?[ \t]*)(.*?)([ \t]*)$/iu.exec(line.text);
+    if (!match) continue;
+    const newline = text.slice(line.start, line.end).endsWith('\r\n') ? '\r\n' : text.slice(line.start, line.end).endsWith('\n') ? '\n' : '';
+    // Keeps the agent's bold markers around the word.
+    const value = match[2] ?? '';
+    const bold = /^(\*\*|__)(.*?)(\*\*|__)$/.exec(value);
+    const replaced = bold ? `${bold[1]}${word}${bold[3]}` : word;
+    return text.slice(0, line.start) + (match[1] ?? '') + replaced + newline + text.slice(line.end);
+  }
+  if (!titleLine) return `Status: ${word}\n\n${text}`;
+  const rest = text.slice(titleLine.end).replace(/^(?:[ \t]*\r?\n)+/, '');
+  const titleText = text.slice(0, titleLine.end);
+  return `${titleText}${titleText.endsWith('\n') ? '' : '\n'}\nStatus: ${word}\n${rest === '' ? '' : `\n${rest}`}`;
+}
+
+// --- ADR-023 item 2: the empty layout AgentHub writes when the user creates documents. ---
+
+export const DEFAULT_WORKSTREAM = 'Workstreams/main';
+
+const SCAFFOLD_TEXT: Record<ContextLanguage, { readme: string; projectContext: string; workstream: string; tasks: string }> = {
+  en: {
+    readme: [
+      '# Project context',
+      '',
+      'Shared context for the agents working on this project, kept by AgentHub and the agents (skills context-init, context-resume, context-checkpoint).',
+      '',
+      '- `PROJECT_CONTEXT.md`: environment, glossary and pitfalls for the whole project.',
+      '- `Workstreams/<name>/STATUS.md`: what is in progress, blockers, next steps and the task table.',
+      '- `Workstreams/<name>/Tasks/TASK-NNN-<slug>.md`: goal, acceptance criteria, notes, a `Status:` line and the handoff log (newest first).',
+      '',
+      'Write absolute dates. Keep reported, observed and verified apart.',
+      '',
+    ].join('\n'),
+    projectContext: '# Project context\n\n## Environment\n\n## Glossary\n\n## Pitfalls\n',
+    workstream: 'Main',
+    tasks: 'Tasks',
+  },
+  vi: {
+    readme: [
+      '# Tài liệu context của project',
+      '',
+      'Ngữ cảnh dùng chung cho các agent làm việc trên project này, do AgentHub và agent duy trì (skill context-init, context-resume, context-checkpoint).',
+      '',
+      '- `PROJECT_CONTEXT.md`: môi trường, thuật ngữ, pitfalls của cả project.',
+      '- `Workstreams/<tên>/STATUS.md`: đang làm gì, blocker, bước tiếp theo và bảng task.',
+      '- `Workstreams/<tên>/Tasks/TASK-NNN-<slug>.md`: mục tiêu, tiêu chí hoàn thành, ghi chú, dòng `Status:` và Handoff log (mới nhất ở trên).',
+      '',
+      'Ghi ngày tuyệt đối. Tách rõ reported, observed và verified.',
+      '',
+    ].join('\n'),
+    projectContext: '# Ngữ cảnh project\n\n## Môi trường\n\n## Thuật ngữ\n\n## Pitfalls\n',
+    workstream: 'Chung',
+    tasks: 'Task',
+  },
+  ko: {
+    readme: [
+      '# 프로젝트 컨텍스트',
+      '',
+      '이 프로젝트에서 일하는 에이전트가 함께 쓰는 컨텍스트로, AgentHub와 에이전트가 관리합니다 (스킬 context-init, context-resume, context-checkpoint).',
+      '',
+      '- `PROJECT_CONTEXT.md`: 프로젝트 전체의 환경, 용어, 주의 사항.',
+      '- `Workstreams/<이름>/STATUS.md`: 진행 중인 일, 블로커, 다음 단계, 태스크 표.',
+      '- `Workstreams/<이름>/Tasks/TASK-NNN-<slug>.md`: 목표, 완료 조건, 메모, `Status:` 줄, Handoff log (최신이 위).',
+      '',
+      '날짜는 절대 날짜로 쓰고, reported, observed, verified를 구분합니다.',
+      '',
+    ].join('\n'),
+    projectContext: '# 프로젝트 컨텍스트\n\n## 환경\n\n## 용어\n\n## 주의 사항\n',
+    workstream: '기본',
+    tasks: '태스크',
+  },
+};
+
+export function workstreamStatusDocument(title: string, language: ContextLanguage): string {
+  return `# ${title.replace(/\s+/g, ' ').trim()}\n\n## ${SCAFFOLD_TEXT[language].tasks}\n\n| Task | Status |\n|---|---|\n`;
+}
+
+// Files of an empty set of documents, relative to its folder; folders end with "/".
+export function contextScaffold(language: ContextLanguage): { path: string; content: string | null }[] {
+  const text = SCAFFOLD_TEXT[language];
+  return [
+    { path: 'README.md', content: text.readme },
+    { path: 'PROJECT_CONTEXT.md', content: text.projectContext },
+    { path: `${DEFAULT_WORKSTREAM}/STATUS.md`, content: workstreamStatusDocument(text.workstream, language) },
+    { path: `${DEFAULT_WORKSTREAM}/Tasks/`, content: null },
+  ];
 }

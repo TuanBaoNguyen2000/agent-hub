@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyTaskEdit,
+  contextScaffold,
   newTaskDocument,
   nextTaskId,
   parseTaskDocument,
   setStatusState,
+  setTaskFileState,
   stateGroup,
   taskSlug,
   verifiedHandoff,
@@ -131,5 +133,34 @@ describe('task states in STATUS (ADR-021 item 4)', () => {
 
   it('writes the user confirmation as a dated handoff entry the overview can read', () => {
     expect(verifiedHandoff(new Date(2026, 10, 6, 9, 5), 'en')).toBe('### 2026-11-06 09:05 — AgentHub\n- **Verified by user in AgentHub:** marked Done.');
+  });
+});
+
+describe('the task file\'s Status line (ADR-023 item 4)', () => {
+  it('rewrites the line under the title, keeping the agent\'s bold, and nothing else', () => {
+    expect(setTaskFileState('# T\n\n**Status:** **In progress**\nBranch: x\n\n## Goal\n', 'Done')).toBe('# T\n\n**Status:** **Done**\nBranch: x\n\n## Goal\n');
+    expect(setTaskFileState('# T\r\nStatus: todo\r\n## Goal\r\n', 'Blocked')).toBe('# T\r\nStatus: Blocked\r\n## Goal\r\n');
+  });
+
+  it('adds one under the title when there is none, and not from a section further down', () => {
+    expect(setTaskFileState('# T\n\n## Goal\n\n- Status: ignored\n', 'Chờ')).toBe('# T\n\nStatus: Chờ\n\n## Goal\n\n- Status: ignored\n');
+    expect(setTaskFileState('# T', 'Done')).toBe('# T\n\nStatus: Done\n');
+    expect(setTaskFileState('no title\n', 'Done')).toBe('Status: Done\n\nno title\n');
+  });
+
+  it('starts a new task with its state, and the scaffold never names a hidden file', () => {
+    expect(newTaskDocument({ id: 'TASK-002', title: 'X', goal: '', language: 'ko' })).toContain('\n\nStatus: 대기\n\n## 목표');
+    for (const language of ['en', 'vi', 'ko'] as const) {
+      const files = contextScaffold(language);
+      expect(files.map((file) => file.path)).toEqual(['README.md', 'PROJECT_CONTEXT.md', 'Workstreams/main/STATUS.md', 'Workstreams/main/Tasks/']);
+      expect(files.every((file) => !file.path.split('/').some((part) => part.startsWith('.')))).toBe(true);
+    }
+  });
+});
+
+describe('a Handoff log heading with a note after it', () => {
+  it('is still the handoff section, so the task screen shows it as the timeline', () => {
+    const kinds = parseTaskDocument('# T\n\n## Goal\n\nx\n\n## Handoff log (newest first)\n### 2026-11-06 A\n').sections.map((section) => section.kind);
+    expect(kinds).toEqual(['goal', 'handoff']);
   });
 });

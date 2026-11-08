@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AccountAvatar, PROVIDER_LABELS, useAccountLauncher, windowLabel } from './accounts';
 import { compareText } from '@agenthub/i18n';
 import { api, unwrap } from './api';
+import { AddProjectDialog } from './ContextSetup';
 import { useI18n } from './i18n';
 import { Chat, Folder, Gear, Monitor, Plus, Sidebar as SidebarIcon, Terminal } from './icons';
 import { LooseChatView, NewLooseChat } from './LooseChats';
@@ -47,6 +48,7 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(readSidebar);
   const [mode, setMode] = useState<'projects' | 'notes'>('projects');
+  const [adding, setAdding] = useState<string | null>(null);
 
   const showError = useCallback((message: string | undefined) => setError(message), []);
   const launcher = useAccountLauncher(showError);
@@ -161,17 +163,21 @@ export function App() {
     }
   }, [sidebarOpen]);
 
+  // ADR-023 item 1: the folder first, then a dialog that says what it holds and asks.
   async function addProject(): Promise<void> {
     setError(undefined);
     try {
       const path = await unwrap(api.pickProjectFolder());
-      if (!path) return;
-      const project = await unwrap(api.addProject({ path }));
-      setProjects((current) => [...(current ?? []), project].sort(byName));
-      navigate({ kind: 'project', id: project.id });
+      if (path) setAdding(path);
     } catch (reason) {
       setError((reason as Error).message);
     }
+  }
+
+  function added(project: ProjectDto): void {
+    setAdding(null);
+    setProjects((current) => [...(current ?? []), project].sort(byName));
+    navigate({ kind: 'project', id: project.id });
   }
 
   const selectedProject = screen.kind === 'project' ? projects?.find((project) => project.id === screen.id) : undefined;
@@ -398,6 +404,7 @@ export function App() {
           </div>
         )}
       </main>
+      {adding && <AddProjectDialog path={adding} defaultLanguage={locale} onClose={() => setAdding(null)} onAdded={added} />}
       {settingsTab && <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={() => setSettingsTab(null)} onAccountsChanged={reloadAccounts} />}
       {launcher.view}
     </div>

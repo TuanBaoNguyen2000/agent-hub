@@ -3,7 +3,26 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type MetadataStore, type Workspace, createWorkspace } from '@agenthub/application';
-import { appendHandoff, conflictingFiles, contextFiles, copyContextFiles, detectContext, contextProjectsFor, defaultContextFolder, openMetadataStore, readContextOverview, listNotes, moveNote, readNote, saveNote, listContext, readContext, writeContext } from '@agenthub/persistence';
+import {
+  appendHandoff,
+  conflictingFiles,
+  contextFiles,
+  contextProjectsFor,
+  copyContextFiles,
+  defaultContextFolder,
+  detectContext,
+  isContextFolder,
+  listContext,
+  listNotes,
+  makeContextFolder,
+  moveNote,
+  openMetadataStore,
+  readContext,
+  readContextOverview,
+  readNote,
+  saveNote,
+  writeContext,
+} from '@agenthub/persistence';
 import { createGitObserver, createMacPlatform, createPathInspector } from '@agenthub/platform';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { INSTRUCTIONS, createServer } from '../src/mcp/server';
@@ -17,6 +36,8 @@ const documentPorts = {
   list: (folder: string) => listContext(folder),
   read: readContext,
   write: writeContext,
+  makeFolder: makeContextFolder,
+  isContextFolder,
 };
 
 // The server against a real AgentHub database and real folders, as an agent's client would use it.

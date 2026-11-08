@@ -80,6 +80,10 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
     };
   });
   handle(IpcChannel.projectsDetectContext, (input) => workspace.detectContext(input));
+  handle(IpcChannel.projectsScanFolder, ({ path, projectId }) => workspace.scanFolder(path, projectId));
+  handle(IpcChannel.projectsCreateContext, (input) => workspace.createContext(input));
+  handle(IpcChannel.projectsUseContext, (input) => workspace.useContext(input));
+  handle(IpcChannel.projectsScaffoldContext, ({ id }) => workspace.scaffoldContext(id));
   handle(IpcChannel.projectsMoveContext, (input) => workspace.changeContextFolder(input));
   handle(IpcChannel.projectsAddHandoff, ({ id, taskRef, entry }) => workspace.addHandoff({ id, taskRef, entry }));
   handle(IpcChannel.projectsReadHandoff, (input) => workspace.readProjectHandoff(input));
@@ -213,6 +217,7 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
   handle(IpcChannel.tasksSave, (input) => workspace.saveTask(input));
   handle(IpcChannel.tasksSetState, (input) => workspace.setTaskState(input));
   handle(IpcChannel.tasksCreate, (input) => workspace.createTask(input));
+  handle(IpcChannel.tasksCreateWorkstream, (input) => workspace.createWorkstream(input));
 
   const { tools } = launching;
   handle(IpcChannel.toolsOverview, () => tools.view());

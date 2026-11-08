@@ -21,7 +21,9 @@ import {
   readContextOverview,
   readNote,
   saveNote,
+  isContextFolder,
   listContext,
+  makeContextFolder,
   readContext,
   writeContext,
 } from '@agenthub/persistence';
@@ -150,6 +152,8 @@ function start(): void {
   const documents = {
     overview: readContextOverview,
     detect: (projectPath: string) => detectContext(projectPath),
+    isContextFolder,
+    makeFolder: makeContextFolder,
     files: contextFiles,
     conflicts: conflictingFiles,
     copy: copyContextFiles,

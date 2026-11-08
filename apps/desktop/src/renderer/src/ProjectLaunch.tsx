@@ -28,7 +28,7 @@ interface Props {
   // The task line, shown under the launch bar.
   taskSummary?: ReactNode;
   // 'refine': the agent fills in the task instead of resuming it (ADR-021 item 7).
-  purpose?: 'refine';
+  purpose?: 'refine' | 'init';
 }
 
 // Opens an account at the project's folder.

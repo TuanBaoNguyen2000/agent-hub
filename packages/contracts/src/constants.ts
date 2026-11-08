@@ -11,6 +11,10 @@ export const IpcChannel = {
   projectsOpenContextFolder: 'projects:open-context-folder',
   projectsContext: 'projects:context',
   projectsDetectContext: 'projects:detect-context',
+  projectsScanFolder: 'projects:scan-folder',
+  projectsCreateContext: 'projects:create-context',
+  projectsUseContext: 'projects:use-context',
+  projectsScaffoldContext: 'projects:scaffold-context',
   projectsMoveContext: 'projects:move-context',
   projectsAddHandoff: 'projects:add-handoff',
   projectsReadHandoff: 'projects:read-handoff',
@@ -60,6 +64,7 @@ export const IpcChannel = {
   tasksSave: 'tasks:save',
   tasksSetState: 'tasks:set-state',
   tasksCreate: 'tasks:create',
+  tasksCreateWorkstream: 'tasks:create-workstream',
 } as const;
 
 // The four task states AgentHub writes into STATUS (ADR-021 item 4).

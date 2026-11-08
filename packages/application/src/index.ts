@@ -22,13 +22,16 @@ import {
   type TaskEdit,
   type TaskState,
   applyTaskEdit,
+  contextScaffold,
   newTaskDocument,
   nextTaskId,
   parseTaskDocument,
   setStatusState,
+  setTaskFileState,
   stateGroup,
   taskSlug,
   verifiedHandoff,
+  workstreamStatusDocument,
 } from './task-document';
 import { CLI_PATH_KEYS, isInside } from './launching';
 
@@ -131,8 +134,10 @@ export interface ContextTask {
   ref: string;
   id: string;
   title: string;
-  // As the workstream's STATUS table says, in the documents' own words.
+  // In the documents' own words: the task file's "Status:" line, else the STATUS table (ADR-023).
   state: string | null;
+  // Ticked and total acceptance criteria, when the task has a checklist.
+  criteria: { done: number; total: number } | null;
   lastHandoff: ContextHandoff | null;
 }
 
@@ -157,6 +162,8 @@ export interface ContextIssue {
 
 export interface ContextOverview {
   initialized: boolean;
+  // false while PROJECT_CONTEXT.md is missing or holds only headings: an agent has to fill it.
+  filled: boolean;
   workstreams: ContextWorkstream[];
   // Empty until README.md exists: before that the documents are not set up yet, not broken.
   issues: ContextIssue[];
@@ -184,6 +191,8 @@ export interface ContextDocuments {
   read(folder: string, path: string): { content: string; sha256: string };
   // baseSha256 null only for a new file; a changed file throws CONTEXT_CONFLICT.
   write(folder: string, path: string, content: string, baseSha256: string | null): { sha256: string };
+  makeFolder(folder: string, path: string): void;
+  isContextFolder(path: string): boolean;
 }
 
 export interface DocumentEntry {
@@ -260,6 +269,28 @@ export type ProjectView = Omit<StoredProject, 'context' | 'contextPath' | 'conte
   // The language prompts for this project are written in: its own, else the app's.
   chatLocale: Locale;
 };
+
+// ADR-023 item 1: what the add-project dialog shows before the project exists.
+export interface FolderScan {
+  path: string;
+  name: string;
+  found: { path: string; workstreams: number; tasks: number }[];
+  others: string[];
+  complete: boolean;
+  repoContextPath: string;
+  repoContextTaken: boolean;
+}
+
+// What the user chose for documents when adding a project, or later on its page.
+export type ContextLocation = 'repo' | 'app' | 'custom';
+export type ContextChoice =
+  | { kind: 'none' }
+  | { kind: 'existing'; path: string }
+  | { kind: 'create'; location: ContextLocation; customPath?: string | undefined; language: ContextLanguage };
+
+// ADR-023 item 3: the folder "in the repo" creates.
+export const REPO_CONTEXT_FOLDER = 'AgentContext';
+const repoContextPath = (projectPath: string): string => `${projectPath.replace(/[\\/]+$/, '')}/${REPO_CONTEXT_FOLDER}`;
 
 export type ContextFolderChange =
   | { status: 'done'; project: ProjectView; moved: number; kept: string | null }
@@ -380,6 +411,91 @@ export function createWorkspace({
     return view.context.path;
   }
 
+  // ADR-023 item 2: the layout of TDD §7.2 without content. A file that exists stays as it is;
+  // the first workstream only goes into documents that have none.
+  function scaffold(folder: string, language: ContextLanguage): void {
+    const before = documents.overview(folder);
+    const hasWorkstream = before.workstreams.length > 0;
+    // A workstream without STATUS.md gets the empty table too.
+    for (const issue of before.issues) {
+      if (issue.kind !== 'no_status' || issue.workstream === null) continue;
+      const title = before.workstreams.find((item) => item.slug === issue.workstream)?.title ?? issue.workstream;
+      try {
+        documents.write(folder, `${issue.workstream}/STATUS.md`, workstreamStatusDocument(title, language), null);
+      } catch (error) {
+        if (!(error instanceof DomainError && error.code === 'CONTEXT_CONFLICT')) throw error;
+      }
+    }
+    for (const item of contextScaffold(language)) {
+      if (hasWorkstream && item.path.startsWith('Workstreams/')) continue;
+      if (item.content === null) {
+        documents.makeFolder(folder, item.path);
+        continue;
+      }
+      try {
+        documents.write(folder, item.path, item.content, null);
+      } catch (error) {
+        if (!(error instanceof DomainError && error.code === 'CONTEXT_CONFLICT')) throw error;
+      }
+    }
+  }
+
+  // A new set in the repo needs AgentContext/ to be missing or empty; a set already there is used
+  // with "existing" instead, never written into as if it were new.
+  function requireFreeRepoFolder(projectPath: string): string {
+    const target = repoContextPath(projectPath);
+    const status = paths.inspect(target);
+    if (status === 'missing') return target;
+    if (status !== 'directory') throw new DomainError('VALIDATION_FAILED', 'project.contextFolderTaken', { path: target });
+    if (documents.files(target).length > 0) {
+      throw new DomainError('VALIDATION_FAILED', 'project.contextFolderTaken', { path: target });
+    }
+    return target;
+  }
+
+  // The documents never go into the project folder itself or a folder above it: AgentHub's
+  // README.md and Workstreams/ would land among the code (and a repo's own README.md is kept).
+  function requireApartFromProject(projectPath: string | null, path: string): void {
+    if (projectPath !== null && (isSamePath(projectPath, path) || isInside(projectPath, path))) {
+      throw new DomainError('VALIDATION_FAILED', 'project.contextIsProjectFolder', { path });
+    }
+  }
+
+  function requireContextFolder(path: string): void {
+    requireDirectory(path);
+    if (!documents.isContextFolder(path)) throw new DomainError('VALIDATION_FAILED', 'project.notContextFolder', { path });
+  }
+
+  function createContext(id: string, input: { location: ContextLocation; customPath?: string | undefined; language: ContextLanguage }): ProjectView {
+    const project = requireProject(id);
+    if (project.path === null) throw new DomainError('PROJECT_PATH_MISSING', 'project.pickFolderFirst');
+    if (!CONTEXT_LANGUAGES.includes(input.language)) throw new DomainError('VALIDATION_FAILED', 'project.badLanguage');
+    let contextPath: string | null;
+    if (input.location === 'repo') contextPath = requireFreeRepoFolder(project.path);
+    else if (input.location === 'custom') {
+      if (!input.customPath) throw new DomainError('VALIDATION_FAILED', 'project.pickFolderFirst');
+      requireDirectory(input.customPath);
+      requireApartFromProject(project.path, input.customPath);
+      contextPath = input.customPath;
+    } else contextPath = null;
+    const folder = contextPath ?? defaultContextDirectory(project.id);
+    ensureDirectory(folder);
+    const timestamp = now();
+    store.projects.setContext(project.id, deviceId(), { enabled: true, language: input.language }, contextPath, timestamp);
+    store.projects.markContextDetected(project.id, deviceId(), timestamp);
+    scaffold(folder, input.language);
+    return toView(requireProject(project.id));
+  }
+
+  function useContext(id: string, path: string): ProjectView {
+    const project = requireProject(id);
+    requireContextFolder(path);
+    const timestamp = now();
+    store.projects.setContext(project.id, deviceId(), { ...project.context, enabled: true }, path, timestamp);
+    store.projects.markContextDetected(project.id, deviceId(), timestamp);
+    return toView(requireProject(project.id));
+  }
+
   // The persistence layer speaks English to agents; the user gets a message in their language.
   function guardedWrite(folder: string, path: string, content: string, baseSha256: string | null): { sha256: string } {
     try {
@@ -447,9 +563,44 @@ export function createWorkspace({
       return store.projects.listActive(deviceId()).map(toView);
     },
 
-    addProject(input: { path: string; name?: string | undefined }): ProjectView {
+    // ADR-023 item 1: what the dialog shows before adding; nothing is written.
+    // projectId: the project the folder already belongs to, when its documents are set up later.
+    scanFolder(path: string, projectId?: string): FolderScan {
+      requireDirectory(path);
+      requireUnusedPath(path, projectId);
+      const detected = documents.detect(path);
+      const repo = repoContextPath(path);
+      let repoContextTaken = false;
+      try {
+        requireFreeRepoFolder(path);
+      } catch {
+        repoContextTaken = true;
+      }
+      return {
+        path,
+        name: folderNameOf(path),
+        found: detected.found.map((folder) => {
+          const overview = documents.overview(folder);
+          return { path: folder, workstreams: overview.workstreams.length, tasks: overview.workstreams.reduce((count, item) => count + item.tasks.length, 0) };
+        }),
+        others: detected.others,
+        complete: detected.complete,
+        repoContextPath: repo,
+        repoContextTaken,
+      };
+    },
+
+    addProject(input: { path: string; name?: string | undefined; context?: ContextChoice | undefined }): ProjectView {
       requireDirectory(input.path);
       requireUnusedPath(input.path);
+      const choice = input.context;
+      // Checked before the project exists, so a refused choice adds nothing.
+      if (choice?.kind === 'existing') requireContextFolder(choice.path);
+      if (choice?.kind === 'create' && choice.location === 'repo') requireFreeRepoFolder(input.path);
+      if (choice?.kind === 'create' && choice.location === 'custom') {
+        requireDirectory(choice.customPath ?? '');
+        requireApartFromProject(input.path, choice.customPath ?? '');
+      }
       const timestamp = now();
       const project: Project = {
         id: newId(),
@@ -460,7 +611,22 @@ export function createWorkspace({
         updatedAt: timestamp,
       };
       store.projects.insert(project, { id: newId(), deviceId: deviceId(), path: input.path });
+      if (choice?.kind === 'existing') return useContext(project.id, choice.path);
+      if (choice?.kind === 'create') return createContext(project.id, choice);
+      // Asked already: the page does not search again.
+      if (choice?.kind === 'none') store.projects.markContextDetected(project.id, deviceId(), timestamp);
       return toView(requireProject(project.id));
+    },
+
+    createContext: (input: { id: string; location: ContextLocation; customPath?: string | undefined; language: ContextLanguage }): ProjectView => createContext(input.id, input),
+
+    useContext: (input: { id: string; path: string }): ProjectView => useContext(input.id, input.path),
+
+    // Writes the files the documents are missing (ADR-023 item 2), never over one that exists.
+    scaffoldContext(id: string): ProjectView {
+      const project = requireProject(id);
+      scaffold(contextFolder(id), project.context.language);
+      return toView(requireProject(id));
     },
 
     updateProject(input: { id: string; name?: string | undefined; path?: string | undefined }): ProjectView {
@@ -503,7 +669,10 @@ export function createWorkspace({
       }
       if (input.chatLanguage !== undefined) store.projects.setChatLanguage(project.id, input.chatLanguage, now());
       const contextPath = input.customPath === undefined ? project.contextPath : input.customPath;
-      if (contextPath !== null && input.customPath !== undefined) requireDirectory(contextPath);
+      if (contextPath !== null && input.customPath !== undefined) {
+        requireDirectory(contextPath);
+        requireApartFromProject(project.path, contextPath);
+      }
       const context = { enabled: input.enabled ?? project.context.enabled, language: input.language ?? project.context.language };
       if (context.enabled && contextPath === null) ensureDirectory(defaultContextDirectory(project.id));
       store.projects.setContext(project.id, deviceId(), context, contextPath, now());
@@ -521,7 +690,10 @@ export function createWorkspace({
       const view = toView(project);
       const from = view.context.path;
       const to = input.customPath ?? defaultContextDirectory(project.id);
-      if (input.customPath !== null) requireDirectory(input.customPath);
+      if (input.customPath !== null) {
+        requireDirectory(input.customPath);
+        requireApartFromProject(project.path, input.customPath);
+      }
       if (isSamePath(from, to)) return { status: 'done', project: view, moved: 0, kept: null };
       if (isInside(to, from) || isInside(from, to)) {
         throw new DomainError('VALIDATION_FAILED', 'project.foldersNested');
@@ -554,13 +726,18 @@ export function createWorkspace({
       if (project.path === null || paths.inspect(project.path) !== 'directory') {
         return { project: toView(project), found: [], others: [], applied: null };
       }
+      const view = toView(project);
       const detected = documents.detect(project.path);
+      // The set already in use is not news. A project that turned documents on before this search
+      // existed may still point at an empty folder; a set found in the repo can replace it.
+      const found = view.context.enabled ? detected.found.filter((folder) => !isSamePath(folder, view.context.path)) : detected.found;
+      const currentEmpty = !view.context.enabled || view.context.pathStatus !== 'directory' || documents.files(view.context.path).length === 0;
       const timestamp = now();
       store.projects.markContextDetected(project.id, deviceId(), timestamp);
-      const only = detected.found.length === 1 ? (detected.found[0] as string) : null;
-      const applied = input.apply && !project.context.enabled && only !== null ? only : null;
+      const only = found.length === 1 ? (found[0] as string) : null;
+      const applied = input.apply && currentEmpty && only !== null ? only : null;
       if (applied) store.projects.setContext(project.id, deviceId(), { ...project.context, enabled: true }, applied, timestamp);
-      return { project: toView(requireProject(project.id)), found: detected.found, others: detected.others, applied };
+      return { project: toView(requireProject(project.id)), found, others: detected.others, applied };
     },
 
     // What the project page shows: tasks and handoffs read from the documents, Git, warnings.
@@ -571,7 +748,7 @@ export function createWorkspace({
           ? await git.observe(view.path)
           : { state: 'unknown', root: null, branch: null, head: null, headAt: null, dirty: null };
       const readable = view.context.enabled && view.context.pathStatus === 'directory';
-      const overview = readable ? documents.overview(view.context.path) : { initialized: false, workstreams: [], issues: [] };
+      const overview = readable ? documents.overview(view.context.path) : { initialized: false, filled: false, workstreams: [], issues: [] };
       return {
         overview,
         git: observation,
@@ -675,6 +852,9 @@ export function createWorkspace({
       const task = readTask(input.id, input.ref);
       const language = project.context.language;
       const word = STATE_WORDS[language][input.state];
+      // ADR-023 item 4: the task file says its own state; the STATUS table follows.
+      const updated = setTaskFileState(task.content, word);
+      if (updated !== task.content) guardedWrite(folder, input.ref, updated, task.sha256);
       const workstream = documents.overview(folder).workstreams.find((item) => item.slug === task.workstream);
       writeStatus(folder, task.workstream, workstream?.title ?? task.workstream, { id: task.id, title: task.document.title || task.id }, word);
       // Done in AgentHub is the user's confirmation, kept where the next agent reads it (item 5).
@@ -695,6 +875,22 @@ export function createWorkspace({
       guardedWrite(folder, ref, newTaskDocument({ id: taskId, title, goal: input.goal, language }), null);
       writeStatus(folder, workstream.slug, workstream.title, { id: taskId, title }, STATE_WORDS[language].todo);
       return readTask(input.id, ref);
+    },
+
+    // A new workstream beside the others (ADR-023 item 5): its STATUS.md and an empty Tasks/.
+    createWorkstream(input: { id: string; title: string }): ContextOverview {
+      const project = requireProject(input.id);
+      const folder = contextFolder(input.id);
+      const title = requireLabel(input.title, 'field.workstreamTitle');
+      const overview = documents.overview(folder);
+      const group = overview.workstreams[0]?.slug.split('/')[0] ?? 'Workstreams';
+      const base = taskSlug(title);
+      const taken = new Set(overview.workstreams.map((item) => item.slug.toLowerCase()));
+      let slug = `${group}/${base}`;
+      for (let index = 2; taken.has(slug.toLowerCase()); index += 1) slug = `${group}/${base}-${index}`;
+      guardedWrite(folder, `${slug}/STATUS.md`, workstreamStatusDocument(title, project.context.language), null);
+      documents.makeFolder(folder, `${slug}/Tasks`);
+      return documents.overview(folder);
     },
 
     getSettings,

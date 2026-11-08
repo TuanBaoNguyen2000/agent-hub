@@ -1,4 +1,4 @@
-import type { ContextTaskDto, NoteWithContentDto, ProjectContextDto, ProjectDto } from '@agenthub/contracts';
+import type { NoteWithContentDto, ProjectContextDto, ProjectDto } from '@agenthub/contracts';
 import { useState } from 'react';
 import { api, unwrap } from './api';
 import { CopyButton } from './CopyButton';
@@ -8,37 +8,35 @@ import { Disclosure } from './ui';
 interface Props {
   project: ProjectDto;
   context: ProjectContextDto | undefined;
-  // The task chosen in the Task tab, where a pasted handoff goes when the project has documents.
-  selectedTask: ContextTaskDto | undefined;
-  onPickTask: () => void;
   onReload: () => void;
   onError: (message: string | undefined) => void;
 }
 
 export const noteDate = ({ date }: ReturnType<typeof useI18n>, iso: string): string => date(iso, { dateStyle: 'short', timeStyle: 'short' });
 
+// Only for a project without documents (ADR-023): with documents, handoffs live in each task's
+// Handoff log, shown and pasted in the task panel.
 export function ProjectHandoffs(props: Props) {
-  if (!props.context) return null;
-  return props.project.context.enabled ? <TaskHandoffs {...props} context={props.context} /> : <NoteHandoffs {...props} context={props.context} />;
+  if (!props.context || props.project.context.enabled) return null;
+  return <NoteHandoffs {...props} context={props.context} />;
 }
 
-// With documents, handoffs live in each task's Handoff log, written by the agent through
-// context-checkpoint. "Thêm handoff" pastes an entry from a chat that cannot reach the files.
-function TaskHandoffs({ project, context, selectedTask, onPickTask, onReload, onError }: Props & { context: ProjectContextDto }) {
+// "Thêm handoff" for one task: an entry an agent printed in a chat that cannot reach the files.
+export function PasteHandoff({ project, task, onAdded, onError }: { project: ProjectDto; task: { ref: string; id: string }; onAdded: () => Promise<void> | void; onError: (message: string | undefined) => void }) {
   const { t } = useI18n();
   const [entry, setEntry] = useState('');
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState<string>();
+  const [saved, setSaved] = useState(false);
 
-  async function addHandoff(): Promise<void> {
-    if (!selectedTask || entry.trim() === '') return;
+  async function add(): Promise<void> {
+    if (entry.trim() === '') return;
     setSaving(true);
     onError(undefined);
     try {
-      await unwrap(api.addHandoff({ id: project.id, taskRef: selectedTask.ref, entry }));
+      await unwrap(api.addHandoff({ id: project.id, taskRef: task.ref, entry }));
       setEntry('');
-      setSaved(selectedTask.id);
-      onReload();
+      setSaved(true);
+      await onAdded();
     } catch (reason) {
       onError((reason as Error).message);
     } finally {
@@ -47,49 +45,31 @@ function TaskHandoffs({ project, context, selectedTask, onPickTask, onReload, on
   }
 
   return (
-    <section className="settings-group" aria-label={t('handoffs.region')}>
-      <div className="settings-group-header">
-        <div className="grow settings-row-text">
-          <h2>Handoff</h2>
-          <p className="hint">{t('handoffs.checkpointHint')}</p>
+    <Disclosure summary={t('handoffs.add')} className="handoff-paste">
+      <div className="stack">
+        <p className="hint">{t('handoffs.pasteHint', { task: task.id })}</p>
+        <textarea
+          aria-label={t('handoffs.content')}
+          rows={6}
+          value={entry}
+          placeholder={'### 2026-11-05 14:00 — account / agent\n- **Done:** …\n- **Remaining:** …'}
+          onChange={(event) => {
+            setEntry(event.target.value);
+            setSaved(false);
+          }}
+        />
+        <div className="row">
+          <button type="button" className="primary" disabled={saving || entry.trim() === ''} onClick={() => void add()}>
+            {t('handoffs.add')}
+          </button>
+          {saved && (
+            <span className="hint" role="status">
+              {t('handoffs.added', { task: task.id })}
+            </span>
+          )}
         </div>
-        <CopyButton text={context.checkpointPrompt} label={t('handoffs.copyCheckpoint')} />
       </div>
-      <div className="settings-row handoff-form">
-        {selectedTask ? (
-          <div className="stack grow">
-            <p className="hint">{t('handoffs.pasteHint', { task: selectedTask.id })}</p>
-            <textarea
-              aria-label={t('handoffs.content')}
-              rows={6}
-              value={entry}
-              placeholder={'### 2026-11-05 14:00 — account / agent\n- **Done:** …\n- **Remaining:** …'}
-              onChange={(event) => {
-                setEntry(event.target.value);
-                setSaved(undefined);
-              }}
-            />
-            <div className="row">
-              <button type="button" className="primary" disabled={saving || entry.trim() === ''} onClick={() => void addHandoff()}>
-                {t('handoffs.add')}
-              </button>
-              {saved && (
-                <span className="hint" role="status">
-                  {t('handoffs.added', { task: saved })}
-                </span>
-              )}
-            </div>
-          </div>
-        ) : (
-          <>
-            <p className="hint grow">{t('handoffs.pickTaskFirst')}</p>
-            <button type="button" onClick={onPickTask}>
-              {t('handoffs.pickTask')}
-            </button>
-          </>
-        )}
-      </div>
-    </section>
+    </Disclosure>
   );
 }
 

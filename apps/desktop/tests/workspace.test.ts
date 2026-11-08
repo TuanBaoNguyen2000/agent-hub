@@ -4,7 +4,24 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type MetadataStore, type Workspace, createWorkspace } from '@agenthub/application';
 import { DomainError } from '@agenthub/domain';
-import { appendHandoff, conflictingFiles, contextFiles, copyContextFiles, detectContext, openMetadataStore, readContextOverview, listNotes, moveNote, readNote, saveNote, listContext, readContext, writeContext } from '@agenthub/persistence';
+import {
+  appendHandoff,
+  conflictingFiles,
+  contextFiles,
+  copyContextFiles,
+  detectContext,
+  isContextFolder,
+  listContext,
+  listNotes,
+  makeContextFolder,
+  moveNote,
+  openMetadataStore,
+  readContext,
+  readContextOverview,
+  readNote,
+  saveNote,
+  writeContext,
+} from '@agenthub/persistence';
 import { createGitObserver, createMacPlatform, createPathInspector } from '@agenthub/platform';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -17,6 +34,8 @@ const documentPorts = {
   list: (folder: string) => listContext(folder),
   read: readContext,
   write: writeContext,
+  makeFolder: makeContextFolder,
+  isContextFolder,
 };
 
 // Real persistence and platform adapters on temporary folders; only Electron is absent.
@@ -350,6 +369,34 @@ describe('documents the project already has (ADR-020 item 4)', () => {
     expect(workspace.listProjects()[0]?.context.detected).toBe(true);
   });
 
+  it('also searches a project that turned documents on before the search existed', () => {
+    write('Unity/Game/AgentContext/PROJECT_CONTEXT.md', '# Project\n\nUnity 2022.\n');
+    write('Unity/Game/AgentContext/Playables/p005/STATUS.md', '# P005\n');
+    const project = workspace.addProject({ path: projectDir });
+    // Enabled with AgentHub's own folder, still empty: the set in the repo replaces it.
+    expect(workspace.updateProjectContext({ id: project.id, enabled: true }).context).toMatchObject({ enabled: true, custom: false });
+
+    const result = workspace.detectContext({ id: project.id, apply: true });
+
+    const found = join(projectDir, 'Unity', 'Game', 'AgentContext');
+    expect(result.found).toEqual([found]);
+    expect(result.applied).toBe(found);
+    // Once in use, the same set is not reported again.
+    expect(workspace.detectContext({ id: project.id, apply: true })).toMatchObject({ found: [], applied: null });
+  });
+
+  it('only announces a set when the documents in use already hold files', () => {
+    write('AgentContext/PROJECT_CONTEXT.md');
+    const project = workspace.addProject({ path: projectDir });
+    const path = workspace.updateProjectContext({ id: project.id, enabled: true }).context.path;
+    writeFileSync(join(path, 'README.md'), '# Context');
+
+    const result = workspace.detectContext({ id: project.id, apply: true });
+
+    expect(result).toMatchObject({ found: [join(projectDir, 'AgentContext')], applied: null });
+    expect(result.project.context.path).toBe(path);
+  });
+
   it('lists several sets for the user to pick, and changes nothing', () => {
     write('Docs/A/PROJECT_CONTEXT.md');
     write('Tools/B/PROJECT_CONTEXT.md');
@@ -375,6 +422,101 @@ describe('documents the project already has (ADR-020 item 4)', () => {
     const moved = join(root, 'moved');
     renameSync(projectDir, moved);
     expect(workspace.updateProject({ id: project.id, path: moved }).context.detected).toBe(false);
+  });
+});
+
+describe('adding a project with a choice of documents (ADR-023 items 1–3)', () => {
+  function write(path: string, content = '# x\n'): void {
+    mkdirSync(join(projectDir, path, '..'), { recursive: true });
+    writeFileSync(join(projectDir, path), content);
+  }
+
+  it('scans a folder before it is added, with what each set of documents holds, and writes nothing', () => {
+    write('AgentContext/README.md');
+    write('AgentContext/Playables/p5/STATUS.md', '# P5\n');
+    write('AgentContext/Playables/p5/Tasks/TASK-016-intro.md', '# TASK-016\n');
+    write('Docs/Continuity.md');
+
+    const scan = workspace.scanFolder(projectDir);
+
+    expect(scan).toMatchObject({
+      found: [{ path: join(projectDir, 'AgentContext'), workstreams: 1, tasks: 1 }],
+      others: ['Docs/Continuity.md'],
+      repoContextPath: join(projectDir, 'AgentContext'),
+      // A set already there is used, not created again.
+      repoContextTaken: true,
+    });
+    expect(workspace.listProjects()).toHaveLength(0);
+  });
+
+  it('uses the set the user picked', async () => {
+    write('Tools/B/PROJECT_CONTEXT.md');
+    const project = workspace.addProject({ path: projectDir, context: { kind: 'existing', path: join(projectDir, 'Tools', 'B') } });
+    expect(project.context).toMatchObject({ enabled: true, custom: true, path: join(projectDir, 'Tools', 'B'), detected: true });
+    expect(codeOf(() => workspace.useContext({ id: project.id, path: join(projectDir, 'Tools') }))).toBe('VALIDATION_FAILED');
+    expect((await workspace.projectContext(project.id)).overview.issues.map((issue) => issue.kind)).toEqual([]);
+  });
+
+  it('creates the layout in the repo, in the documents language, and the Task screen can use it at once', async () => {
+    const project = workspace.addProject({ path: projectDir, context: { kind: 'create', location: 'repo', language: 'vi' } });
+    const folder = join(projectDir, 'AgentContext');
+    expect(project.context).toMatchObject({ enabled: true, custom: true, path: folder, language: 'vi' });
+    expect(readFileSync(join(folder, 'README.md'), 'utf8')).toContain('# Tài liệu context của project');
+    expect(readFileSync(join(folder, 'Workstreams', 'main', 'STATUS.md'), 'utf8')).toBe('# Chung\n\n## Task\n\n| Task | Status |\n|---|---|\n');
+    const state = await workspace.projectContext(project.id);
+    expect(state.overview.initialized).toBe(true);
+    expect(state.overview.workstreams.map((item) => item.slug)).toEqual(['Workstreams/main']);
+
+    const task = workspace.createTask({ id: project.id, workstream: 'Workstreams/main', title: 'Đầu tiên', goal: '' });
+    expect(task).toMatchObject({ id: 'TASK-001', state: 'Chờ' });
+    expect(codeOf(() => workspace.scanFolder(join(root, 'missing')))).toBe('PROJECT_PATH_MISSING');
+  });
+
+  it('refuses an AgentContext folder that holds other files, before adding anything', () => {
+    write('AgentContext/random.txt', 'mine');
+    expect(workspace.scanFolder(projectDir).repoContextTaken).toBe(true);
+    expect(codeOf(() => workspace.addProject({ path: projectDir, context: { kind: 'create', location: 'repo', language: 'en' } }))).toBe('VALIDATION_FAILED');
+    expect(workspace.listProjects()).toHaveLength(0);
+  });
+
+  it('creates documents in AgentHub\'s data, and "none" is not asked again', () => {
+    const inApp = workspace.addProject({ path: projectDir, context: { kind: 'create', location: 'app', language: 'en' } });
+    expect(inApp.context.custom).toBe(false);
+    expect(readFileSync(join(inApp.context.path, 'PROJECT_CONTEXT.md'), 'utf8')).toContain('## Pitfalls');
+    workspace.removeProject(inApp.id);
+    const none = workspace.addProject({ path: projectDir, context: { kind: 'none' } });
+    expect(none.context).toMatchObject({ enabled: false, detected: true });
+  });
+
+  it('fills in only what is missing and never overwrites a file', () => {
+    const project = workspace.addProject({ path: projectDir });
+    const folder = workspace.updateProjectContext({ id: project.id, enabled: true }).context.path;
+    mkdirSync(join(folder, 'Playables', 'p5', 'Tasks'), { recursive: true });
+    writeFileSync(join(folder, 'README.md'), '# Mine\n');
+    writeFileSync(join(folder, 'Playables', 'p5', 'STATUS.md'), '# P5\n');
+
+    workspace.scaffoldContext(project.id);
+
+    expect(readFileSync(join(folder, 'README.md'), 'utf8')).toBe('# Mine\n');
+    expect(existsSync(join(folder, 'PROJECT_CONTEXT.md'))).toBe(true);
+    // Documents with a workstream get no second one; one without STATUS.md gets the table.
+    expect(existsSync(join(folder, 'Workstreams'))).toBe(false);
+    expect(readFileSync(join(folder, 'Playables', 'p5', 'STATUS.md'), 'utf8')).toBe('# P5\n');
+    mkdirSync(join(folder, 'Playables', 'p6', 'Tasks'), { recursive: true });
+    workspace.scaffoldContext(project.id);
+    expect(readFileSync(join(folder, 'Playables', 'p6', 'STATUS.md'), 'utf8')).toContain('| Task | Status |');
+  });
+
+  it('adds a workstream beside the others, with a name of its own', () => {
+    const project = workspace.addProject({ path: projectDir, context: { kind: 'create', location: 'app', language: 'en' } });
+    workspace.createWorkstream({ id: project.id, title: 'Main' });
+    const overview = workspace.createWorkstream({ id: project.id, title: 'Combo UI' });
+    expect(overview.workstreams.map((item) => [item.slug, item.title])).toEqual([
+      ['Workstreams/combo-ui', 'Combo UI'],
+      ['Workstreams/main', 'Main'],
+      ['Workstreams/main-2', 'Main'],
+    ]);
+    expect(existsSync(join(project.context.path, 'Workstreams', 'combo-ui', 'Tasks'))).toBe(true);
   });
 });
 
@@ -433,6 +575,17 @@ describe('moving the documents to another folder (ADR-020 item 5)', () => {
     const inside = join(workspace.listProjects()[0]?.context.path ?? '', 'sub');
     mkdirSync(inside);
     expect(await workspace.changeContextFolder({ id, customPath: inside, move: 'move' }).catch((error: DomainError) => error.code)).toBe('VALIDATION_FAILED');
+  });
+
+  it('refuses the project folder itself, or one above it, as the documents folder', async () => {
+    const { id } = withDocuments();
+    const refused = async (customPath: string): Promise<unknown> =>
+      workspace.changeContextFolder({ id, customPath, move: 'leave' }).catch((error: DomainError) => error.message.startsWith('Documents cannot go in the project folder'));
+    expect(await refused(projectDir)).toBe(true);
+    expect(await refused(root)).toBe(true);
+    expect(codeOf(() => workspace.updateProjectContext({ id, customPath: projectDir }))).toBe('VALIDATION_FAILED');
+    expect(codeOf(() => workspace.createContext({ id, location: 'custom', customPath: projectDir, language: 'en' }))).toBe('VALIDATION_FAILED');
+    expect(existsSync(join(projectDir, 'README.md'))).toBe(false);
   });
 
   it('switches without moving when asked to leave the files', async () => {
@@ -533,7 +686,7 @@ describe('managing tasks and documents (ADR-021)', () => {
 
     expect(task.ref).toBe('Workstreams/combo/Tasks/TASK-017-dem-combo-tren-man-hinh.md');
     expect(task).toMatchObject({ id: 'TASK-017', state: 'Chờ', group: 'todo' });
-    expect(readFileSync(join(folder, task.ref), 'utf8')).toMatch(/^# TASK-017 Đếm combo trên màn hình\n\n## Mục tiêu\n\nHiện số combo\.\n/);
+    expect(readFileSync(join(folder, task.ref), 'utf8')).toMatch(/^# TASK-017 Đếm combo trên màn hình\n\nStatus: Chờ\n\n## Mục tiêu\n\nHiện số combo\.\n/);
     expect(readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toContain('| TASK-001 | in progress |\n| TASK-017 Đếm combo trên màn hình | Chờ |\n');
     expect(codeOf(() => workspace.createTask({ id, workstream: 'Workstreams/none', title: 'x', goal: '' }))).toBe('NOT_FOUND');
     expect(codeOf(() => workspace.createTask({ id, workstream: 'Workstreams/combo', title: '  ', goal: '' }))).toBe('VALIDATION_FAILED');
@@ -562,6 +715,9 @@ describe('managing tasks and documents (ADR-021)', () => {
 
     expect(done).toMatchObject({ state: 'Xong', group: 'done' });
     const text = readFileSync(join(folder, REF), 'utf8');
+    // ADR-023 item 4: the task file says its state too, under the title.
+    expect(text).toMatch(/^# TASK-001 Counter\n\nStatus: Xong\n\n## Goal\n/);
+    expect(readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toContain('| TASK-001 | Xong |');
     expect(text.match(/Người dùng xác nhận trong AgentHub/g)).toHaveLength(1);
     expect(text).toMatch(/## Handoff log\n\n### \d{4}-\d{2}-\d{2} \d{2}:\d{2} — AgentHub\n/);
     // A task with no row yet gets one; a workstream without STATUS gets the table.

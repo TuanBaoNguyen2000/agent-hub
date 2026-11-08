@@ -10,15 +10,18 @@ import type {
 } from '@agenthub/contracts';
 import { TASK_STATES } from '@agenthub/contracts/constants';
 import { LOCALES, type MessageKey, TABLES } from '@agenthub/i18n';
-import { useEffect, useState } from 'react';
+import { type DragEvent, useEffect, useMemo, useState } from 'react';
 import { api, unwrap } from './api';
 import { useExternalChange } from './documentWatch';
 import { useI18n } from './i18n';
+import { ChevronDown, ChevronRight, Close, More, Plus } from './icons';
 import { Markdown } from './Markdown';
+import { PasteHandoff } from './ProjectHandoffs';
 import { ProjectLaunch } from './ProjectLaunch';
-import { Dialog, PathText, Segmented, Select } from './ui';
+import { Dialog, Menu, MenuItem, PathText, Segmented, Select, StatusText, type StatusTone } from './ui';
 
 type I18n = ReturnType<typeof useI18n>;
+type TaskSectionDto = TaskViewDto['document']['sections'][number];
 
 export function handoffText({ t, date }: I18n, task: ContextTaskDto): string {
   if (!task.lastHandoff) return t('tasks.noHandoff');
@@ -38,10 +41,15 @@ export const STATE_LABELS: Record<TaskStateDto, MessageKey> = {
   done: 'tasks.state.done',
 };
 
+export const STATE_TONES: Record<TaskStateDto, StatusTone> = { active: 'active', blocked: 'warning', todo: 'neutral', done: 'ok' };
+
+// ADR-023 item 5: what needs attention first, as in Linear and GitHub Projects.
+const GROUP_ORDER: readonly TaskStateDto[] = ['active', 'blocked', 'todo', 'done'];
+
 // The four words AgentHub writes, in any documents language: only other words need a note.
 const STANDARD_WORDS = new Set(LOCALES.flatMap((locale) => TASK_STATES.map((state) => TABLES[locale][STATE_LABELS[state]].toLowerCase())));
 
-// The same grouping as Main's (ADR-021 item 4), for the filter before a task is opened.
+// The same grouping as Main's (ADR-021 item 4), for the list before a task is opened.
 const word = (alternatives: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}])(?:${alternatives})(?![\\p{L}\\p{N}])`, 'iu');
 const DONE = word('done|xong|complete|completed|hoàn thành|closed|cancell?ed|huỷ|hủy|archived|완료|종료');
 const BLOCKED = word('blocked|blocker|on hold|bị chặn|chặn|tạm dừng|막힘|보류|차단');
@@ -54,17 +62,23 @@ export function groupOf(state: string | null): TaskStateDto {
   return 'todo';
 }
 
+const workstreamOf = (ref: string): string => ref.slice(0, ref.lastIndexOf('/Tasks/'));
+
 interface Props {
   project: ProjectDto;
   context: ProjectContextDto | undefined;
   // Only while the tab is shown: what is not shown is not watched.
   active: boolean;
-  // The task the next launch points the agent at; null leaves the choice to the agent.
+  // The task the overview's launch points the agent at; null leaves the choice to the agent.
   selected: string | null;
   onSelect: (taskRef: string | null) => void;
+  // A task another part of the page asks to show, such as a task file in the documents panel.
+  focus: { ref: string; at: number } | null;
   onCreateDocs: () => void;
   // Reads the documents again, after AgentHub or an agent changed them.
   onReload: () => Promise<void>;
+  // Shows a file in the documents panel.
+  onShowFile: (path: string) => void;
   onError: (message: string | undefined) => void;
   accounts: ProfileDto[] | undefined;
   history: LaunchAttemptDto[];
@@ -73,118 +87,188 @@ interface Props {
   onLaunched: () => void;
 }
 
-type Filter = 'all' | TaskStateDto;
+type View = 'list' | 'board';
+const VIEW_KEY = 'agenthub.tasks.view';
 
-// ADR-021 items 2–7: the project's tasks as the documents hold them, which the user can now read,
-// edit, move between states and create, or hand to an agent to fill in.
+function readView(): View {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'board' ? 'board' : 'list';
+  } catch {
+    return 'list';
+  }
+}
+
+// ADR-023 item 5 (after ADR-021 items 2–7): the tasks the documents hold, grouped by state, in a
+// list or on a board; one opens in a panel on the right with its properties and sections.
 export function ProjectTasks(props: Props) {
-  const { project, context, active, selected, onSelect, onCreateDocs, onReload, onError } = props;
+  const { project, context, selected, focus, onCreateDocs, onReload, onError } = props;
   const i18n = useI18n();
-  const { t, tr } = i18n;
-  const [filter, setFilter] = useState<Filter>('all');
+  const { t } = i18n;
+  const [view, setView] = useState<View>(readView);
+  const [workstreamFilter, setWorkstreamFilter] = useState('all');
+  const [query, setQuery] = useState('');
   const [viewing, setViewing] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [refining, setRefining] = useState<string | null>(null);
+  const [creatingWorkstream, setCreatingWorkstream] = useState(false);
+  const [launchFor, setLaunchFor] = useState<{ ref: string; purpose: 'resume' | 'refine' } | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<TaskStateDto>>(() => new Set(['done']));
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_KEY, view);
+    } catch {
+      // Only a convenience.
+    }
+  }, [view]);
+
+  useEffect(() => {
+    if (focus) setViewing(focus.ref);
+  }, [focus]);
 
   const tasks = allTasks(context);
-  const shown = viewing && tasks.some((task) => task.ref === viewing) ? viewing : (selected ?? tasks[0]?.ref ?? null);
+  const titles = useMemo(() => new Map(context?.overview.workstreams.map((item) => [item.slug, item.title]) ?? []), [context]);
+  const q = query.trim().toLowerCase();
+  const visible = tasks.filter(
+    (task) => (workstreamFilter === 'all' || workstreamOf(task.ref) === workstreamFilter) && (q === '' || `${task.id} ${task.title}`.toLowerCase().includes(q)),
+  );
+  const open = viewing && tasks.some((task) => task.ref === viewing) ? viewing : null;
 
   if (!project.context.enabled) {
     return (
-      <section className="settings-group" aria-label={t('tasks.region')}>
-        <div className="settings-row">
-          <p className="hint grow">{t('tasks.noDocs')}</p>
-          <button type="button" onClick={onCreateDocs}>
-            {t('docs.create')}
-          </button>
-        </div>
-      </section>
+      <div className="tasks-empty-page">
+        <p className="hint">{t('tasks.noDocs')}</p>
+        <button type="button" className="primary" onClick={onCreateDocs}>
+          {t('docs.create')}
+        </button>
+      </div>
     );
   }
   if (!context) return null;
   const { overview, warnings } = context;
-  const filters: { value: Filter; label: string }[] = [{ value: 'all', label: t('tasks.filter.all') }, ...TASK_STATES.map((value) => ({ value, label: t(STATE_LABELS[value]) }))];
+
+  async function move(ref: string, state: TaskStateDto): Promise<void> {
+    const task = tasks.find((item) => item.ref === ref);
+    if (!task || groupOf(task.state) === state) return;
+    onError(undefined);
+    try {
+      await unwrap(api.setTaskState({ id: project.id, ref, state }));
+      await onReload();
+    } catch (reason) {
+      onError((reason as Error).message);
+    }
+  }
+
+  const byGroup = (group: TaskStateDto) => visible.filter((task) => groupOf(task.state) === group);
+  const workstreamOptions = [{ value: 'all', label: t('tasks.allWorkstreams') }, ...overview.workstreams.map((item) => ({ value: item.slug, label: item.title }))];
+
+  function row(task: ContextTaskDto) {
+    const taskWarnings = warnings.filter((warning) => warning.taskRef === task.ref);
+    return (
+      <li key={task.ref}>
+        <button type="button" className="task-row" data-testid="context-task" aria-current={task.ref === open ? 'true' : undefined} onClick={() => setViewing(task.ref)}>
+          <span className="task-id">{task.id}</span>
+          <span className="task-row-title truncate">{task.title.replace(new RegExp(`^${task.id}[\\s:.-]*`, 'i'), '') || task.title}</span>
+          {task.ref === selected && <span className="badge ok">{t('tasks.forLaunch')}</span>}
+          {taskWarnings.length > 0 && (
+            <span className="task-warning-mark" title={taskWarnings.map((warning) => i18n.tr(warning.message)).join('\n')}>
+              ▲ {taskWarnings.length}
+            </span>
+          )}
+          <span className="task-meta truncate">{titles.get(workstreamOf(task.ref)) ?? workstreamOf(task.ref)}</span>
+          <span className="task-meta">{task.criteria ? `${task.criteria.done}/${task.criteria.total}` : ''}</span>
+          <span className="task-meta truncate">{handoffText(i18n, task)}</span>
+        </button>
+      </li>
+    );
+  }
 
   return (
-    <div className="tasks-layout">
-      <section className="settings-group tasks-list" aria-label={t('tasks.region')}>
-        <div className="settings-group-header">
-          <div className="grow settings-row-text">
-            <h2>{t('tasks.title')}</h2>
-            <p className="hint">{t('tasks.hint')}</p>
-          </div>
-          {overview.workstreams.length > 0 && (
-            <button type="button" onClick={() => setCreating(true)}>
-              {t('tasks.create')}
-            </button>
-          )}
+    <div className={`tasks-page${open ? ' with-detail' : ''}`}>
+      <div className="tasks-main">
+        <div className="tasks-toolbar">
+          <h2>{t('tasks.title')}</h2>
+          <span className="hint">{visible.length}</span>
+          <Segmented
+            label={t('tasks.view')}
+            value={view}
+            options={[
+              { value: 'list', label: t('tasks.view.list') },
+              { value: 'board', label: t('tasks.view.board') },
+            ]}
+            onChange={setView}
+          />
+          {overview.workstreams.length > 1 && <Select label={t('tasks.workstream')} value={workstreamFilter} options={workstreamOptions} onChange={setWorkstreamFilter} />}
+          <input className="tasks-search" type="search" value={query} placeholder={t('tasks.search')} aria-label={t('tasks.search')} onChange={(event) => setQuery(event.target.value)} />
+          <span className="tasks-toolbar-actions">
+            {overview.initialized && (
+              <button type="button" className="new-workstream" onClick={() => setCreatingWorkstream(true)}>
+                {t('tasks.newWorkstream')}
+              </button>
+            )}
+            {overview.workstreams.length > 0 && (
+              <button type="button" className="primary" onClick={() => setCreating(true)}>
+                <Plus />
+                {t('tasks.create')}
+              </button>
+            )}
+          </span>
         </div>
 
-        {!overview.initialized && <p className="settings-empty hint">{t('tasks.notCreated')}</p>}
-        {overview.initialized && tasks.length === 0 && <p className="settings-empty hint">{t('tasks.empty')}</p>}
+        {!overview.initialized && <p className="tasks-note hint">{t('tasks.notCreated')}</p>}
+        {overview.initialized && overview.workstreams.length === 0 && <p className="tasks-note hint">{t('tasks.noWorkstreams')}</p>}
+        {overview.workstreams.length > 0 && tasks.length === 0 && <p className="tasks-note hint">{t('tasks.empty')}</p>}
 
-        {tasks.length > 0 && (
-          <>
-            <div className="settings-row">
-              <Segmented label={t('tasks.filter')} value={filter} options={filters} onChange={setFilter} />
-            </div>
-            <p className="settings-row hint launch-choice">
-              {selected ? t('tasks.launchTaskIs', { task: tasks.find((task) => task.ref === selected)?.id ?? '' }) : t('tasks.noneHint')}
-              {selected && (
-                <button type="button" className="link" onClick={() => onSelect(null)}>
-                  {t('tasks.none')}
-                </button>
-              )}
-            </p>
-            {overview.workstreams.map((workstream) => {
-              const visible = workstream.tasks.filter((task) => filter === 'all' || groupOf(task.state) === filter);
-              if (visible.length === 0) return null;
+        {tasks.length > 0 && view === 'list' && (
+          <div className="tasks-scroll" aria-label={t('tasks.region')} role="region">
+            {GROUP_ORDER.map((group) => {
+              const items = byGroup(group);
+              const isCollapsed = collapsed.has(group);
               return (
-                <div key={workstream.slug} className="task-group">
-                  <p className="task-group-title">{workstream.title}</p>
-                  <ul className="task-items">
-                    {visible.map((task) => {
-                      const taskWarnings = warnings.filter((warning) => warning.taskRef === task.ref);
-                      return (
-                        <li key={task.ref}>
-                          <button
-                            type="button"
-                            className="task-item"
-                            data-testid="context-task"
-                            aria-current={task.ref === shown ? 'true' : undefined}
-                            onClick={() => setViewing(task.ref)}
-                          >
-                            <span className="task-title">
-                              <span className="grow truncate">{task.title}</span>
-                              {task.state && <span className={`badge state-${groupOf(task.state)}`}>{task.state}</span>}
-                              {task.ref === selected && <span className="badge ok">{t('tasks.forLaunch')}</span>}
-                            </span>
-                            <span className="hint">{handoffText(i18n, task)}</span>
-                            {taskWarnings.map((warning, index) => (
-                              <span key={index} className="warning-text task-warning">
-                                {tr(warning.message)}
-                              </span>
-                            ))}
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
+                <section key={group} className="task-group" aria-label={t(STATE_LABELS[group])}>
+                  <button
+                    type="button"
+                    className="task-group-head"
+                    aria-expanded={!isCollapsed}
+                    onClick={() =>
+                      setCollapsed((current) => {
+                        const next = new Set(current);
+                        if (next.has(group)) next.delete(group);
+                        else next.add(group);
+                        return next;
+                      })
+                    }
+                  >
+                    <span className="tree-chevron">{isCollapsed ? <ChevronRight /> : <ChevronDown />}</span>
+                    <StatusText tone={STATE_TONES[group]}>{t(STATE_LABELS[group])}</StatusText>
+                    <span className="hint">{items.length}</span>
+                  </button>
+                  {!isCollapsed && items.length > 0 && <ul className="task-rows">{items.map(row)}</ul>}
+                </section>
               );
             })}
-          </>
+          </div>
         )}
-      </section>
 
-      {shown && (
+        {tasks.length > 0 && view === 'board' && (
+          <div className="task-board" role="region" aria-label={t('tasks.region')}>
+            {GROUP_ORDER.map((group) => (
+              <BoardColumn key={group} group={group} tasks={byGroup(group)} open={open} titles={titles} onOpen={setViewing} onDrop={(ref) => void move(ref, group)} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {open && (
         <TaskDetail
-          key={shown}
+          key={open}
           {...props}
-          taskRef={shown}
-          active={active}
-          refining={refining === shown}
-          onRefine={(on) => setRefining(on ? shown : null)}
+          taskRef={open}
+          workstreamTitle={titles.get(workstreamOf(open)) ?? workstreamOf(open)}
+          branch={overview.workstreams.find((item) => item.slug === workstreamOf(open))?.branch ?? null}
+          task={tasks.find((item) => item.ref === open) ?? null}
+          launch={launchFor?.ref === open ? launchFor.purpose : null}
+          onLaunch={(purpose) => setLaunchFor(purpose ? { ref: open, purpose } : null)}
+          onClose={() => setViewing(null)}
         />
       )}
 
@@ -192,12 +276,24 @@ export function ProjectTasks(props: Props) {
         <CreateTaskDialog
           project={project}
           workstreams={overview.workstreams.map((workstream) => ({ value: workstream.slug, label: workstream.title }))}
+          initial={workstreamFilter === 'all' ? null : workstreamFilter}
           onClose={() => setCreating(false)}
           onCreated={async (task, refine) => {
             setCreating(false);
             await onReload();
             setViewing(task.ref);
-            setRefining(refine ? task.ref : null);
+            setLaunchFor(refine ? { ref: task.ref, purpose: 'refine' } : null);
+          }}
+          onError={onError}
+        />
+      )}
+      {creatingWorkstream && (
+        <CreateWorkstreamDialog
+          project={project}
+          onClose={() => setCreatingWorkstream(false)}
+          onCreated={async () => {
+            setCreatingWorkstream(false);
+            await onReload();
           }}
           onError={onError}
         />
@@ -206,12 +302,88 @@ export function ProjectTasks(props: Props) {
   );
 }
 
-// --- One task: read, edit, state, hand to an agent ---
+// --- The board: four columns, a card moves to another state when dropped there ---
+
+const DRAG_TYPE = 'application/x-agenthub-task';
+
+function BoardColumn({
+  group,
+  tasks,
+  open,
+  titles,
+  onOpen,
+  onDrop,
+}: {
+  group: TaskStateDto;
+  tasks: ContextTaskDto[];
+  open: string | null;
+  titles: Map<string, string>;
+  onOpen: (ref: string) => void;
+  onDrop: (ref: string) => void;
+}) {
+  const { t } = useI18n();
+  const [over, setOver] = useState(false);
+  const accepts = (event: DragEvent): boolean => event.dataTransfer.types.includes(DRAG_TYPE);
+  return (
+    <section
+      className={`board-column${over ? ' drop-target' : ''}`}
+      aria-label={t(STATE_LABELS[group])}
+      onDragOver={(event) => {
+        if (!accepts(event)) return;
+        event.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(event) => {
+        setOver(false);
+        const ref = event.dataTransfer.getData(DRAG_TYPE);
+        if (ref) onDrop(ref);
+      }}
+    >
+      <header className="board-column-head">
+        <StatusText tone={STATE_TONES[group]}>{t(STATE_LABELS[group])}</StatusText>
+        <span className="hint">{tasks.length}</span>
+      </header>
+      <ul className="board-cards">
+        {tasks.map((task) => (
+          <li key={task.ref}>
+            <button
+              type="button"
+              className="board-card"
+              data-testid="context-task"
+              draggable
+              title={task.title}
+              aria-current={task.ref === open ? 'true' : undefined}
+              onDragStart={(event) => {
+                event.dataTransfer.setData(DRAG_TYPE, task.ref);
+                event.dataTransfer.effectAllowed = 'move';
+              }}
+              onClick={() => onOpen(task.ref)}
+            >
+              <span className="task-id">{task.id}</span>
+              <span className="board-card-title">{task.title.replace(new RegExp(`^${task.id}[\\s:.-]*`, 'i'), '') || task.title}</span>
+              <span className="task-meta">
+                {titles.get(workstreamOf(task.ref)) ?? workstreamOf(task.ref)}
+                {task.criteria ? ` · ${task.criteria.done}/${task.criteria.total}` : ''}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+// --- One task: properties, sections edited in place, the handoff log, an agent ---
 
 interface DetailProps extends Props {
   taskRef: string;
-  refining: boolean;
-  onRefine: (on: boolean) => void;
+  task: ContextTaskDto | null;
+  workstreamTitle: string;
+  branch: string | null;
+  launch: 'resume' | 'refine' | null;
+  onLaunch: (purpose: 'resume' | 'refine' | null) => void;
+  onClose: () => void;
 }
 
 interface Criterion {
@@ -221,7 +393,7 @@ interface Criterion {
 
 const CRITERION = /^\s*[-*+]\s+(?:\[([ xX])\]\s+)?(.*)$/;
 
-// A criteria section the form can show as a checklist: only list items and blank lines.
+// A criteria section shown as a checklist: only list items and blank lines.
 function asChecklist(body: string): Criterion[] | null {
   const lines = body.split('\n').filter((line) => line.trim() !== '');
   if (!lines.every((line) => CRITERION.test(line))) return null;
@@ -237,7 +409,8 @@ const checklist = (items: Criterion[]): string =>
     .map((item) => `- [${item.done ? 'x' : ' '}] ${item.text.trim()}`)
     .join('\n');
 
-const EDITABLE: readonly Exclude<TaskSectionKindDto, 'handoff' | 'other'>[] = ['goal', 'criteria', 'notes'];
+type EditableKind = Exclude<TaskSectionKindDto, 'handoff' | 'other'>;
+const EDITABLE: readonly EditableKind[] = ['goal', 'criteria', 'notes'];
 const SECTION_LABELS: Record<Exclude<TaskSectionKindDto, 'handoff'>, MessageKey> = {
   goal: 'tasks.section.goal',
   criteria: 'tasks.section.criteria',
@@ -245,17 +418,29 @@ const SECTION_LABELS: Record<Exclude<TaskSectionKindDto, 'handoff'>, MessageKey>
   other: 'tasks.section.other',
 };
 
-type Mode = 'view' | 'sections' | 'markdown';
+// Entries of the handoff log, newest first as agents write them: a heading and what follows.
+function handoffEntries(body: string): { heading: string; body: string }[] {
+  const entries: { heading: string; body: string }[] = [];
+  for (const line of body.split('\n')) {
+    const heading = /^#{1,6}[ \t]+(.+?)[ \t#]*$/.exec(line);
+    if (heading) entries.push({ heading: heading[1] as string, body: '' });
+    else if (entries.length > 0) (entries.at(-1) as { body: string }).body += `${line}\n`;
+  }
+  return entries;
+}
 
-function TaskDetail({ project, taskRef, active, selected, onSelect, onReload, onError, refining, onRefine, ...launch }: DetailProps) {
-  const { t } = useI18n();
+// What is being edited: one section by id, a section the task does not have yet, or the title.
+type Editing = { kind: 'section'; id: number } | { kind: 'add'; section: EditableKind } | { kind: 'title' } | { kind: 'markdown' } | null;
+
+function TaskDetail(props: DetailProps) {
+  const { project, taskRef, task: listed, workstreamTitle, branch, active, selected, onSelect, onReload, onShowFile, onError, launch, onLaunch, onClose } = props;
+  const { accounts, history, onOpenSettings, onOpenTools, onLaunched } = props;
+  const i18n = useI18n();
+  const { t } = i18n;
   const [task, setTask] = useState<TaskViewDto>();
-  const [mode, setMode] = useState<Mode>('view');
-  const [title, setTitle] = useState('');
-  const [bodies, setBodies] = useState<Record<number, string>>({});
-  const [added, setAdded] = useState<Record<string, string>>({});
-  const [criteria, setCriteria] = useState<Criterion[] | null>(null);
-  const [markdown, setMarkdown] = useState('');
+  const [editing, setEditing] = useState<Editing>(null);
+  const [draft, setDraft] = useState('');
+  const [criteriaDraft, setCriteriaDraft] = useState<Criterion[] | null>(null);
   const [saving, setSaving] = useState(false);
 
   async function load(): Promise<void> {
@@ -271,51 +456,25 @@ function TaskDetail({ project, taskRef, active, selected, onSelect, onReload, on
     // Once per task; the watch reads it again after a change.
   }, [taskRef]);
 
-  const editing = mode !== 'view';
   const changed = useExternalChange(project.id, taskRef, task?.sha256 ?? null, active);
   // While only reading, a change by an agent shows at once (ADR-021 item 7); while editing, the
   // user decides (item 9).
   useEffect(() => {
-    if (changed && !editing) {
+    if (changed && editing === null) {
       void load();
       void onReload();
     }
   }, [changed, editing]);
 
-  if (!task) return null;
+  if (!task) return <aside className="task-panel" aria-label={t('tasks.detail')} />;
   const sections = task.document.sections;
 
-  function startEditing(next: Mode): void {
-    if (!task) return;
-    setTitle(task.document.title);
-    setBodies(Object.fromEntries(sections.map((section) => [section.id, section.body])));
-    setAdded({});
-    const criteriaSection = sections.find((section) => section.kind === 'criteria');
-    setCriteria(criteriaSection ? asChecklist(criteriaSection.body) : []);
-    setMarkdown(task.content);
-    setMode(next);
-  }
-
-  async function save(): Promise<void> {
-    if (!task) return;
+  async function run(action: () => Promise<TaskViewDto>): Promise<void> {
     setSaving(true);
     onError(undefined);
     try {
-      if (mode === 'markdown') {
-        await unwrap(api.writeDocument({ id: project.id, path: taskRef, content: markdown, baseSha256: task.sha256 }));
-        setTask(await unwrap(api.readTask({ id: project.id, ref: taskRef })));
-      } else {
-        const criteriaSection = sections.find((section) => section.kind === 'criteria');
-        const edited = Object.entries(bodies).map(([id, body]) => ({
-          id: Number(id),
-          body: criteriaSection && Number(id) === criteriaSection.id && criteria ? checklist(criteria) : body,
-        }));
-        const missing = EDITABLE.filter((kind) => !sections.some((section) => section.kind === kind))
-          .map((kind) => ({ kind, body: kind === 'criteria' && criteria ? checklist(criteria) : (added[kind] ?? '') }))
-          .filter((item) => item.body.trim() !== '');
-        setTask(await unwrap(api.saveTask({ id: project.id, ref: taskRef, baseSha256: task.sha256, edit: { title, bodies: edited, added: missing } })));
-      }
-      setMode('view');
+      setTask(await action());
+      setEditing(null);
       await onReload();
     } catch (reason) {
       onError((reason as Error).message);
@@ -324,14 +483,23 @@ function TaskDetail({ project, taskRef, active, selected, onSelect, onReload, on
     }
   }
 
-  async function changeState(state: TaskStateDto): Promise<void> {
-    onError(undefined);
-    try {
-      setTask(await unwrap(api.setTaskState({ id: project.id, ref: taskRef, state })));
-      await onReload();
-    } catch (reason) {
-      onError((reason as Error).message);
-    }
+  const saveEdit = (edit: { title?: string; bodies?: { id: number; body: string }[]; added?: { kind: EditableKind; body: string }[] }, base = task) =>
+    run(() => unwrap(api.saveTask({ id: project.id, ref: taskRef, baseSha256: base.sha256, edit: { title: edit.title ?? base.document.title, bodies: edit.bodies ?? [], added: edit.added ?? [] } })));
+
+  function startSection(section: TaskSectionDto): void {
+    setDraft(section.body);
+    setCriteriaDraft(section.kind === 'criteria' ? asChecklist(section.body) : null);
+    setEditing({ kind: 'section', id: section.id });
+  }
+
+  function saveSection(section: TaskSectionDto): void {
+    const body = section.kind === 'criteria' && criteriaDraft ? checklist(criteriaDraft) : draft;
+    void saveEdit({ bodies: [{ id: section.id, body }] });
+  }
+
+  // Ticking a criterion writes the file at once.
+  function tick(section: TaskSectionDto, items: Criterion[], index: number, done: boolean): void {
+    void saveEdit({ bodies: [{ id: section.id, body: checklist(items.map((item, at) => (at === index ? { ...item, done } : item))) }] });
   }
 
   async function openFile(): Promise<void> {
@@ -342,125 +510,288 @@ function TaskDetail({ project, taskRef, active, selected, onSelect, onReload, on
     }
   }
 
-  const criteriaSection = sections.find((section) => section.kind === 'criteria');
+  function openLaunch(purpose: 'resume' | 'refine'): void {
+    if (launch === purpose) {
+      onLaunch(null);
+      return;
+    }
+    // The overview's launch follows the task the user works on (ADR-023 item 5).
+    if (purpose === 'resume') onSelect(taskRef);
+    onLaunch(purpose);
+  }
+
   const stateOptions = TASK_STATES.map((value) => ({ value, label: t(STATE_LABELS[value]) }));
+  const missing = EDITABLE.filter((kind) => !sections.some((section) => section.kind === kind));
+  const handoff = sections.find((section) => section.kind === 'handoff');
+  const titleText = task.document.title || task.id;
 
-  return (
-    <section className="settings-group task-detail" aria-label={t('tasks.detail')}>
-      <div className="settings-group-header">
-        <div className="grow settings-row-text">
-          <h2>{task.document.title || task.id}</h2>
-          <span className="path">
-            <PathText path={taskRef} />
-          </span>
-        </div>
-        <Select label={t('tasks.stateField')} value={task.group ?? 'todo'} options={stateOptions} onChange={(state) => void changeState(state)} align="end" />
-      </div>
-      {task.state && !STANDARD_WORDS.has(task.state.toLowerCase()) && (
-        <p className="settings-row hint">{t('tasks.stateAsWritten', { state: task.state })}</p>
-      )}
-
-      {changed && editing && (
-        <div className="banner warning tools-banner" role="alert">
-          <p>{t('tasks.changedOutside')}</p>
-          <button type="button" onClick={() => void load().then(() => setMode('view'))}>
-            {t('tasks.reload')}
-          </button>
-        </div>
-      )}
-
-      {mode === 'view' && (
-        <>
-          <div className="row task-actions">
-            <button type="button" className={taskRef === selected ? '' : 'primary'} onClick={() => onSelect(taskRef === selected ? null : taskRef)}>
-              {taskRef === selected ? t('tasks.unuse') : t('tasks.use')}
-            </button>
-            <button type="button" onClick={() => startEditing('sections')}>
+  function sectionView(section: TaskSectionDto) {
+    const label = section.kind === 'other' || section.kind === 'handoff' ? section.heading : t(SECTION_LABELS[section.kind]);
+    const isEditing = editing?.kind === 'section' && editing.id === section.id;
+    const items = section.kind === 'criteria' ? asChecklist(section.body) : null;
+    return (
+      <section key={section.id} className="task-section" aria-label={label}>
+        <div className="task-section-head">
+          <h3>{label}</h3>
+          {items && items.length > 0 && <span className="hint">{`${items.filter((item) => item.done).length}/${items.length}`}</span>}
+          <span className="grow" />
+          {!isEditing && editing === null && (
+            <button type="button" className="small quiet" aria-label={t('tasks.editSection', { section: label })} onClick={() => startSection(section)}>
               {t('tasks.edit')}
             </button>
-            <button type="button" onClick={() => onRefine(!refining)}>
-              {t('tasks.askAgent')}
-            </button>
-            <button type="button" onClick={() => void openFile()}>
-              {t('tasks.openFile')}
-            </button>
-          </div>
-          {refining && (
-            <div className="settings-row refine-box" role="group" aria-label={t('tasks.askAgent')}>
-              <div className="stack grow">
-                <p className="hint">{t('tasks.askAgentHint')}</p>
-                <ProjectLaunch project={project} taskRef={taskRef} purpose="refine" {...launch} />
-              </div>
-            </div>
           )}
-          <div className="settings-row">
-            {/* The title is already the heading above. */}
-            <Markdown source={task.content.replace(/^\s*#[ \t][^\n]*\n?/, '')} className="grow" />
-          </div>
-        </>
-      )}
-
-      {editing && (
-        <div className="settings-row task-editor">
-          <div className="stack grow">
-            <Segmented
-              label={t('tasks.editMode')}
-              value={mode}
-              options={[
-                { value: 'sections', label: t('tasks.editSections') },
-                { value: 'markdown', label: t('tasks.editMarkdown') },
-              ]}
-              onChange={(next) => startEditing(next)}
-            />
-            {mode === 'markdown' ? (
-              <>
-                <p className="hint warning-text">{t('tasks.markdownWarning')}</p>
-                <textarea aria-label={t('tasks.markdownField')} className="code-input" rows={24} value={markdown} onChange={(event) => setMarkdown(event.target.value)} />
-              </>
+        </div>
+        {isEditing ? (
+          <div className="stack">
+            {section.kind === 'criteria' && criteriaDraft ? (
+              <CriteriaEditor items={criteriaDraft} onChange={setCriteriaDraft} />
             ) : (
-              <>
-                <label className="field">
-                  <span className="field-label">{t('field.taskTitle')}</span>
-                  <input value={title} onChange={(event) => setTitle(event.target.value)} />
-                </label>
-                {sections
-                  .filter((section) => section.kind !== 'handoff')
-                  .map((section) =>
-                    section.kind === 'criteria' && criteria ? (
-                      <CriteriaEditor key={section.id} items={criteria} onChange={setCriteria} />
-                    ) : (
-                      <label key={section.id} className="field">
-                        <span className="field-label">{section.kind === 'other' || section.kind === 'handoff' ? section.heading : t(SECTION_LABELS[section.kind])}</span>
-                        <textarea rows={section.kind === 'goal' ? 3 : 6} value={bodies[section.id] ?? ''} onChange={(event) => setBodies({ ...bodies, [section.id]: event.target.value })} />
-                      </label>
-                    ),
-                  )}
-                {EDITABLE.filter((kind) => !sections.some((section) => section.kind === kind)).map((kind) =>
-                  kind === 'criteria' && criteria ? (
-                    <CriteriaEditor key={kind} items={criteria} onChange={setCriteria} />
-                  ) : (
-                    <label key={kind} className="field">
-                      <span className="field-label">{t(SECTION_LABELS[kind])}</span>
-                      <textarea rows={3} value={added[kind] ?? ''} onChange={(event) => setAdded({ ...added, [kind]: event.target.value })} />
-                    </label>
-                  ),
-                )}
-                {!criteriaSection || criteria ? null : <p className="hint">{t('tasks.criteriaAsText')}</p>}
-                <p className="hint">{t('tasks.handoffKept')}</p>
-              </>
+              <textarea aria-label={label} rows={section.kind === 'goal' ? 4 : 8} value={draft} onChange={(event) => setDraft(event.target.value)} />
             )}
+            {section.kind === 'criteria' && !criteriaDraft && <p className="hint">{t('tasks.criteriaAsText')}</p>}
             <div className="row">
-              <button type="button" onClick={() => setMode('view')}>
+              <button type="button" onClick={() => setEditing(null)}>
                 {t('common.cancel')}
               </button>
-              <button type="button" className="primary" disabled={saving || changed} onClick={() => void save()}>
+              <button type="button" className="primary" disabled={saving || changed} onClick={() => saveSection(section)}>
                 {t('common.save')}
               </button>
             </div>
           </div>
+        ) : items ? (
+          items.length === 0 ? (
+            <p className="hint">{t('tasks.noCriteria')}</p>
+          ) : (
+            <ul className="criteria-view">
+              {items.map((item, index) => (
+                <li key={index}>
+                  <label className="choice">
+                    <input type="checkbox" checked={item.done} disabled={saving || editing !== null} aria-label={item.text} onChange={(event) => tick(section, items, index, event.target.checked)} />
+                    <span className={item.done ? 'criterion-done' : ''}>{item.text}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )
+        ) : section.body.trim() === '' ? (
+          <p className="hint">{t('tasks.sectionEmpty')}</p>
+        ) : (
+          <Markdown source={section.body} />
+        )}
+      </section>
+    );
+  }
+
+  return (
+    <aside className="task-panel" aria-label={t('tasks.detail')}>
+      <div className="task-panel-head">
+        <span className="task-id">{task.id}</span>
+        <span className="grow" />
+        <Menu label={t('tasks.more')} triggerClassName="icon-button" align="end" trigger={<More />}>
+          <MenuItem
+            onSelect={() => {
+              setDraft(task.content);
+              setEditing({ kind: 'markdown' });
+            }}
+          >
+            {t('tasks.editMarkdown')}
+          </MenuItem>
+          <MenuItem onSelect={() => onShowFile(taskRef)}>{t('tasks.showInDocuments')}</MenuItem>
+          <MenuItem onSelect={() => void openFile()}>{t('tasks.openFile')}</MenuItem>
+          {taskRef === selected && <MenuItem onSelect={() => onSelect(null)}>{t('tasks.unuse')}</MenuItem>}
+        </Menu>
+        <button type="button" className="icon-button" aria-label={t('tasks.closeDetail')} onClick={onClose}>
+          <Close />
+        </button>
+      </div>
+
+      <div className="task-panel-body">
+        {editing?.kind === 'title' ? (
+          <div className="row nowrap">
+            <input className="grow" aria-label={t('field.taskTitle')} value={draft} onChange={(event) => setDraft(event.target.value)} />
+            <button type="button" onClick={() => setEditing(null)}>
+              {t('common.cancel')}
+            </button>
+            <button type="button" className="primary" disabled={saving || changed || draft.trim() === ''} onClick={() => void saveEdit({ title: draft })}>
+              {t('common.save')}
+            </button>
+          </div>
+        ) : (
+          <h2 className="task-panel-title">
+            <button
+              type="button"
+              className="title-button"
+              title={t('tasks.editTitle')}
+              disabled={editing !== null}
+              onClick={() => {
+                setDraft(task.document.title);
+                setEditing({ kind: 'title' });
+              }}
+            >
+              {titleText}
+            </button>
+          </h2>
+        )}
+
+        <dl className="task-properties">
+          <dt>{t('tasks.stateField')}</dt>
+          <dd>
+            <Select label={t('tasks.stateField')} value={task.group ?? 'todo'} options={stateOptions} onChange={(state) => void run(() => unwrap(api.setTaskState({ id: project.id, ref: taskRef, state })))} />
+            {task.state && !STANDARD_WORDS.has(task.state.toLowerCase()) && <span className="hint">{t('tasks.stateAsWritten', { state: task.state })}</span>}
+          </dd>
+          <dt>{t('tasks.workstream')}</dt>
+          <dd>{workstreamTitle}</dd>
+          <dt>Branch</dt>
+          <dd>{branch ? <code>{branch}</code> : <span className="hint">{t('tasks.noBranch')}</span>}</dd>
+          <dt>{t('tasks.file')}</dt>
+          <dd>
+            <button type="button" className="link path" onClick={() => onShowFile(taskRef)}>
+              <PathText path={taskRef} />
+            </button>
+          </dd>
+          <dt>Handoff</dt>
+          <dd>{listed ? handoffText(i18n, listed) : t('tasks.noHandoff')}</dd>
+        </dl>
+
+        <div className="row task-actions">
+          <button type="button" className={launch === 'resume' ? '' : 'primary'} aria-expanded={launch === 'resume'} onClick={() => openLaunch('resume')}>
+            {t('tasks.launchWith')}
+          </button>
+          <button type="button" aria-expanded={launch === 'refine'} onClick={() => openLaunch('refine')}>
+            {t('tasks.askAgent')}
+          </button>
         </div>
-      )}
-    </section>
+        {launch && (
+          <div className="refine-box" role="group" aria-label={t(launch === 'refine' ? 'tasks.askAgent' : 'tasks.launchWith')}>
+            <p className="hint">{t(launch === 'refine' ? 'tasks.askAgentHint' : 'tasks.launchHint')}</p>
+            <ProjectLaunch
+              project={project}
+              taskRef={taskRef}
+              {...(launch === 'refine' ? { purpose: 'refine' as const } : {})}
+              accounts={accounts}
+              history={history}
+              onOpenSettings={onOpenSettings}
+              onOpenTools={onOpenTools}
+              onLaunched={onLaunched}
+            />
+          </div>
+        )}
+
+        {changed && editing !== null && (
+          <div className="banner warning" role="alert">
+            <p>{t('tasks.changedOutside')}</p>
+            <button
+              type="button"
+              onClick={() =>
+                void load().then(() => {
+                  setEditing(null);
+                })
+              }
+            >
+              {t('tasks.reload')}
+            </button>
+          </div>
+        )}
+
+        {editing?.kind === 'markdown' ? (
+          <div className="stack">
+            <p className="hint warning-text">{t('tasks.markdownWarning')}</p>
+            <textarea aria-label={t('tasks.markdownField')} className="code-input" rows={24} value={draft} onChange={(event) => setDraft(event.target.value)} />
+            <div className="row">
+              <button type="button" onClick={() => setEditing(null)}>
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                className="primary"
+                disabled={saving || changed}
+                onClick={() =>
+                  void run(async () => {
+                    await unwrap(api.writeDocument({ id: project.id, path: taskRef, content: draft, baseSha256: task.sha256 }));
+                    return unwrap(api.readTask({ id: project.id, ref: taskRef }));
+                  })
+                }
+              >
+                {t('common.save')}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {sections.filter((section) => section.kind !== 'handoff').map(sectionView)}
+            {missing.map((kind) =>
+              editing?.kind === 'add' && editing.section === kind ? (
+                <section key={kind} className="task-section" aria-label={t(SECTION_LABELS[kind])}>
+                  <div className="task-section-head">
+                    <h3>{t(SECTION_LABELS[kind])}</h3>
+                  </div>
+                  {kind === 'criteria' && criteriaDraft ? (
+                    <CriteriaEditor items={criteriaDraft} onChange={setCriteriaDraft} />
+                  ) : (
+                    <textarea aria-label={t(SECTION_LABELS[kind])} rows={4} value={draft} onChange={(event) => setDraft(event.target.value)} />
+                  )}
+                  <div className="row">
+                    <button type="button" onClick={() => setEditing(null)}>
+                      {t('common.cancel')}
+                    </button>
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={saving || changed}
+                      onClick={() => void saveEdit({ added: [{ kind, body: kind === 'criteria' && criteriaDraft ? checklist(criteriaDraft) : draft }] })}
+                    >
+                      {t('common.save')}
+                    </button>
+                  </div>
+                </section>
+              ) : (
+                editing === null && (
+                  <button
+                    key={kind}
+                    type="button"
+                    className="link add-section"
+                    onClick={() => {
+                      setDraft('');
+                      setCriteriaDraft(kind === 'criteria' ? [{ text: '', done: false }] : null);
+                      setEditing({ kind: 'add', section: kind });
+                    }}
+                  >
+                    + {t('tasks.addSection', { section: t(SECTION_LABELS[kind]) })}
+                  </button>
+                )
+              ),
+            )}
+            <section className="task-section" aria-label="Handoff log">
+              <div className="task-section-head">
+                <h3>Handoff log</h3>
+              </div>
+              {!handoff || handoffEntries(handoff.body).length === 0 ? (
+                <p className="hint">{t('tasks.noHandoff')}</p>
+              ) : (
+                <ol className="handoff-timeline">
+                  {handoffEntries(handoff.body).map((entry, index) => (
+                    <li key={index}>
+                      <p className="handoff-heading">{entry.heading}</p>
+                      {entry.body.trim() !== '' && <Markdown source={entry.body} />}
+                    </li>
+                  ))}
+                </ol>
+              )}
+              <p className="hint">{t('tasks.handoffKept')}</p>
+              <PasteHandoff
+                project={project}
+                task={{ ref: taskRef, id: task.id }}
+                onAdded={async () => {
+                  await load();
+                  await onReload();
+                }}
+                onError={onError}
+              />
+            </section>
+          </>
+        )}
+      </div>
+    </aside>
   );
 }
 
@@ -469,7 +800,6 @@ function CriteriaEditor({ items, onChange }: { items: Criterion[]; onChange: (it
   const update = (index: number, change: Partial<Criterion>): void => onChange(items.map((item, at) => (at === index ? { ...item, ...change } : item)));
   return (
     <fieldset className="field criteria" aria-label={t('tasks.section.criteria')}>
-      <legend className="field-label">{t('tasks.section.criteria')}</legend>
       {items.map((item, index) => (
         <div key={index} className="row nowrap criterion">
           <input type="checkbox" checked={item.done} aria-label={t('tasks.criterionDone', { index: index + 1 })} onChange={(event) => update(index, { done: event.target.checked })} />
@@ -486,23 +816,25 @@ function CriteriaEditor({ items, onChange }: { items: Criterion[]; onChange: (it
   );
 }
 
-// --- Creating a task (ADR-021 item 6) ---
+// --- Creating a task (ADR-021 item 6) and a workstream (ADR-023 item 5) ---
 
 function CreateTaskDialog({
   project,
   workstreams,
+  initial,
   onClose,
   onCreated,
   onError,
 }: {
   project: ProjectDto;
   workstreams: { value: string; label: string }[];
+  initial: string | null;
   onClose: () => void;
   onCreated: (task: TaskViewDto, refine: boolean) => Promise<void>;
   onError: (message: string | undefined) => void;
 }) {
   const { t } = useI18n();
-  const [workstream, setWorkstream] = useState(workstreams[0]?.value ?? '');
+  const [workstream, setWorkstream] = useState(initial ?? workstreams[0]?.value ?? '');
   const [title, setTitle] = useState('');
   const [goal, setGoal] = useState('');
   const [saving, setSaving] = useState(false);
@@ -551,6 +883,49 @@ function CreateTaskDialog({
       <label className="field">
         <span className="field-label">{t('tasks.section.goal')}</span>
         <textarea rows={4} value={goal} onChange={(event) => setGoal(event.target.value)} />
+      </label>
+    </Dialog>
+  );
+}
+
+function CreateWorkstreamDialog({ project, onClose, onCreated, onError }: { project: ProjectDto; onClose: () => void; onCreated: () => Promise<void>; onError: (message: string | undefined) => void }) {
+  const { t } = useI18n();
+  const [title, setTitle] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function create(): Promise<void> {
+    setSaving(true);
+    onError(undefined);
+    try {
+      await unwrap(api.createWorkstream({ id: project.id, title }));
+      await onCreated();
+    } catch (reason) {
+      onError((reason as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog
+      label={t('tasks.newWorkstream')}
+      title={t('tasks.newWorkstream')}
+      onClose={onClose}
+      actions={
+        <>
+          <button type="button" onClick={onClose}>
+            {t('common.cancel')}
+          </button>
+          <button type="button" className="primary" disabled={saving || title.trim() === ''} onClick={() => void create()}>
+            {t('tasks.createSubmit')}
+          </button>
+        </>
+      }
+    >
+      <p className="hint">{t('tasks.newWorkstreamHint')}</p>
+      <label className="field">
+        <span className="field-label">{t('field.workstreamTitle')}</span>
+        <input value={title} onChange={(event) => setTitle(event.target.value)} />
       </label>
     </Dialog>
   );

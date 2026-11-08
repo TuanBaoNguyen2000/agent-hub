@@ -3,9 +3,10 @@ import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 
 import type { MessageKey } from '@agenthub/i18n';
 import { api, unwrap } from './api';
 import { useI18n } from './i18n';
-import { Folder, More } from './icons';
-import { CreateDocsDialog, type DocsNotice, DocsFoundNotice, ProjectDocs } from './ProjectDocs';
-import { ProjectDocuments } from './ProjectDocuments';
+import { Folder, More, PanelRight } from './icons';
+import { SetUpDocsDialog } from './ContextSetup';
+import { DocsFoundNotice, ProjectDocs } from './ProjectDocs';
+import { DocumentsPanel, readPanelWidth } from './ProjectDocuments';
 import { ProjectHandoffs } from './ProjectHandoffs';
 import { ProjectHistory } from './ProjectHistory';
 import { ProjectLaunch } from './ProjectLaunch';
@@ -13,12 +14,11 @@ import { ProjectSettings } from './ProjectSettings';
 import { ProjectTasks, allTasks } from './ProjectTasks';
 import { Menu, MenuItem, TabPanel, Tabs } from './ui';
 
-type Tab = 'overview' | 'tasks' | 'documents' | 'handoffs' | 'history' | 'settings';
+type Tab = 'overview' | 'tasks' | 'handoffs' | 'history' | 'settings';
 
 const TABS: readonly { value: Tab; label: MessageKey }[] = [
   { value: 'overview', label: 'project.tab.overview' },
   { value: 'tasks', label: 'project.tab.tasks' },
-  { value: 'documents', label: 'project.tab.documents' },
   { value: 'handoffs', label: 'project.tab.handoffs' },
   { value: 'history', label: 'project.tab.history' },
   { value: 'settings', label: 'project.tab.settings' },
@@ -34,6 +34,26 @@ interface Props {
   onError: (message: string | undefined) => void;
 }
 
+const OPEN_KEY = 'agenthub.documentsPanel.open';
+const WIDTH_KEY = 'agenthub.documentsPanel.width';
+
+function readPanelOpen(): boolean {
+  try {
+    return localStorage.getItem(OPEN_KEY) === 'open';
+  } catch {
+    return false;
+  }
+}
+
+// Only a convenience: the panel opens at its default next time.
+function remember(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Storage may be unavailable.
+  }
+}
+
 export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, onChanged, onRemoved, onError }: Props) {
   const { t } = useI18n();
   const idBase = useId();
@@ -42,8 +62,16 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
   const [history, setHistory] = useState<LaunchAttemptDto[]>([]);
   const [taskRef, setTaskRef] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [notice, setNotice] = useState<DocsNotice>();
+  // How many sets of documents an old project's folder holds, until the user answers.
+  const [notice, setNotice] = useState<number>();
+  const [purpose, setPurpose] = useState<'init'>();
+  const [docsOpen, setDocsOpen] = useState(readPanelOpen);
+  const [docsWidth, setDocsWidth] = useState(readPanelWidth);
+  const [docsRequest, setDocsRequest] = useState<{ path: string; at: number } | null>(null);
+  const [contextVersion, setContextVersion] = useState(0);
+  const [taskFocus, setTaskFocus] = useState<{ ref: string; at: number } | null>(null);
   const chosen = useRef(false);
+  const launchRef = useRef<HTMLDivElement>(null);
   const searched = useRef(false);
 
   // Documents and Git change outside the app, so they are read again when the window regains focus.
@@ -53,7 +81,10 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
     const read = ++contextRead.current;
     try {
       const loaded = await unwrap(api.getProjectContext({ id: project.id }));
-      if (read === contextRead.current) setContext(loaded);
+      if (read === contextRead.current) {
+        setContext(loaded);
+        setContextVersion((version) => version + 1);
+      }
     } catch (reason) {
       if (read === contextRead.current) onError((reason as Error).message);
     }
@@ -65,6 +96,20 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
     window.addEventListener('focus', loadContext);
     return () => window.removeEventListener('focus', loadContext);
   }, [loadContext]);
+
+  // ADR-023 item 6: the documents panel is shown or hidden with ⌘⇧E and remembered on this device.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'e') {
+        event.preventDefault();
+        setDocsOpen((open) => !open);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  useEffect(() => remember(OPEN_KEY, docsOpen ? 'open' : 'closed'), [docsOpen]);
+  useEffect(() => remember(WIDTH_KEY, String(docsWidth)), [docsWidth]);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -78,32 +123,26 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
     void loadHistory();
   }, [loadHistory]);
 
-  // ADR-020 item 4: looks for documents the project already has. Returns whether the user still
-  // has to choose or create a place for them.
-  const detect = useCallback(async (): Promise<boolean> => {
-    try {
-      const result = await unwrap(api.detectProjectContext({ id: project.id, apply: true }));
-      onChanged(result.project);
-      if (result.applied) setNotice({ kind: 'applied', path: result.applied });
-      else if (result.found.length > 1) setNotice({ kind: 'choose', found: result.found });
-      return result.applied === null && result.found.length <= 1;
-    } catch (reason) {
-      onError((reason as Error).message);
-      return true;
-    }
-  }, [project.id, onChanged, onError]);
-
-  // Once per device for a project without documents: right after it is added, and for projects
-  // added before this search existed.
+  // ADR-023 item 1: a project added before the dialog asked is searched once, also when it turned
+  // documents on before the search existed; documents found there are only announced, and the
+  // user decides in the set-up dialog.
   useEffect(() => {
-    if (searched.current || project.context.detected || project.context.enabled || project.pathStatus !== 'directory') return;
+    if (searched.current || project.context.detected || project.pathStatus !== 'directory') return;
     searched.current = true;
-    void detect();
-  }, [detect, project.context.detected, project.context.enabled, project.pathStatus]);
+    void (async () => {
+      try {
+        const result = await unwrap(api.detectProjectContext({ id: project.id, apply: false }));
+        onChanged(result.project);
+        if (result.found.length > 0) setNotice(result.found.length);
+      } catch (reason) {
+        onError((reason as Error).message);
+      }
+    })();
+  }, [project.id, project.context.detected, project.pathStatus, onChanged, onError]);
 
-  async function startCreating(): Promise<void> {
+  function startCreating(): void {
     setNotice(undefined);
-    if (await detect()) setCreating(true);
+    setCreating(true);
   }
 
   // Starts on the task opened last time, until the user picks one; a task gone from the
@@ -154,6 +193,23 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
     </p>
   );
 
+  // ADR-023 item 2: this launch asks the agent to fill the documents in, until it is opened.
+  const fillSummary = (
+    <p className="task-summary" data-testid="launch-purpose">
+      <span className="hint">{t('project.launchTask')}</span>
+      <span className="grow truncate">{t('docs.fillPurpose')}</span>
+      <button type="button" className="link" onClick={() => setPurpose(undefined)}>
+        {t('common.cancel')}
+      </button>
+    </p>
+  );
+
+  // ADR-023: with documents, handoffs are in each task's log, so the tab is only for projects without.
+  const tabs = TABS.filter((item) => item.value !== 'handoffs' || !project.context.enabled);
+  useEffect(() => {
+    if (tab === 'handoffs' && project.context.enabled) setTab('overview');
+  }, [tab, project.context.enabled]);
+
   // Overview, Handoff, History and Settings read as pages; Task and Documents fill the pane like an editor.
   const page = (value: Tab, children: ReactNode) => (
     <TabPanel idBase={idBase} value={value} selected={tab} className="panel-page">
@@ -162,9 +218,20 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
   );
 
   return (
+    <div className="workspace-split">
     <div className="workspace">
       <div className="workspace-bar">
-        <Tabs label={t('project.tabs')} idBase={idBase} value={tab} options={TABS.map((item) => ({ value: item.value, label: t(item.label) }))} onChange={setTab} />
+        <Tabs label={t('project.tabs')} idBase={idBase} value={tab} options={tabs.map((item) => ({ value: item.value, label: t(item.label) }))} onChange={setTab} />
+        <button
+          type="button"
+          className={`icon-button${docsOpen ? ' pressed' : ''}`}
+          aria-label={t('documents.toggle')}
+          title={`${t('documents.toggle')} (⌘⇧E)`}
+          aria-pressed={docsOpen}
+          onClick={() => setDocsOpen((open) => !open)}
+        >
+          <PanelRight />
+        </button>
         <Menu label={t('project.actions')} triggerClassName="icon-button" align="end" trigger={<More />}>
           {project.pathStatus === 'directory' && (
             <MenuItem icon={<Folder />} onSelect={() => void relink()}>
@@ -177,7 +244,7 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
         </Menu>
       </div>
 
-      {(project.pathStatus !== 'directory' || notice) && (
+      {(project.pathStatus !== 'directory' || notice !== undefined) && (
         <div className="workspace-notices">
           {project.pathStatus !== 'directory' && (
             <div className="banner warning" role="alert">
@@ -187,29 +254,14 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
               </button>
             </div>
           )}
-          {notice && (
-            <DocsFoundNotice
-              project={project}
-              notice={notice}
-              onChanged={onChanged}
-              onElsewhere={() => {
-                setNotice(undefined);
-                setTab('settings');
-              }}
-              onCreate={() => {
-                setNotice(undefined);
-                setCreating(true);
-              }}
-              onClose={() => setNotice(undefined)}
-              onError={onError}
-            />
-          )}
+          {notice !== undefined && <DocsFoundNotice count={notice} onSetUp={startCreating} onClose={() => setNotice(undefined)} />}
         </div>
       )}
 
       {page(
         'overview',
         <>
+          <div ref={launchRef} />
           <ProjectLaunch
             project={project}
             accounts={accounts}
@@ -218,23 +270,29 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
             taskRef={taskRef}
             history={history}
             onLaunched={() => {
+              setPurpose(undefined);
               void loadHistory();
               void loadContext();
             }}
-            taskSummary={taskSummary}
+            taskSummary={purpose === 'init' ? fillSummary : taskSummary}
+            {...(purpose ? { purpose } : {})}
           />
           <ProjectDocs
             project={project}
             context={context}
             onChanged={onChanged}
-            onCreate={() => void startCreating()}
+            onSetUp={startCreating}
             onCheck={loadContext}
             onShowTasks={() => setTab('tasks')}
+            onFill={() => {
+              setPurpose('init');
+              launchRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }}
             onError={onError}
           />
         </>,
       )}
-      <TabPanel idBase={idBase} value="tasks" selected={tab} className="panel-split">
+      <TabPanel idBase={idBase} value="tasks" selected={tab} className="panel-tasks">
         <ProjectTasks
           project={project}
           context={context}
@@ -244,8 +302,13 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
             chosen.current = true;
             setTaskRef(ref);
           }}
-          onCreateDocs={() => void startCreating()}
+          focus={taskFocus}
+          onCreateDocs={startCreating}
           onReload={loadContext}
+          onShowFile={(path) => {
+            setDocsOpen(true);
+            setDocsRequest({ path, at: Date.now() });
+          }}
           onError={onError}
           accounts={accounts}
           history={history}
@@ -257,33 +320,40 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
           }}
         />
       </TabPanel>
-      <TabPanel idBase={idBase} value="documents" selected={tab} className="panel-split">
-        <ProjectDocuments project={project} active={tab === 'documents'} onCreateDocs={() => void startCreating()} onChanged={loadContext} onError={onError} />
-      </TabPanel>
       {page(
         'handoffs',
-        <ProjectHandoffs
-          project={project}
-          context={context}
-          selectedTask={selectedTask}
-          onPickTask={() => setTab('tasks')}
-          onReload={() => void loadContext()}
-          onError={onError}
-        />,
+        <ProjectHandoffs project={project} context={context} onReload={() => void loadContext()} onError={onError} />,
       )}
       {page('history', <ProjectHistory history={history} onChanged={() => void loadHistory()} onError={onError} />)}
-      {page('settings', <ProjectSettings project={project} onChanged={onChanged} onCreateDocs={() => void startCreating()} onError={onError} />)}
+      {page('settings', <ProjectSettings project={project} onChanged={onChanged} onCreateDocs={startCreating} onError={onError} />)}
 
+    </div>
+      {docsOpen && (
+        <DocumentsPanel
+          project={project}
+          version={contextVersion}
+          width={docsWidth}
+          onWidth={setDocsWidth}
+          onClose={() => setDocsOpen(false)}
+          onSetUp={startCreating}
+          onChanged={loadContext}
+          onOpenTask={(ref) => {
+            setTaskFocus({ ref, at: Date.now() });
+            setTab('tasks');
+          }}
+          request={docsRequest}
+          onError={onError}
+        />
+      )}
       {creating && (
-        <CreateDocsDialog
+        <SetUpDocsDialog
           project={project}
           onClose={() => setCreating(false)}
-          onCreated={(updated) => {
+          onDone={(updated) => {
             setCreating(false);
             onChanged(updated);
             setTab('overview');
           }}
-          onError={onError}
         />
       )}
     </div>
