@@ -10,6 +10,8 @@ export const IpcChannel = {
   projectsUpdateContext: 'projects:update-context',
   projectsOpenContextFolder: 'projects:open-context-folder',
   projectsContext: 'projects:context',
+  projectsProgress: 'projects:progress',
+  projectsSetTranscriptConsent: 'projects:set-transcript-consent',
   projectsDetectContext: 'projects:detect-context',
   projectsScanFolder: 'projects:scan-folder',
   projectsCreateContext: 'projects:create-context',
@@ -51,6 +53,9 @@ export const IpcChannel = {
   toolsSetAutoInstall: 'tools:set-auto-install',
   toolsAddSkill: 'tools:add-skill',
   toolsRemoveSkill: 'tools:remove-skill',
+  toolsSkillDetail: 'tools:skill-detail',
+  toolsAcknowledgeSkill: 'tools:acknowledge-skill',
+  toolsUpdateSkill: 'tools:update-skill',
   mcpInfo: 'mcp:info',
   mcpProbe: 'mcp:probe',
   mcpLog: 'mcp:log',
@@ -68,7 +73,8 @@ export const IpcChannel = {
 } as const;
 
 // The four task states AgentHub writes into STATUS (ADR-021 item 4).
-export const TASK_STATES = ['todo', 'active', 'blocked', 'done'] as const;
+// Workflow order: the board's columns and the state menu follow it.
+export const TASK_STATES = ['todo', 'active', 'blocked', 'review', 'done'] as const;
 
 export const CONTEXT_LANGUAGES = ['en', 'vi', 'ko'] as const;
 // Interface and chat languages (ADR-020 item 6).

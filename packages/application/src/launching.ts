@@ -156,6 +156,37 @@ export interface TranscriptOffer {
   checkpointAt: string;
 }
 
+// ADR-024 item 4: whether a new agent may read another session's transcript of this project.
+// 'same-provider' reads it without asking when both sessions are of one provider.
+export type TranscriptConsent = 'never' | 'ask' | 'same-provider';
+export const TRANSCRIPT_CONSENTS: readonly TranscriptConsent[] = ['never', 'ask', 'same-provider'];
+
+// A session of the project folder, as the session locator finds it; never what it says.
+export interface SessionSeen {
+  profileId: string;
+  account: Message;
+  provider: Provider;
+  at: string;
+}
+
+// ADR-024 item 1: has the work been saved for another account to continue?
+export interface ProjectProgress {
+  // 'none': no checkpoint at all yet.
+  state: 'saved' | 'unsaved' | 'none';
+  checkpoint: {
+    at: string;
+    // Who wrote it, as the heading says after the dash ("Claude B / Claude Code").
+    author: string | null;
+    taskRef: string | null;
+    taskTitle: string | null;
+  } | null;
+  // The newest session of the folder in any account allowed here: where the work last went on.
+  session: SessionSeen | null;
+  // What makes the state 'unsaved'.
+  sessionAfter: boolean;
+  commitAfter: string | null;
+}
+
 export interface LaunchTarget {
   profile: AccountProfile;
   mode: ClientMode;
@@ -276,6 +307,8 @@ export interface LaunchServiceDependencies {
 
 export interface LaunchRequest {
   projectId: string;
+  // ADR-024 item 4: remember the answer about the transcript for this project.
+  rememberTranscript?: boolean | undefined;
   // A task from the project's documents (ContextTask.ref); the agent is pointed at it.
   taskRef?: string | null | undefined;
   // The user accepted the transcript offer of the preview (§7.6).
@@ -301,6 +334,8 @@ export interface LaunchPreview {
   profileAlias: Message;
   prompt: string | null;
   transcript: TranscriptOffer | null;
+  // ADR-024 item 4: the project allows reading it, so the prompt already asks for it.
+  transcriptAutomatic: boolean;
   // The account opens without some tools, as it does not install them itself (ADR-020 item 1).
   missingTools: MissingTools | null;
 }
@@ -584,35 +619,76 @@ export function createLaunchService({
     return { skillsDirectory: directory, installSkills: missingSkills, mcp: mcpPending ? server : null, steps, missing: null };
   }
 
+  const consentKey = (projectId: string): string => `transcript_consent:${projectId}`;
+  const modeKey = (profileId: string): string => `launch_mode:${profileId}`;
+
+  function transcriptConsent(projectId: string): TranscriptConsent {
+    const value = store.settings.get(consentKey(projectId));
+    return TRANSCRIPT_CONSENTS.includes(value as TranscriptConsent) ? (value as TranscriptConsent) : 'ask';
+  }
+
+  // ADR-024 item 7: an account opens the way it was opened last, Desktop until then.
+  function preferredMode(profileId: string): ClientMode {
+    return store.settings.get(modeKey(profileId)) === 'cli' ? 'cli' : 'desktop';
+  }
+
+  interface Checkpoint {
+    at: number;
+    author: string | null;
+    taskRef: string | null;
+    taskTitle: string | null;
+  }
+
+  // "2026-11-09 17:40+0700 — Claude B / Claude Code": what follows the dash names the writer.
+  const authorOf = (heading: string): string | null => {
+    const match = /\s[—–-]{1,2}\s+(.+)$/.exec(heading);
+    return match?.[1]?.trim() || null;
+  };
+
   // The newest checkpoint the documents or handoffs record: the selected task's, else any.
-  function lastCheckpoint(project: StoredProject, taskRef: string | null): number | null {
+  function newestCheckpoint(project: StoredProject, taskRef: string | null): Checkpoint | null {
     if (!project.context.enabled) {
       const newest = notes.list(handoffDirectory(project.id))[0];
-      return newest ? Date.parse(newest.createdAt) : null;
+      return newest ? { at: Date.parse(newest.createdAt), author: newest.source ?? null, taskRef: null, taskTitle: newest.title } : null;
     }
     const folder = project.contextPath ?? defaultContextDirectory(project.id);
     if (platform.pathKind(folder) !== 'directory') return null;
-    const tasks = documents.overview(folder).workstreams.flatMap((workstream) => workstream.tasks);
-    const times = tasks
-      .filter((task) => taskRef === null || task.ref === taskRef)
-      .map((task) => (task.lastHandoff?.at ? Date.parse(task.lastHandoff.at) : Number.NaN))
-      .filter((time) => !Number.isNaN(time));
-    return times.length > 0 ? Math.max(...times) : null;
+    let best: Checkpoint | null = null;
+    for (const task of documents.overview(folder).workstreams.flatMap((workstream) => workstream.tasks)) {
+      if (taskRef !== null && task.ref !== taskRef) continue;
+      const at = task.lastHandoff?.at ? Date.parse(task.lastHandoff.at) : Number.NaN;
+      if (Number.isNaN(at) || (best && best.at >= at)) continue;
+      best = { at, author: authorOf(task.lastHandoff?.heading ?? ''), taskRef: task.ref, taskTitle: task.title };
+    }
+    return best;
   }
 
-  // ADR-019 item 10: a session of this folder, in any account allowed here, that went on after
-  // the last checkpoint. Without any checkpoint there is nothing to compare, so no offer.
-  function transcriptOffer(project: StoredProject & { path: string }, target: AccountProfile, taskRef: string | null): TranscriptOffer | null {
-    const checkpoint = lastCheckpoint(project, taskRef);
-    if (checkpoint === null) return null;
+  function lastCheckpoint(project: StoredProject, taskRef: string | null): number | null {
+    return newestCheckpoint(project, taskRef)?.at ?? null;
+  }
+
+  // The newest session of the folder in any account allowed to use the project.
+  function newestSession(project: StoredProject & { path: string }): { location: SessionLocation; profile: AccountProfile } | null {
     let best: { location: SessionLocation; profile: AccountProfile } | null = null;
     for (const candidate of store.profiles.list()) {
       if (store.permissions.get(project.id, candidate.id) !== true) continue;
       const location = sessions.newest(candidate.provider, candidate.cliConfigRoot, project.path);
       if (location && (!best || location.updatedAt > best.location.updatedAt)) best = { location, profile: candidate };
     }
-    // A minute of slack: the checkpoint itself is written from inside that session.
-    if (!best || Date.parse(best.location.updatedAt) <= checkpoint + 60_000) return null;
+    return best;
+  }
+
+  // A minute of slack: the checkpoint itself is written from inside that session.
+  const SESSION_SLACK_MS = 60_000;
+
+  // ADR-019 item 10: a session of this folder, in any account allowed here, that went on after
+  // the last checkpoint. Without any checkpoint there is nothing to compare, so no offer.
+  function transcriptOffer(project: StoredProject & { path: string }, target: AccountProfile, taskRef: string | null): TranscriptOffer | null {
+    if (transcriptConsent(project.id) === 'never') return null;
+    const checkpoint = lastCheckpoint(project, taskRef);
+    if (checkpoint === null) return null;
+    const best = newestSession(project);
+    if (!best || Date.parse(best.location.updatedAt) <= checkpoint + SESSION_SLACK_MS) return null;
     return {
       path: best.location.path,
       updatedAt: best.location.updatedAt,
@@ -625,13 +701,43 @@ export function createLaunchService({
     };
   }
 
-  function withTranscript(prompt: LaunchPrompt, offer: TranscriptOffer, documentsOn: boolean, locale: Locale): LaunchPrompt {
+  // ADR-024 item 4: read without asking only where the project allows it, and never across providers.
+  const readsTranscriptByItself = (projectId: string, offer: TranscriptOffer): boolean =>
+    transcriptConsent(projectId) === 'same-provider' && !offer.otherProvider;
+
+  async function progress(projectId: string): Promise<ProjectProgress> {
+    const project = store.projects.get(projectId, deviceId());
+    if (!project) throw new DomainError('NOT_FOUND', 'error.projectNotFound');
+    const path = project.path !== null && paths.inspect(project.path) === 'directory' ? project.path : null;
+    const checkpoint = newestCheckpoint(project, null);
+    const found = path ? newestSession({ ...project, path }) : null;
+    const session: SessionSeen | null = found
+      ? { profileId: found.profile.id, account: accountName(found.profile), provider: found.profile.provider, at: found.location.updatedAt }
+      : null;
+    let commitAfter: string | null = null;
+    if (path && checkpoint) {
+      const observation = await git.observe(path);
+      if (observation.headAt && Date.parse(observation.headAt) > checkpoint.at + SESSION_SLACK_MS) commitAfter = observation.headAt;
+    }
+    const sessionAfter = checkpoint !== null && session !== null && Date.parse(session.at) > checkpoint.at + SESSION_SLACK_MS;
+    return {
+      state: checkpoint === null ? 'none' : sessionAfter || commitAfter ? 'unsaved' : 'saved',
+      checkpoint: checkpoint && { at: new Date(checkpoint.at).toISOString(), author: checkpoint.author, taskRef: checkpoint.taskRef, taskTitle: checkpoint.taskTitle },
+      session,
+      sessionAfter,
+      commitAfter,
+    };
+  }
+
+  // ADR-024 item 6, ADR-026 item 5: the skill filters the transcript from the checkpoint on, and
+  // writes a checkpoint or, for a project without documents, a handoff.
+  function withTranscript(prompt: LaunchPrompt, offer: TranscriptOffer, locale: Locale): LaunchPrompt {
     const params = {
       provider: offer.provider === 'claude' ? 'Claude' : 'Codex',
       account: offer.sourceAccount,
       at: offer.updatedAt,
+      since: offer.checkpointAt,
       path: offer.path,
-      write: msg(documentsOn ? 'prompt.transcript.writeCheckpoint' : 'prompt.transcript.saveHandoff'),
     };
     const text = `${prompt.text} ${translate(locale, 'prompt.transcript', params)}`;
     const folder = offer.path.slice(0, offer.path.lastIndexOf('/'));
@@ -643,9 +749,10 @@ export function createLaunchService({
     if (request.purpose === 'refine' && !request.taskRef) throw new DomainError('VALIDATION_FAILED', 'launch.refineNeedsTask');
     const promptPlan = await promptFor(project, request.taskRef ?? null, request.purpose);
     const offer = promptPlan ? transcriptOffer(project, profile, promptPlan.taskRef) : null;
+    const automatic = offer !== null && readsTranscriptByItself(project.id, offer);
     const prompt =
-      promptPlan && offer && request.useTranscript
-        ? withTranscript(promptPlan.prompt, offer, project.context.enabled, chatLocale(project))
+      promptPlan && offer && (request.useTranscript || automatic)
+        ? withTranscript(promptPlan.prompt, offer, chatLocale(project))
         : (promptPlan?.prompt ?? null);
     const plan = await launcher.plan({
       profile,
@@ -660,11 +767,11 @@ export function createLaunchService({
       ...plan,
       steps: [...(promptPlan?.warnings ?? []), ...(setup?.steps ?? []), ...plan.steps],
     };
-    return { project, profile, prompt, taskRef: promptPlan?.taskRef ?? null, plan: merged, setup, offer };
+    return { project, profile, prompt, taskRef: promptPlan?.taskRef ?? null, plan: merged, setup, offer, automatic };
   }
 
   async function preview(request: LaunchRequest): Promise<LaunchPreview> {
-    const { project, profile, prompt, plan, offer, setup } = await preparedPlan(request);
+    const { project, profile, prompt, plan, offer, setup, automatic } = await preparedPlan(request);
     return {
       plan,
       permission: permissionOf(project.id, profile.id),
@@ -672,6 +779,7 @@ export function createLaunchService({
       profileAlias: accountName(profile),
       prompt: prompt?.text ?? null,
       transcript: offer,
+      transcriptAutomatic: automatic,
       missingTools: setup?.missing ?? null,
     };
   }
@@ -845,6 +953,8 @@ export function createLaunchService({
     preview,
 
     async execute(request: LaunchRequest, confirmations: string[]): Promise<LaunchResult> {
+      // Saved before planning, so this launch already reads the transcript the way the user chose.
+      if (request.rememberTranscript && request.useTranscript) store.settings.set(consentKey(request.projectId), 'same-provider');
       const { project, profile, plan, prompt, taskRef, setup } = await preparedPlan(request);
       const permission = permissionOf(project.id, profile.id);
 
@@ -879,6 +989,7 @@ export function createLaunchService({
           }
         }
         const launched = await launcher.launch(plan);
+        store.settings.set(modeKey(profile.id), request.mode);
         const outcome = mcpWarning ? { ...launched, warnings: [...launched.warnings, mcpWarning] } : launched;
         const status = outcome.userActionRequired.length > 0 ? 'manual_step' : 'launched';
         store.launches.finish(attempt.id, status, null, outcome);
@@ -903,7 +1014,17 @@ export function createLaunchService({
       const missing = plan.requiredConfirmations.find((item) => !confirmations.includes(item.id));
       if (missing) throw new DomainError('CONFIRMATION_REQUIRED', missing.label);
       const outcome = await launcher.launch(plan);
+      store.settings.set(modeKey(request.profileId), request.mode);
       return { ...outcome, workspace: 'none' };
+    },
+
+    progress,
+    preferredMode,
+    transcriptConsent,
+
+    setTranscriptConsent(projectId: string, consent: TranscriptConsent): void {
+      if (!store.projects.get(projectId, deviceId())) throw new DomainError('NOT_FOUND', 'error.projectNotFound');
+      store.settings.set(consentKey(projectId), consent);
     },
 
     listLaunches(projectId: string): LaunchHistoryEntry[] {

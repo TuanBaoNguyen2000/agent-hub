@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -698,7 +698,7 @@ describe('launch history', () => {
 });
 
 describe('opening with context documents (ADR-019, TDD §8.2)', () => {
-  const SKILLS = ['context-capture', 'context-checkpoint', 'context-init', 'context-resume'];
+  const SKILLS = ['context-capture', 'context-checkpoint', 'context-init', 'context-recover', 'context-resume', 'context-tidy'];
 
   function allowedProject(cliConfigRoot: string | null = join(root, 'account-b')) {
     const project = workspace.addProject({ path: projectDir });
@@ -1019,26 +1019,81 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
       expect(declined.prompt).not.toContain('transcript');
 
       const accepted = await launching.execute({ ...request, useTranscript: true }, []);
-      expect(accepted.prompt).toContain('Its transcript is /s/claude/proj/abc.jsonl');
-      expect(accepted.prompt).toContain('tail -n 200');
-      expect(accepted.prompt).toContain('context-checkpoint');
+      // ADR-026 item 5: the skill filters from the checkpoint on instead of reading the last lines.
+      expect(accepted.prompt).toContain('use the context-recover skill on its transcript /s/claude/proj/abc.jsonl');
+      expect(accepted.prompt).toContain(`checkpoint time ${new Date(2026, 10, 5, 10, 0).toISOString()}`);
+      expect(accepted.prompt).not.toContain('tail -n 200');
       expect(plannedPrompts.at(-1)?.readDirs).toEqual(['/s/claude/proj']);
     });
 
-    it('asks a project without documents to save the missing handoff instead', async () => {
+    it('tells whether the work is saved: by the newest checkpoint, a later session or a later commit (ADR-024 item 1)', async () => {
+      const { project } = withHandoff('2026-11-05 10:00');
+      let progress = await launching.progress(project.id);
+      expect(progress).toMatchObject({ state: 'saved', sessionAfter: false, commitAfter: null, session: null });
+      expect(progress.checkpoint).toMatchObject({ author: 'A', taskRef: 'Workstreams/combo/Tasks/TASK-001-x.md', at: new Date(2026, 10, 5, 10, 0).toISOString() });
+
+      // Within a minute of the checkpoint is the session that wrote it.
+      sessionsByRoot.set(join(root, 'account-b'), session('/s/b.jsonl', new Date(2026, 10, 5, 10, 0, 30).toISOString()));
+      expect((await launching.progress(project.id)).state).toBe('saved');
+      sessionsByRoot.set(join(root, 'account-b'), session('/s/b.jsonl', new Date(2026, 10, 5, 11, 0).toISOString()));
+      progress = await launching.progress(project.id);
+      expect(progress).toMatchObject({ state: 'unsaved', sessionAfter: true });
+      expect(progress.session?.provider).toBe('claude');
+
+      sessionsByRoot.clear();
+      gitState = { state: 'repo', root: projectDir, branch: 'main', head: 'abc', headAt: new Date(2026, 10, 5, 12, 0).toISOString(), dirty: false };
+      expect(await launching.progress(project.id)).toMatchObject({ state: 'unsaved', sessionAfter: false, commitAfter: new Date(2026, 10, 5, 12, 0).toISOString() });
+
+      const folder = workspace.updateProjectContext({ id: project.id, enabled: true }).context.path;
+      writeFileSync(join(folder, 'Workstreams', 'combo', 'Tasks', 'TASK-001-x.md'), '# TASK-001\n## Handoff log\n');
+      expect(await launching.progress(project.id)).toMatchObject({ state: 'none', checkpoint: null });
+    });
+
+    it('reads the transcript without asking once the project allows it, never across providers, and never when refused (ADR-024 item 4)', async () => {
+      const { project, request } = withHandoff('2026-11-05 10:00');
+      sessionsByRoot.set(join(root, 'account-b'), session('/s/claude/proj/abc.jsonl', new Date(2026, 10, 5, 11, 0).toISOString()));
+      expect(launching.transcriptConsent(project.id)).toBe('ask');
+      expect(await launching.preview(request)).toMatchObject({ transcriptAutomatic: false });
+
+      // "Always for this project", answered at launch.
+      const first = await launching.execute({ ...request, useTranscript: true, rememberTranscript: true }, []);
+      expect(first.prompt).toContain('context-recover');
+      expect(launching.transcriptConsent(project.id)).toBe('same-provider');
+      const preview = await launching.preview(request);
+      expect(preview.transcriptAutomatic).toBe(true);
+      expect(preview.prompt).toContain('context-recover');
+      expect((await launching.execute(request, [])).prompt).toContain('context-recover');
+
+      const codex = launching.createProfile({ provider: 'codex', alias: 'C', cliConfigRoot: join(root, 'codex-c'), desktopDataDir: null });
+      launching.setPermission({ projectId: project.id, profileId: codex.id, allowed: true });
+      const other = await launching.preview({ ...request, profileId: codex.id, mode: 'cli' });
+      expect(other).toMatchObject({ transcriptAutomatic: false, transcript: { otherProvider: true } });
+
+      launching.setTranscriptConsent(project.id, 'never');
+      expect((await launching.preview(request)).transcript).toBeNull();
+    });
+
+    it('remembers how each account was opened last (ADR-024 item 7)', async () => {
+      const { profile, request } = allowedProject();
+      expect(launching.preferredMode(profile.id)).toBe('desktop');
+      await launching.execute({ ...request, mode: 'cli' }, []);
+      expect(launching.preferredMode(profile.id)).toBe('cli');
+    });
+
+    it('uses the same skill for a project without documents, which saves a handoff', async () => {
       const { project, request } = allowedProject();
       saveNote(join(root, 'projects', project.id, 'handoffs'), { title: 'h', content: 'x', source: 't', now: new Date('2026-11-05T03:00:00Z') });
       sessionsByRoot.set(join(root, 'account-b'), session('/s/b.jsonl', '2026-11-05T04:00:00.000Z'));
 
       const result = await launching.execute({ ...request, useTranscript: true }, []);
 
-      expect(result.prompt).toContain('context_save_handoff');
+      expect(result.prompt).toContain('context-recover skill on its transcript /s/b.jsonl');
     });
   });
 });
 
 describe('agent tools (ADR-020 item 1)', () => {
-  const SKILLS = ['context-capture', 'context-checkpoint', 'context-init', 'context-resume'];
+  const SKILLS = ['context-capture', 'context-checkpoint', 'context-init', 'context-recover', 'context-resume', 'context-tidy'];
 
   function customSkill(name: string, folderName = name, base = join(root, 'my skills')): string {
     const folder = join(base, folderName);
@@ -1135,6 +1190,40 @@ describe('agent tools (ADR-020 item 1)', () => {
     expect(existsSync(join(root, 'account-b', 'skills', 'review-unity'))).toBe(false);
     expect(existsSync(join(root, 'data', 'skills', 'review-unity'))).toBe(false);
     expect((await launching.tools.view()).skills.map((skill) => skill.name)).toEqual(SKILLS);
+  });
+
+  it("shows a skill's files, compares a user's skill with its folder and copies it again (ADR-026)", async () => {
+    const a = claudeProfile('A', join(root, 'account-a'));
+    const folder = customSkill('review-unity');
+    launching.tools.addSkill(folder);
+    await launching.tools.install(a.id, { kind: 'skill', name: 'review-unity' });
+
+    const shipped = launching.tools.skillDetail('context-recover');
+    expect(shipped.files.map((file) => file.path)).toEqual(
+      expect.arrayContaining(['SKILL.md', 'references/document-layout.md', 'assets/handoff-entry.md', 'assets/task-template.md', 'scripts/transcript-digest.sh']),
+    );
+    expect(shipped.compare).toBeNull();
+
+    let detail = launching.tools.skillDetail('review-unity');
+    expect(detail).toMatchObject({ kind: 'custom', compare: null });
+    expect(detail.installedIn).toHaveLength(1);
+
+    writeFileSync(join(folder, 'SKILL.md'), `---\nname: review-unity\ndescription: Bản mới.\n---\n# review-unity v2\n`);
+    expect((await launching.tools.view()).skills.find((skill) => skill.name === 'review-unity')?.source).toBe('changed');
+    detail = launching.tools.skillDetail('review-unity');
+    expect(detail.compare?.kind).toBe('source');
+    expect(detail.compare?.files[0]?.text).toContain('v2');
+
+    launching.tools.updateSkill('review-unity');
+    expect(readFileSync(join(root, 'account-a', 'skills', 'review-unity', 'SKILL.md'), 'utf8')).toContain('v2');
+    const view = await launching.tools.view();
+    expect(view.skills.find((skill) => skill.name === 'review-unity')).toMatchObject({ source: 'same', description: 'Bản mới.' });
+    expect(view.skills.filter((skill) => skill.kind === 'builtin').every((skill) => skill.source === null)).toBe(true);
+
+    writeFileSync(join(folder, 'SKILL.md'), 'no frontmatter');
+    expect(await codeOf(() => launching.tools.updateSkill('review-unity'))).toBe('SKILL_INVALID');
+    expect(await codeOf(() => launching.tools.updateSkill('context-init'))).toBe('NOT_FOUND');
+    expect(await codeOf(() => launching.tools.skillDetail('nope'))).toBe('NOT_FOUND');
   });
 
   it('refuses an invalid skill, a taken name, and a skill from the folder every account reads', async () => {

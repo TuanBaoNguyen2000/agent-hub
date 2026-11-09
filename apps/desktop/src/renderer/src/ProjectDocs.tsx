@@ -206,10 +206,7 @@ export function ProjectDocs({ project, context, onChanged, onSetUp, onCheck, onS
           </p>
         </div>
       )}
-      <div className="settings-row">
-        <p className="hint grow">{t('handoffs.checkpointHint')}</p>
-        <CopyButton text={context.checkpointPrompt} label={t('handoffs.copyCheckpoint')} />
-      </div>
+      {/* ADR-024 item 2: the checkpoint prompt lives on the progress row at the top of the overview. */}
       {overview.filled && (
         <div className="settings-row">
           <p className="hint grow">{t('docs.reconcileHint')}</p>

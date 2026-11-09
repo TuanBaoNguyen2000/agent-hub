@@ -468,7 +468,7 @@ describe('adding a project with a choice of documents (ADR-023 items 1–3)', ()
     expect(state.overview.workstreams.map((item) => item.slug)).toEqual(['Workstreams/main']);
 
     const task = workspace.createTask({ id: project.id, workstream: 'Workstreams/main', title: 'Đầu tiên', goal: '' });
-    expect(task).toMatchObject({ id: 'TASK-001', state: 'Chờ' });
+    expect(task).toMatchObject({ id: 'TASK-001', state: 'Cần làm' });
     expect(codeOf(() => workspace.scanFolder(join(root, 'missing')))).toBe('PROJECT_PATH_MISSING');
   });
 
@@ -685,9 +685,9 @@ describe('managing tasks and documents (ADR-021)', () => {
     const task = workspace.createTask({ id, workstream: 'Workstreams/combo', title: 'Đếm combo trên màn hình', goal: 'Hiện số combo.' });
 
     expect(task.ref).toBe('Workstreams/combo/Tasks/TASK-017-dem-combo-tren-man-hinh.md');
-    expect(task).toMatchObject({ id: 'TASK-017', state: 'Chờ', group: 'todo' });
-    expect(readFileSync(join(folder, task.ref), 'utf8')).toMatch(/^# TASK-017 Đếm combo trên màn hình\n\nStatus: Chờ\n\n## Mục tiêu\n\nHiện số combo\.\n/);
-    expect(readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toContain('| TASK-001 | in progress |\n| TASK-017 Đếm combo trên màn hình | Chờ |\n');
+    expect(task).toMatchObject({ id: 'TASK-017', state: 'Cần làm', group: 'todo' });
+    expect(readFileSync(join(folder, task.ref), 'utf8')).toMatch(/^# TASK-017 Đếm combo trên màn hình\n\nStatus: Cần làm\n\n## Mục tiêu\n\nHiện số combo\.\n/);
+    expect(readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toContain('| TASK-001 | in progress |\n| TASK-017 Đếm combo trên màn hình | Cần làm |\n');
     expect(codeOf(() => workspace.createTask({ id, workstream: 'Workstreams/none', title: 'x', goal: '' }))).toBe('NOT_FOUND');
     expect(codeOf(() => workspace.createTask({ id, workstream: 'Workstreams/combo', title: '  ', goal: '' }))).toBe('VALIDATION_FAILED');
   });
@@ -719,7 +719,7 @@ describe('managing tasks and documents (ADR-021)', () => {
     expect(text).toMatch(/^# TASK-001 Counter\n\nStatus: Xong\n\n## Goal\n/);
     expect(readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toContain('| TASK-001 | Xong |');
     expect(text.match(/Người dùng xác nhận trong AgentHub/g)).toHaveLength(1);
-    expect(text).toMatch(/## Handoff log\n\n### \d{4}-\d{2}-\d{2} \d{2}:\d{2} — AgentHub\n/);
+    expect(text).toMatch(/## Handoff log\n\n### \d{4}-\d{2}-\d{2} \d{2}:\d{2}[+-]\d{4} — AgentHub\n/);
     // A task with no row yet gets one; a workstream without STATUS gets the table.
     const intro = workspace.setTaskState({ id, ref: 'Workstreams/intro/Tasks/TASK-016-intro.md', state: 'active' });
     expect(intro.state).toBe('Đang làm');

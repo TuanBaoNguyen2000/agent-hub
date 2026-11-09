@@ -1,4 +1,4 @@
-import type { LaunchAttemptDto, ProfileDto, ProjectContextDto, ProjectDto } from '@agenthub/contracts';
+import type { LaunchAttemptDto, ProfileDto, ProjectContextDto, ProjectDto, ProjectProgressDto, UsageDto } from '@agenthub/contracts';
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { MessageKey } from '@agenthub/i18n';
 import { api, unwrap } from './api';
@@ -9,7 +9,8 @@ import { DocsFoundNotice, ProjectDocs } from './ProjectDocs';
 import { DocumentsPanel, readPanelWidth } from './ProjectDocuments';
 import { ProjectHandoffs } from './ProjectHandoffs';
 import { ProjectHistory } from './ProjectHistory';
-import { ProjectLaunch } from './ProjectLaunch';
+import { type LaunchRequestView, ProjectLaunch } from './ProjectLaunch';
+import { ProgressRow, SwitchDialog } from './ProjectProgress';
 import { ProjectSettings } from './ProjectSettings';
 import { ProjectTasks, allTasks } from './ProjectTasks';
 import { Menu, MenuItem, TabPanel, Tabs } from './ui';
@@ -27,8 +28,11 @@ const TABS: readonly { value: Tab; label: MessageKey }[] = [
 interface Props {
   project: ProjectDto;
   accounts: ProfileDto[] | undefined;
+  usages: Record<string, UsageDto>;
   onOpenSettings: () => void;
   onOpenTools: () => void;
+  // The sidebar shows the same state beside the project (ADR-024 item 2).
+  onProgress: (projectId: string, progress: ProjectProgressDto) => void;
   onChanged: (project: ProjectDto) => void;
   onRemoved: (id: string) => void;
   onError: (message: string | undefined) => void;
@@ -54,7 +58,10 @@ function remember(key: string, value: string): void {
   }
 }
 
-export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, onChanged, onRemoved, onError }: Props) {
+// ADR-024 item 1: sessions and commits happen outside the app, so the state is read again.
+const PROGRESS_REFRESH_MS = 60_000;
+
+export function ProjectPane({ project, accounts, usages, onOpenSettings, onOpenTools, onProgress, onChanged, onRemoved, onError }: Props) {
   const { t } = useI18n();
   const idBase = useId();
   const [tab, setTab] = useState<Tab>('overview');
@@ -70,6 +77,9 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
   const [docsRequest, setDocsRequest] = useState<{ path: string; at: number } | null>(null);
   const [contextVersion, setContextVersion] = useState(0);
   const [taskFocus, setTaskFocus] = useState<{ ref: string; at: number } | null>(null);
+  const [progress, setProgress] = useState<ProjectProgressDto>();
+  const [switching, setSwitching] = useState(false);
+  const [launchRequest, setLaunchRequest] = useState<LaunchRequestView | null>(null);
   const chosen = useRef(false);
   const launchRef = useRef<HTMLDivElement>(null);
   const searched = useRef(false);
@@ -110,6 +120,27 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
   }, []);
   useEffect(() => remember(OPEN_KEY, docsOpen ? 'open' : 'closed'), [docsOpen]);
   useEffect(() => remember(WIDTH_KEY, String(docsWidth)), [docsWidth]);
+
+  const loadProgress = useCallback(async () => {
+    try {
+      const loaded = await unwrap(api.getProjectProgress({ id: project.id }));
+      setProgress(loaded);
+      onProgress(project.id, loaded);
+    } catch {
+      // The row stays as it was; the overview shows the context errors.
+    }
+  }, [project.id, onProgress]);
+
+  useEffect(() => {
+    void loadProgress();
+    window.addEventListener('focus', loadProgress);
+    const timer = setInterval(() => void loadProgress(), PROGRESS_REFRESH_MS);
+    return () => {
+      window.removeEventListener('focus', loadProgress);
+      clearInterval(timer);
+    };
+    // The documents changing changes the state too.
+  }, [loadProgress, contextVersion]);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -261,18 +292,34 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
       {page(
         'overview',
         <>
+          <ProgressRow
+            progress={progress}
+            checkpointPrompt={context?.checkpointPrompt}
+            usages={usages}
+            onSwitch={() => setSwitching(true)}
+            onOpenTask={(ref) => {
+              setTaskFocus({ ref, at: Date.now() });
+              setTab('tasks');
+            }}
+            onError={onError}
+          />
           <div ref={launchRef} />
           <ProjectLaunch
             project={project}
             accounts={accounts}
+            usages={usages}
             onOpenSettings={onOpenSettings}
             onOpenTools={onOpenTools}
             taskRef={taskRef}
+            taskTitle={selectedTask?.title ?? null}
             history={history}
+            request={launchRequest}
+            sourceId={progress?.session?.profileId ?? null}
             onLaunched={() => {
               setPurpose(undefined);
               void loadHistory();
               void loadContext();
+              void loadProgress();
             }}
             taskSummary={purpose === 'init' ? fillSummary : taskSummary}
             {...(purpose ? { purpose } : {})}
@@ -311,12 +358,14 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
           }}
           onError={onError}
           accounts={accounts}
+          usages={usages}
           history={history}
           onOpenSettings={onOpenSettings}
           onOpenTools={onOpenTools}
           onLaunched={() => {
             void loadHistory();
             void loadContext();
+            void loadProgress();
           }}
         />
       </TabPanel>
@@ -342,6 +391,21 @@ export function ProjectPane({ project, accounts, onOpenSettings, onOpenTools, on
             setTab('tasks');
           }}
           request={docsRequest}
+          onError={onError}
+        />
+      )}
+      {switching && progress && accounts && (
+        <SwitchDialog
+          projectId={project.id}
+          progress={progress}
+          accounts={accounts}
+          usages={usages}
+          checkpointPrompt={context?.checkpointPrompt}
+          onLaunch={(launch) => {
+            setTab('overview');
+            setLaunchRequest({ ...launch, at: Date.now() });
+          }}
+          onClose={() => setSwitching(false)}
           onError={onError}
         />
       )}

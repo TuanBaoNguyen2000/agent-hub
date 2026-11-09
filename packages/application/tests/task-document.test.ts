@@ -9,6 +9,7 @@ import {
   setTaskFileState,
   stateGroup,
   taskSlug,
+  utcOffset,
   verifiedHandoff,
 } from '../src/index';
 
@@ -127,12 +128,15 @@ describe('task states in STATUS (ADR-021 item 4)', () => {
     expect(['Done', 'xong', '완료', 'cancelled'].map(stateGroup)).toEqual(['done', 'done', 'done', 'done']);
     expect(['Blocked', 'bị chặn', '막힘', 'on hold'].map(stateGroup)).toEqual(['blocked', 'blocked', 'blocked', 'blocked']);
     expect(['In progress', 'Đang làm', '진행 중', 'WIP'].map(stateGroup)).toEqual(['active', 'active', 'active', 'active']);
-    expect(['todo', 'Chờ', 'later'].map(stateGroup)).toEqual(['todo', 'todo', 'todo']);
+    expect(['In review', 'review', 'Chờ duyệt', 'đang review', '검토 중'].map(stateGroup)).toEqual(['review', 'review', 'review', 'review', 'review']);
+    expect(['todo', 'Cần làm', 'Chờ', 'later', 'reviewed'].map(stateGroup)).toEqual(['todo', 'todo', 'todo', 'todo', 'todo']);
     expect(stateGroup(null)).toBeNull();
   });
 
-  it('writes the user confirmation as a dated handoff entry the overview can read', () => {
-    expect(verifiedHandoff(new Date(2026, 10, 6, 9, 5), 'en')).toBe('### 2026-11-06 09:05 — AgentHub\n- **Verified by user in AgentHub:** marked Done.');
+  it('writes the user confirmation as a dated handoff entry with its UTC offset', () => {
+    const at = new Date(2026, 10, 6, 9, 5);
+    expect(verifiedHandoff(at, 'en')).toBe(`### 2026-11-06 09:05${utcOffset(at)} — AgentHub\n- **Verified by user in AgentHub:** marked Done.`);
+    expect(utcOffset(at)).toMatch(/^[+-]\d{4}$/);
   });
 });
 

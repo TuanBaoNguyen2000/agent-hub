@@ -15,7 +15,6 @@ interface IpcDependencies {
   mcp: { server: (profileId: string) => { command: string; args: string[] } | null; logFile: string };
 }
 
-const profileDto = (profile: AccountProfile) => ({ ...profile, name: accountName(profile) });
 
 function toErrorDto(error: unknown): IpcErrorDto {
   if (error instanceof DomainError) return { code: error.code, message: error.message, detail: error.detail };
@@ -25,6 +24,8 @@ function toErrorDto(error: unknown): IpcErrorDto {
 }
 
 export function registerIpcHandlers({ workspace, launching, engineStatus, dataDirectory, isTrustedSender, mcp }: IpcDependencies): void {
+  const profileDto = (profile: AccountProfile) => ({ ...profile, name: accountName(profile), preferredMode: launching.preferredMode(profile.id) });
+  const progressDto = async (id: string) => ({ ...(await launching.progress(id)), transcriptConsent: launching.transcriptConsent(id) });
   function handle<C extends keyof typeof ipcInput & keyof IpcOutput>(
     channel: C,
     run: (input: IpcInput<C>) => IpcOutput[C] | Promise<IpcOutput[C]>,
@@ -68,6 +69,11 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
     return null;
   });
   handle(IpcChannel.projectsUpdateContext, (input) => workspace.updateProjectContext(input));
+  handle(IpcChannel.projectsProgress, ({ id }) => progressDto(id));
+  handle(IpcChannel.projectsSetTranscriptConsent, ({ id, consent }) => {
+    launching.setTranscriptConsent(id, consent);
+    return progressDto(id);
+  });
   handle(IpcChannel.projectsContext, async ({ id }) => {
     // Explicit fields: the Git root stays in Main.
     const { overview, git, warnings, handoffs, checkpointPrompt } = await workspace.projectContext(id);
@@ -163,7 +169,7 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
   });
   handle(IpcChannel.launchPlan, async (request) => {
     // Explicit fields: the plan's internal action holds commands and stays in Main.
-    const { plan, permission, projectName, profileAlias, prompt, transcript, missingTools } = await launching.preview(request);
+    const { plan, permission, projectName, profileAlias, prompt, transcript, transcriptAutomatic, missingTools } = await launching.preview(request);
     return {
       steps: plan.steps,
       requiredConfirmations: plan.requiredConfirmations,
@@ -182,6 +188,7 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
         otherProvider: transcript.otherProvider,
         checkpointAt: transcript.checkpointAt,
       },
+      transcriptAutomatic,
       missingTools,
     };
   });
@@ -253,6 +260,15 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
   });
   handle(IpcChannel.toolsRemoveSkill, ({ name }) => {
     tools.removeSkill(name);
+    return tools.view();
+  });
+  handle(IpcChannel.toolsSkillDetail, ({ name }) => tools.skillDetail(name));
+  handle(IpcChannel.toolsAcknowledgeSkill, ({ name }) => {
+    tools.acknowledgeSkill(name);
+    return tools.view();
+  });
+  handle(IpcChannel.toolsUpdateSkill, ({ name }) => {
+    tools.updateSkill(name);
     return tools.view();
   });
 }

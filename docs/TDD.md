@@ -2,7 +2,7 @@
 
 > **Project:** AgentHub — Cross-platform AI Agent Workspace & Context Manager  
 > **Version:** 0.1.26 (ADR-023: thêm project có hỏi tài liệu, khung tài liệu, trạng thái task trong file, màn Task theo trạng thái, panel Tài liệu; ADR-020: sửa Phase 3 theo đánh giá, bước 1–4 đã triển khai; ADR-021: quản lý tài liệu và task; ADR-009, ADR-013–019: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP, login, context do agent duy trì; Phase 0 macOS exit review; Phase 1 và 2 trên macOS; FR-018 usage limit; Phase 3 đủ deliverables trên macOS, đang sửa theo đánh giá)  
-> **Updated:** 2026-11-05  
+> **Updated:** 2026-11-09 (ADR-024, ADR-026 Accepted; ADR-025 Open)  
 > **Status:** Draft for implementation review  
 > **Platforms:** macOS and Windows  
 > **Language:** Vietnamese (technical identifiers in English)  
@@ -641,7 +641,7 @@ Thiết kế theo [ADR-019](decisions/019-agent-maintained-context.md) (2026-11-
 | `context-checkpoint` | Cuối phiên, trước khi đổi account, khi sắp hết quota | Ghi handoff log, cập nhật `STATUS`, `DECISIONS`, pitfalls |
 | `context-capture` | Chat phát sinh | Biến đoạn chat thành task hoặc đợt việc mới, hoặc mục "Chat rời" |
 
-Skill theo chuẩn Agent Skills (`SKILL.md`), dùng chung cho Claude và Codex. AgentHub cài vào thư mục cấu hình của từng account được phép dùng project; khi tài liệu nằm trong repo có thể cài thêm ở cấp project.
+Skill theo chuẩn Agent Skills (`SKILL.md`), dùng chung cho Claude và Codex. **Đã triển khai (ADR-026, 2026-11-09):** phần dùng chung tách vào `references/` và `assets/` của từng skill (một nguồn `apps/desktop/skills/_shared/`, chép khi build); quy tắc "tài liệu là dữ liệu" trong cả bốn skill; heading handoff có múi giờ; thêm `context-recover` (ghi bù từ transcript đã lọc theo giờ mốc lưu, bằng `scripts/transcript-digest.sh`) và `context-tidy`; màn Công cụ agent xem được nội dung skill, diff khi skill có sẵn được cập nhật, cập nhật skill riêng từ folder gốc. Phần dùng chung được chép vào bản chung của từng skill khi app khởi động; chi tiết ở mục Triển khai của ADR-026. AgentHub cài vào thư mục cấu hình của từng account được phép dùng project; khi tài liệu nằm trong repo có thể cài thêm ở cấp project.
 
 **Đã triển khai (2026-11-05):** bốn skill nằm ở `apps/desktop/skills/`, viết bằng tiếng Anh vì dành cho agent; bản đóng gói đặt chúng ở `Contents/Resources/skills` (ngoài `app.asar`). AgentHub giữ một bản chung ở `<userData>/skills/` và tạo symlink trong `$CLAUDE_CONFIG_DIR/skills` hoặc `$CODEX_HOME/skills` (account mặc định: `~/.claude/skills`, `~/.codex/skills`) khi mở account cho project có bật tài liệu. Mỗi lần mở làm mới bản chung, nên bản cập nhật của app đến mọi account. Không thay skill trùng tên không do AgentHub tạo; cảnh báo khi `~/.agents/skills` có skill `context-*` (SPIKE-14); account mặc định phải tick đồng ý ở lần cài đầu. Chưa cài ở cấp project.
 
@@ -702,6 +702,8 @@ Khi phiên cũ dừng trước checkpoint, với chat có folder (CLI, tab Code,
 - Tạo chat mới không tự làm mới quota account; đổi account chỉ dùng account hợp lệ theo quy định provider.
 
 **Đã triển khai (2026-11-05):** trang project đọc lại tài liệu (task theo `<thư mục workstream>/*/Tasks/TASK-*.md`; thư mục workstream là `Workstreams/` hoặc mọi thư mục cấp một không ẩn có ít nhất một thư mục con chứa `STATUS.md` hoặc `Tasks/`, ví dụ `Playables/` (ADR-020 mục 4); `ref` của task là đường dẫn thật, trạng thái từ bảng trong `STATUS.md`, dòng `Branch:`, heading đầu tiên dưới "Handoff log" là handoff mới nhất, giờ ghi trong heading coi là giờ máy) và Git (§10.1), rồi cảnh báo: thay đổi chưa commit; branch khác với `STATUS`; task chưa xong có commit mới hơn handoff; task đang làm chưa có handoff hoặc handoff quá 7 ngày. Task có trạng thái kiểu "done", "xong" không bị cảnh báo. Cảnh báo không chặn việc mở. Đọc lại khi cửa sổ được focus và khi bấm "Tải lại".
+
+**Đã triển khai (ADR-024, 2026-11-09):** trạng thái tiến độ của project (Đã lưu, Có việc chưa lưu, Chưa có checkpoint) ở đầu Tổng quan và trong sidebar; nút "Chuyển sang account khác" có hai cách (lưu rồi chuyển, chuyển ngay kèm ghi bù bằng `context-recover`); đồng ý đọc transcript lưu theo project; danh sách account xếp theo usage; một nút mở cho mỗi account, bảng trước khi mở chỉ khi cần quyết định; nhắc khi một cửa sổ usage vượt 85%. Chi tiết ở mục Triển khai của ADR-024. Hook, file chỉ dẫn cấp account và trạng thái agent đang chạy chờ spike (ADR-025, Open).
 
 ---
 

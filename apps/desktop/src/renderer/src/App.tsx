@@ -1,4 +1,4 @@
-import type { NoteDto, ProfileDto, ProjectDto, UsageDto } from '@agenthub/contracts';
+import type { NoteDto, ProfileDto, ProjectDto, ProjectProgressDto, UsageDto } from '@agenthub/contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AccountAvatar, PROVIDER_LABELS, useAccountLauncher, windowLabel } from './accounts';
 import { compareText } from '@agenthub/i18n';
@@ -11,9 +11,12 @@ import { ProjectPane } from './ProjectPane';
 import { SettingsDialog, type SettingsTab } from './SettingsView';
 import { Menu, MenuItem, MenuSeparator, Segmented } from './ui';
 import { highestUsage, resetText, usageTone, windowTitle } from './usage';
+import { PROGRESS_STATES } from './ProjectProgress';
 
 // Each read starts the account's CLI, so the sidebar only checks now and then.
 const USAGE_REFRESH_MS = 10 * 60_000;
+// The open project reads its own every minute; the others are read on focus and now and then.
+const PROGRESS_REFRESH_MS = 5 * 60_000;
 
 const SIDEBAR_KEY = 'agenthub.sidebar';
 function readSidebar(): boolean {
@@ -42,6 +45,9 @@ export function App() {
   const [projects, setProjects] = useState<ProjectDto[]>();
   const [accounts, setAccounts] = useState<ProfileDto[]>();
   const [usages, setUsages] = useState<Record<string, UsageDto>>({});
+  // ADR-024 item 2: whether each project's work is saved, as a dot beside it.
+  const [progress, setProgress] = useState<Record<string, ProjectProgressDto>>({});
+  const reportProgress = useCallback((id: string, value: ProjectProgressDto) => setProgress((current) => ({ ...current, [id]: value })), []);
   const [looseChats, setLooseChats] = useState<NoteDto[]>();
   const [screen, setScreen] = useState<Screen>({ kind: 'none' });
   const [error, setError] = useState<string>();
@@ -98,6 +104,26 @@ export function App() {
     const timer = setInterval(read, USAGE_REFRESH_MS);
     return () => clearInterval(timer);
   }, [accountIds]);
+
+  const projectIds = projects?.map((project) => project.id).join(',') ?? '';
+  useEffect(() => {
+    if (!projectIds) return;
+    const read = (): void => {
+      for (const id of projectIds.split(',')) {
+        unwrap(api.getProjectProgress({ id })).then(
+          (value) => reportProgress(id, value),
+          () => undefined,
+        );
+      }
+    };
+    read();
+    window.addEventListener('focus', read);
+    const timer = setInterval(read, PROGRESS_REFRESH_MS);
+    return () => {
+      window.removeEventListener('focus', read);
+      clearInterval(timer);
+    };
+  }, [projectIds, reportProgress]);
 
   // Each project's chat language may follow the app's, which Settings can change. Only on a
   // change: the first list comes from the load below, and reading twice could undo a newer update.
@@ -256,6 +282,14 @@ export function App() {
                         <Folder />
                       </span>
                       <span className="grow truncate">{project.name}</span>
+                      {progress[project.id] && progress[project.id]?.state !== 'saved' && (
+                        <span
+                          className={`progress-dot ${progress[project.id]?.state}`}
+                          role="img"
+                          aria-label={t(PROGRESS_STATES[progress[project.id]?.state ?? 'none'].text)}
+                          title={t(PROGRESS_STATES[progress[project.id]?.state ?? 'none'].text)}
+                        />
+                      )}
                       {project.pathStatus !== 'directory' && (
                         <span className="badge warning" title={t('nav.folderMissing')}>
                           !
@@ -351,6 +385,8 @@ export function App() {
             key={selectedProject.id}
             project={selectedProject}
             accounts={accounts}
+            usages={usages}
+            onProgress={reportProgress}
             onOpenSettings={() => openSettings('accounts')}
             onOpenTools={() => openSettings('tools')}
             onError={showError}
@@ -416,9 +452,11 @@ function UsageChip({ usage }: { usage: UsageDto | undefined }) {
   const highest = highestUsage(usage);
   if (!usage || highest === null) return null;
   const tone = usage.limitReached ? 'full' : usageTone(highest);
+  // ADR-024 item 5: which limit the figure is, "Week 71%" rather than a bare number.
+  const tightest = usage.windows.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
   return (
     <span className={`usage-chip ${tone}`} title={usageSummary(i18n, usage)} data-testid="usage-chip">
-      {Math.round(highest)}%
+      {windowTitle(i18n, tightest)} {Math.round(highest)}%
     </span>
   );
 }

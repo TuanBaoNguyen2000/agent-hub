@@ -1,4 +1,4 @@
-import type { AccountLaunchPreviewDto, ClientModeDto, LaunchOutcomeDto, ProfileDto } from '@agenthub/contracts';
+import type { AccountLaunchPreviewDto, ClientModeDto, LaunchAttemptDto, LaunchOutcomeDto, ProfileDto, UsageDto } from '@agenthub/contracts';
 import { type ReactNode, useState } from 'react';
 import { api, unwrap } from './api';
 import { useI18n } from './i18n';
@@ -19,6 +19,45 @@ export function AccountAvatar({ account, size = 'md' }: { account: ProfileDto; s
       {letter}
     </span>
   );
+}
+
+// ADR-024 item 5: how much an account can still take, from its tightest limit; null when unknown.
+export function remainingPercent(usage: UsageDto | undefined): number | null {
+  if (!usage || usage.state !== 'ok' || usage.windows.length === 0) return null;
+  if (usage.limitReached) return 0;
+  return Math.max(0, 100 - Math.max(...usage.windows.map((window) => window.usedPercent)));
+}
+
+export type AccountReadiness = 'ready' | 'full' | 'loggedOut' | 'unknown';
+
+export function readiness(usage: UsageDto | undefined): AccountReadiness {
+  if (!usage) return 'unknown';
+  if (usage.state === 'logged_out') return 'loggedOut';
+  if (usage.state !== 'ok') return 'unknown';
+  return remainingPercent(usage) === 0 ? 'full' : 'ready';
+}
+
+// Accounts that can take work first, most room left first; the account the work comes from,
+// then full or signed-out accounts last. Unknown usage sits after known room.
+export function orderAccounts(accounts: readonly ProfileDto[], usages: Record<string, UsageDto>, sourceId: string | null = null): ProfileDto[] {
+  const rank = (account: ProfileDto): number => {
+    const state = readiness(usages[account.id]);
+    if (state === 'full' || state === 'loggedOut') return 3;
+    if (account.id === sourceId) return 2;
+    return state === 'ready' ? 0 : 1;
+  };
+  return [...accounts].sort((a, b) => rank(a) - rank(b) || (remainingPercent(usages[b.id]) ?? -1) - (remainingPercent(usages[a.id]) ?? -1));
+}
+
+// ADR-024 item 10: the account used last for the project when it can still take work, else the
+// one with the most room.
+export function defaultAccount(accounts: readonly ProfileDto[], usages: Record<string, UsageDto>, history: readonly LaunchAttemptDto[]): ProfileDto | undefined {
+  const usable = (account: ProfileDto): boolean => {
+    const state = readiness(usages[account.id]);
+    return state === 'ready' || state === 'unknown';
+  };
+  const recent = history.map((attempt) => accounts.find((account) => account.id === attempt.profileId)).find((account) => account !== undefined && usable(account));
+  return recent ?? orderAccounts(accounts, usages).find(usable) ?? accounts[0];
 }
 
 // Asks only when the user has something to decide; otherwise a click just opens.

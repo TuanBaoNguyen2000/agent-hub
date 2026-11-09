@@ -74,7 +74,8 @@ describe('createSkillInstaller', () => {
     createSkillInstaller({ source, shared }).refresh();
 
     expect(readFileSync(join(other, 'context-resume', 'SKILL.md'), 'utf8')).toBe('v2');
-    expect(readdirSync(shared).sort()).toEqual(BUILTIN);
+    expect(readdirSync(shared).filter((name) => !name.startsWith('.')).sort()).toEqual(BUILTIN);
+    expect(readdirSync(shared).filter((name) => name.endsWith('.new'))).toEqual([]);
   });
 
   it('never replaces a skill of the same name that the user put there, nor a link pointing elsewhere', () => {
@@ -150,6 +151,71 @@ describe('createSkillInstaller', () => {
     const installer = createSkillInstaller({ source: join(root, 'none'), shared });
     expect(installer.builtin).toEqual([]);
     expect(installer.inspect(account, [])).toEqual({});
+  });
+});
+
+describe('shared files and versions (ADR-026)', () => {
+  it('puts the files of _shared into every shipped skill, and never treats _shared as a skill', () => {
+    mkdirSync(join(source, '_shared', 'references'), { recursive: true });
+    writeFileSync(join(source, '_shared', 'references', 'document-layout.md'), 'rules');
+    writeFileSync(join(source, '_shared', '.DS_Store'), 'junk');
+    writeFileSync(join(source, 'context-init', '.DS_Store'), 'junk');
+    const installer = createSkillInstaller({ source, shared });
+    expect(installer.builtin).toEqual(BUILTIN);
+
+    installer.refresh();
+
+    for (const name of BUILTIN) expect(readFileSync(join(shared, name, 'references', 'document-layout.md'), 'utf8')).toBe('rules');
+    expect(existsSync(join(shared, '_shared'))).toBe(false);
+    expect(existsSync(join(shared, 'context-init', '.DS_Store'))).toBe(false);
+    expect(installer.files('context-init').map((file) => file.path)).toEqual(['SKILL.md', 'references/document-layout.md']);
+  });
+
+  it('marks a shipped skill an update changed, keeps the copy the user last saw, and forgets it once seen', () => {
+    createSkillInstaller({ source, shared }).refresh();
+    expect(createSkillInstaller({ source, shared }).updated('context-resume')).toBe(false);
+
+    writeSkill(source, 'context-resume', 'v2');
+    createSkillInstaller({ source, shared }).refresh();
+    writeSkill(source, 'context-resume', 'v3');
+    const installer = createSkillInstaller({ source, shared });
+    installer.refresh();
+
+    expect(installer.updated('context-resume')).toBe(true);
+    expect(installer.updated('context-init')).toBe(false);
+    // Two updates in a row compare against what the user saw, not the copy in between.
+    expect(installer.previousFiles('context-resume')).toEqual([{ path: 'SKILL.md', text: 'v1' }]);
+    expect(installer.files('context-resume')).toEqual([{ path: 'SKILL.md', text: 'v3' }]);
+
+    installer.acknowledge('context-resume');
+    expect(installer.updated('context-resume')).toBe(false);
+    expect(installer.previousFiles('context-resume')).toBeNull();
+    installer.refresh();
+    expect(installer.updated('context-resume')).toBe(false);
+  });
+
+  it("compares a user's skill with its folder and copies it again on request", () => {
+    const folder = join(root, 'mine', 'unity-review');
+    writeSkill(join(root, 'mine'), 'unity-review', skillText('unity-review'));
+    const installer = createSkillInstaller({ source, shared });
+    installer.addCopy(folder, 'unity-review');
+    installer.install(account, ['unity-review']);
+    expect(installer.sourceState('unity-review', folder)).toBe('same');
+
+    writeFileSync(join(folder, 'SKILL.md'), skillText('unity-review', 'Does more.'));
+    mkdirSync(join(folder, 'scripts'));
+    writeFileSync(join(folder, 'scripts', 'scan.py'), 'print(1)');
+    expect(installer.sourceState('unity-review', folder)).toBe('changed');
+    expect(installer.sourceFiles(folder).map((file) => file.path)).toEqual(['SKILL.md', 'scripts/scan.py']);
+
+    installer.updateCopy(folder, 'unity-review');
+    expect(installer.sourceState('unity-review', folder)).toBe('same');
+    expect(readFileSync(join(account, 'unity-review', 'scripts', 'scan.py'), 'utf8')).toBe('print(1)');
+    expect(installer.updated('unity-review')).toBe(false);
+
+    rmSync(folder, { recursive: true });
+    expect(installer.sourceState('unity-review', folder)).toBe('missing');
+    expect(codeOf(() => installer.updateCopy(folder, 'context-init'))).toBe('SKILL_EXISTS');
   });
 });
 

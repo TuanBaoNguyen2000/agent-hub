@@ -298,9 +298,11 @@ interface DialogProps {
   onClose: () => void;
   children: ReactNode;
   actions: ReactNode;
+  // A wide dialog holds a file viewer (ADR-026 item 7).
+  wide?: boolean;
 }
 
-export function Dialog({ label, title, onClose, children, actions }: DialogProps) {
+export function Dialog({ label, title, onClose, children, actions, wide = false }: DialogProps) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -319,9 +321,13 @@ export function Dialog({ label, title, onClose, children, actions }: DialogProps
         role="dialog"
         aria-modal="true"
         aria-label={label}
-        className="dialog"
+        className={wide ? 'dialog wide' : 'dialog'}
         onKeyDown={(event) => {
-          if (event.key === 'Escape') onClose();
+          // Events of a portal bubble through React parents, so Escape must not also close Settings.
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            onClose();
+          }
         }}
       >
         <h2 className="dialog-title">{title}</h2>
@@ -404,7 +410,7 @@ export function PathText({ path }: { path: string }) {
   );
 }
 
-export type StatusTone = 'ok' | 'warning' | 'neutral' | 'active' | 'danger';
+export type StatusTone = 'ok' | 'warning' | 'neutral' | 'active' | 'info' | 'danger';
 
 // ADR-023 item 8: a state is a coloured dot and words, never something that looks clickable.
 export function StatusText({ tone, children, title }: { tone: StatusTone; children: ReactNode; title?: string | undefined }) {

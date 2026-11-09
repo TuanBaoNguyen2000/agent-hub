@@ -1,10 +1,11 @@
-import type { AccountToolsDto, AgentToolsDto, SkillPresenceDto } from '@agenthub/contracts';
+import type { AccountToolsDto, AgentToolsDto, SkillPresenceDto, ToolSkillDto } from '@agenthub/contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MessageKey } from '@agenthub/i18n';
 import { PROVIDER_LABELS } from './accounts';
 import { api, unwrap } from './api';
 import { More } from './icons';
 import { useI18n } from './i18n';
+import { SkillViewer } from './SkillViewer';
 import { Menu, MenuItem, StatusText, type StatusTone } from './ui';
 
 type Tool = { kind: 'skill'; name: string } | { kind: 'mcp' };
@@ -42,6 +43,7 @@ export function AgentToolsSection({ onError, accountsVersion, focused, onOpenMcp
   const [tools, setTools] = useState<AgentToolsDto>();
   const [busy, setBusy] = useState<string>();
   const [selected, setSelected] = useState<string>();
+  const [viewing, setViewing] = useState<ToolSkillDto>();
   const section = useRef<HTMLElement>(null);
 
   const load = useCallback(async () => {
@@ -156,10 +158,12 @@ export function AgentToolsSection({ onError, accountsVersion, focused, onOpenMcp
             onChange={(tool, install) => void change(selectedAccount, tool, install)}
             onAuto={(on) => void setAuto(selectedAccount, on)}
             onRemoveSkill={(name) => void removeSkill(name)}
+            onViewSkill={setViewing}
             onOpenMcp={onOpenMcp}
           />
         </div>
       )}
+      {viewing && <SkillViewer name={viewing.name} sourcePath={viewing.sourcePath} onClose={() => setViewing(undefined)} onChanged={setTools} onError={onError} />}
     </section>
   );
 }
@@ -171,28 +175,54 @@ interface AccountToolsProps {
   onChange: (tool: Tool, install: boolean) => void;
   onAuto: (on: boolean) => void;
   onRemoveSkill: (name: string) => void;
+  onViewSkill: (skill: ToolSkillDto) => void;
   onOpenMcp: () => void;
 }
 
+// ADR-026 items 7, 8: a skill that changed since the user last looked, as a status, not a button.
+function skillNotice(skill: ToolSkillDto): { text: MessageKey; hint: MessageKey; tone: StatusTone } | null {
+  if (skill.updated) return { text: 'tools.updated', hint: 'tools.updatedHint', tone: 'warning' };
+  if (skill.source === 'changed') return { text: 'tools.sourceChanged', hint: 'tools.sourceChangedHint', tone: 'warning' };
+  if (skill.source === 'missing') return { text: 'tools.sourceMissing', hint: 'tools.sourceMissingHint', tone: 'neutral' };
+  return null;
+}
+
 // The tools of one account: what each one is, its state, and one action; removing is in the menu.
-function AccountTools({ account, tools, busy, onChange, onAuto, onRemoveSkill, onOpenMcp }: AccountToolsProps) {
+function AccountTools({ account, tools, busy, onChange, onAuto, onRemoveSkill, onViewSkill, onOpenMcp }: AccountToolsProps) {
   const { t, tr } = useI18n();
   const accountName = tr(account.name);
 
-  function row(tool: Tool, info: { description: string | null; custom: boolean }, state: { text: MessageKey; tone: StatusTone; title?: string | undefined }, canInstall: boolean, canRemove: boolean) {
+  function row(
+    tool: Tool,
+    info: { description: string | null; custom: boolean; skill?: ToolSkillDto },
+    state: { text: MessageKey; tone: StatusTone; title?: string | undefined },
+    canInstall: boolean,
+    canRemove: boolean,
+  ) {
     const name = toolName(tool);
     const params = { tool: name, account: accountName };
+    const notice = info.skill ? skillNotice(info.skill) : null;
     return (
       <li key={name} className="tools-row">
         <div className="tools-skill">
           <span className="tools-name">
             <code>{name}</code>
             {info.custom && <span className="badge">{t('tools.custom')}</span>}
+            {notice && (
+              <StatusText tone={notice.tone} title={t(notice.hint, { path: info.skill?.sourcePath ?? '' })}>
+                {t(notice.text)}
+              </StatusText>
+            )}
           </span>
           {info.description && <span className="hint tools-description">{info.description}</span>}
           {tool.kind === 'mcp' && (
             <button type="button" className="link tools-details" aria-label={t('mcpPage.openLabel')} onClick={onOpenMcp}>
               {t('mcpPage.open')}
+            </button>
+          )}
+          {info.skill && (
+            <button type="button" className="link tools-details" aria-label={t('tools.viewFor', { name })} onClick={() => info.skill && onViewSkill(info.skill)}>
+              {notice && notice.text !== 'tools.sourceMissing' ? t('tools.viewChanges') : t('tools.view')}
             </button>
           )}
         </div>
@@ -238,7 +268,7 @@ function AccountTools({ account, tools, busy, onChange, onAuto, onRemoveSkill, o
           const state = SKILL_STATES[presence];
           return row(
             { kind: 'skill', name: skill.name },
-            { description: skill.description, custom: skill.kind === 'custom' },
+            { description: skill.description, custom: skill.kind === 'custom', skill },
             { text: state.text, tone: state.tone, title: state.hint ? t(state.hint) : undefined },
             presence === 'missing',
             presence === 'installed',

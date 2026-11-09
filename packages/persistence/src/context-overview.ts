@@ -7,7 +7,8 @@ import { MAX_DOCUMENT_BYTES } from './context-files';
 // Markdown written by models, so every field is optional and nothing in them is ever run.
 
 const TASK_FILE = /^(TASK-\d+)[^/]*\.md$/i;
-const DATE = /(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/;
+// Date, optional time, optional UTC offset (ADR-026 item 4): "2026-11-09 17:40+0700".
+const DATE = /(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::\d{2})?(?:[ \t]?(Z|[+-]\d{2}:?\d{2})(?![\d:]))?)?/;
 
 function readSmall(path: string): string | null {
   try {
@@ -23,14 +24,19 @@ const firstHeading = (text: string | null): string | null => {
   return match?.[1]?.trim() ?? null;
 };
 
-// Local time, as agents write it; a bare date means the end of that day.
+// With an offset the time is exact; without one it is the machine's local time, as older entries
+// were written. A bare date means the end of that day.
 export function handoffTime(heading: string): string | null {
   const match = DATE.exec(heading);
   if (!match) return null;
-  const [, year, month, day, hour, minute] = match.map(Number);
-  const at = hour === undefined || Number.isNaN(hour)
-    ? new Date(year as number, (month as number) - 1, day, 23, 59, 59)
-    : new Date(year as number, (month as number) - 1, day, hour, minute);
+  const [year, month, day, hour, minute] = match.slice(1, 6).map(Number);
+  const zone = match[6];
+  let at: Date;
+  if (hour === undefined || Number.isNaN(hour)) at = new Date(year as number, (month as number) - 1, day, 23, 59, 59);
+  else if (zone) {
+    const offset = zone === 'Z' ? 0 : (zone.startsWith('-') ? -1 : 1) * (Number(zone.slice(1, 3)) * 60 + Number(zone.slice(-2)));
+    at = new Date(Date.UTC(year as number, (month as number) - 1, day, hour, minute as number) - offset * 60_000);
+  } else at = new Date(year as number, (month as number) - 1, day, hour, minute);
   return Number.isNaN(at.getTime()) ? null : at.toISOString();
 }
 

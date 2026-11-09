@@ -60,6 +60,7 @@ const launchRequestSchema = z.strictObject({
   projectId: idSchema,
   taskRef: taskRefSchema.nullable().optional(),
   useTranscript: z.boolean().optional(),
+  rememberTranscript: z.boolean().optional(),
   purpose: z.enum(['refine', 'init']).optional(),
   profileId: idSchema,
   mode: z.enum(CLIENT_MODES),
@@ -97,6 +98,8 @@ export const ipcInput = {
   }),
   [IpcChannel.projectsOpenContextFolder]: z.strictObject({ id: idSchema }),
   [IpcChannel.projectsContext]: z.strictObject({ id: idSchema }),
+  [IpcChannel.projectsProgress]: z.strictObject({ id: idSchema }),
+  [IpcChannel.projectsSetTranscriptConsent]: z.strictObject({ id: idSchema, consent: z.enum(['never', 'ask', 'same-provider']) }),
   [IpcChannel.projectsDetectContext]: z.strictObject({ id: idSchema, apply: z.boolean() }),
   [IpcChannel.projectsScanFolder]: z.strictObject({ path: pathSchema, projectId: idSchema.optional() }),
   [IpcChannel.projectsCreateContext]: z.strictObject({ id: idSchema, location: z.enum(CONTEXT_LOCATIONS), customPath: pathSchema.optional(), language: z.enum(CONTEXT_LANGUAGES) }),
@@ -150,6 +153,9 @@ export const ipcInput = {
   [IpcChannel.toolsSetAutoInstall]: z.strictObject({ profileId: idSchema, on: z.boolean() }),
   [IpcChannel.toolsAddSkill]: z.strictObject({ path: pathSchema }),
   [IpcChannel.toolsRemoveSkill]: z.strictObject({ name: skillNameSchema }),
+  [IpcChannel.toolsSkillDetail]: z.strictObject({ name: skillNameSchema }),
+  [IpcChannel.toolsAcknowledgeSkill]: z.strictObject({ name: skillNameSchema }),
+  [IpcChannel.toolsUpdateSkill]: z.strictObject({ name: skillNameSchema }),
   [IpcChannel.mcpInfo]: noInput,
   [IpcChannel.mcpProbe]: z.strictObject({ profileId: idSchema }),
   [IpcChannel.mcpLog]: noInput,
@@ -253,6 +259,8 @@ export interface ProfileDto {
   cliConfigRoot: string | null;
   desktopDataDir: string | null;
   createdAt: string;
+  // ADR-024 item 7: how the account was opened last; its main button opens it that way.
+  preferredMode: ClientModeDto;
 }
 
 export interface MachineAccountDto {
@@ -363,8 +371,22 @@ export interface LaunchPreviewDto {
     otherProvider: boolean;
     checkpointAt: string;
   } | null;
+  // ADR-024 item 4: the project lets a new agent read it, so the prompt already asks for it.
+  transcriptAutomatic: boolean;
   // The account opens without these, as it does not install its tools by itself (ADR-020 item 1).
   missingTools: { skills: string[]; mcp: boolean } | null;
+}
+
+export type TranscriptConsentDto = 'never' | 'ask' | 'same-provider';
+
+// ADR-024 item 1: whether the work has been saved for another account to continue.
+export interface ProjectProgressDto {
+  state: 'saved' | 'unsaved' | 'none';
+  checkpoint: { at: string; author: string | null; taskRef: string | null; taskTitle: string | null } | null;
+  session: { profileId: string; account: MessageDto; provider: ProviderDto; at: string } | null;
+  sessionAfter: boolean;
+  commitAfter: string | null;
+  transcriptConsent: TranscriptConsentDto;
 }
 
 // Opening an account on its own has no project to ask permission for.
@@ -441,6 +463,25 @@ export interface ToolSkillDto {
   kind: 'builtin' | 'custom';
   description: string | null;
   sourcePath: string | null;
+  // A builtin skill an app update changed, until the user has looked (ADR-026 item 7).
+  updated: boolean;
+  // A custom skill against the folder it came from (ADR-026 item 8); null for builtin skills.
+  source: 'same' | 'changed' | 'missing' | null;
+}
+
+export interface SkillFileDto {
+  path: string;
+  // Null for a large or binary file.
+  text: string | null;
+}
+
+export interface SkillDetailDto {
+  name: string;
+  kind: 'builtin' | 'custom';
+  files: SkillFileDto[];
+  // What to compare with: the copy before an app update, or the custom skill's own folder.
+  compare: { kind: 'previous' | 'source'; files: SkillFileDto[] } | null;
+  installedIn: MessageDto[];
 }
 
 export interface AgentToolsDto {
@@ -491,6 +532,8 @@ export interface IpcOutput {
   [IpcChannel.projectsUpdateContext]: ProjectDto;
   [IpcChannel.projectsOpenContextFolder]: null;
   [IpcChannel.projectsContext]: ProjectContextDto;
+  [IpcChannel.projectsProgress]: ProjectProgressDto;
+  [IpcChannel.projectsSetTranscriptConsent]: ProjectProgressDto;
   [IpcChannel.projectsDetectContext]: DetectedContextDto;
   [IpcChannel.projectsScanFolder]: FolderScanDto;
   [IpcChannel.projectsCreateContext]: ProjectDto;
@@ -532,6 +575,9 @@ export interface IpcOutput {
   [IpcChannel.toolsSetAutoInstall]: AccountToolsDto;
   [IpcChannel.toolsAddSkill]: AgentToolsDto;
   [IpcChannel.toolsRemoveSkill]: AgentToolsDto;
+  [IpcChannel.toolsSkillDetail]: SkillDetailDto;
+  [IpcChannel.toolsAcknowledgeSkill]: AgentToolsDto;
+  [IpcChannel.toolsUpdateSkill]: AgentToolsDto;
   [IpcChannel.mcpInfo]: McpServerDto;
   [IpcChannel.mcpProbe]: McpProbeDto;
   [IpcChannel.mcpLog]: McpLogDto;
@@ -570,6 +616,8 @@ export interface AgentHubApi {
   updateProjectContext(input: IpcInput<typeof IpcChannel.projectsUpdateContext>): Reply<typeof IpcChannel.projectsUpdateContext>;
   openContextFolder(input: IpcInput<typeof IpcChannel.projectsOpenContextFolder>): Reply<typeof IpcChannel.projectsOpenContextFolder>;
   getProjectContext(input: IpcInput<typeof IpcChannel.projectsContext>): Reply<typeof IpcChannel.projectsContext>;
+  getProjectProgress(input: IpcInput<typeof IpcChannel.projectsProgress>): Reply<typeof IpcChannel.projectsProgress>;
+  setTranscriptConsent(input: IpcInput<typeof IpcChannel.projectsSetTranscriptConsent>): Reply<typeof IpcChannel.projectsSetTranscriptConsent>;
   detectProjectContext(input: IpcInput<typeof IpcChannel.projectsDetectContext>): Reply<typeof IpcChannel.projectsDetectContext>;
   scanFolder(input: IpcInput<typeof IpcChannel.projectsScanFolder>): Reply<typeof IpcChannel.projectsScanFolder>;
   createProjectContext(input: IpcInput<typeof IpcChannel.projectsCreateContext>): Reply<typeof IpcChannel.projectsCreateContext>;
@@ -611,6 +659,9 @@ export interface AgentHubApi {
   setToolsAutoInstall(input: IpcInput<typeof IpcChannel.toolsSetAutoInstall>): Reply<typeof IpcChannel.toolsSetAutoInstall>;
   addSkill(input: IpcInput<typeof IpcChannel.toolsAddSkill>): Reply<typeof IpcChannel.toolsAddSkill>;
   removeSkill(input: IpcInput<typeof IpcChannel.toolsRemoveSkill>): Reply<typeof IpcChannel.toolsRemoveSkill>;
+  getSkill(input: IpcInput<typeof IpcChannel.toolsSkillDetail>): Reply<typeof IpcChannel.toolsSkillDetail>;
+  acknowledgeSkill(input: IpcInput<typeof IpcChannel.toolsAcknowledgeSkill>): Reply<typeof IpcChannel.toolsAcknowledgeSkill>;
+  updateSkill(input: IpcInput<typeof IpcChannel.toolsUpdateSkill>): Reply<typeof IpcChannel.toolsUpdateSkill>;
   getMcpServer(): Reply<typeof IpcChannel.mcpInfo>;
   probeMcpServer(input: IpcInput<typeof IpcChannel.mcpProbe>): Reply<typeof IpcChannel.mcpProbe>;
   readMcpLog(): Reply<typeof IpcChannel.mcpLog>;

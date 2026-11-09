@@ -1,6 +1,6 @@
-import type { ContextLanguageDto, ProjectDto, UiLanguageDto } from '@agenthub/contracts';
+import type { ContextLanguageDto, ProjectDto, TranscriptConsentDto, UiLanguageDto } from '@agenthub/contracts';
 import { LANGUAGE_LABELS, LOCALES } from '@agenthub/i18n';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, unwrap } from './api';
 import { useI18n } from './i18n';
 import { Dialog, PathText, Segmented } from './ui';
@@ -24,6 +24,24 @@ export function ProjectSettings({ project, onChanged, onCreateDocs, onError }: P
   const [asking, setAsking] = useState<{ customPath: string | null; files: number }>();
   const [result, setResult] = useState<string>();
   const [name, setName] = useState(project.name);
+  // ADR-024 item 4: whether a new agent may read an earlier session's transcript of this project.
+  const [consent, setConsent] = useState<TranscriptConsentDto>();
+
+  useEffect(() => {
+    unwrap(api.getProjectProgress({ id: project.id })).then(
+      (progress) => setConsent(progress.transcriptConsent),
+      () => undefined,
+    );
+  }, [project.id]);
+
+  async function changeConsent(value: TranscriptConsentDto): Promise<void> {
+    onError(undefined);
+    try {
+      setConsent((await unwrap(api.setTranscriptConsent({ id: project.id, consent: value }))).transcriptConsent);
+    } catch (reason) {
+      onError((reason as Error).message);
+    }
+  }
 
   // Every change of place goes through here: Main asks back when the old folder has files.
   async function changePlace(customPath: string | null, move: 'ask' | 'move' | 'leave' = 'ask'): Promise<void> {
@@ -137,6 +155,24 @@ export function ProjectSettings({ project, onChanged, onCreateDocs, onError }: P
           onChange={(value) => void update({ chatLanguage: value === 'app' ? null : value })}
         />
       </div>
+      {consent && (
+        <div className="settings-row">
+          <div className="grow settings-row-text">
+            <span className="settings-row-label">{t('project.settings.transcript')}</span>
+            <span className="hint">{t('project.settings.transcriptHint')}</span>
+          </div>
+          <Segmented
+            label={t('project.settings.transcript')}
+            value={consent}
+            options={[
+              { value: 'never', label: t('project.settings.transcript.never') },
+              { value: 'ask', label: t('project.settings.transcript.ask') },
+              { value: 'same-provider', label: t('project.settings.transcript.same') },
+            ]}
+            onChange={(value) => void changeConsent(value)}
+          />
+        </div>
+      )}
     </section>
     <section className="settings-group" aria-label={t('settings.docs.region')}>
       <div className="settings-group-header">

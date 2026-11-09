@@ -7,17 +7,19 @@ import type {
   TaskSectionKindDto,
   TaskStateDto,
   TaskViewDto,
+  UsageDto,
 } from '@agenthub/contracts';
 import { TASK_STATES } from '@agenthub/contracts/constants';
 import { LOCALES, type MessageKey, TABLES } from '@agenthub/i18n';
-import { type DragEvent, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { api, unwrap } from './api';
 import { useExternalChange } from './documentWatch';
 import { useI18n } from './i18n';
 import { ChevronDown, ChevronRight, Close, More, Plus } from './icons';
 import { Markdown } from './Markdown';
 import { PasteHandoff } from './ProjectHandoffs';
-import { ProjectLaunch } from './ProjectLaunch';
+import { defaultAccount } from './accounts';
+import { type LaunchRequestView, ProjectLaunch } from './ProjectLaunch';
 import { Dialog, Menu, MenuItem, PathText, Segmented, Select, StatusText, type StatusTone } from './ui';
 
 type I18n = ReturnType<typeof useI18n>;
@@ -38,26 +40,32 @@ export const STATE_LABELS: Record<TaskStateDto, MessageKey> = {
   todo: 'tasks.state.todo',
   active: 'tasks.state.active',
   blocked: 'tasks.state.blocked',
+  review: 'tasks.state.review',
   done: 'tasks.state.done',
 };
 
-export const STATE_TONES: Record<TaskStateDto, StatusTone> = { active: 'active', blocked: 'warning', todo: 'neutral', done: 'ok' };
+export const STATE_TONES: Record<TaskStateDto, StatusTone> = { active: 'active', blocked: 'warning', review: 'info', todo: 'neutral', done: 'ok' };
 
-// ADR-023 item 5: what needs attention first, as in Linear and GitHub Projects.
-const GROUP_ORDER: readonly TaskStateDto[] = ['active', 'blocked', 'todo', 'done'];
+// The list puts what needs attention first, as in Linear and GitHub Projects; the board follows
+// the workflow from left to right (TASK_STATES order), as a kanban does.
+const LIST_ORDER: readonly TaskStateDto[] = ['active', 'blocked', 'review', 'todo', 'done'];
+const BOARD_ORDER: readonly TaskStateDto[] = TASK_STATES;
 
-// The four words AgentHub writes, in any documents language: only other words need a note.
-const STANDARD_WORDS = new Set(LOCALES.flatMap((locale) => TASK_STATES.map((state) => TABLES[locale][STATE_LABELS[state]].toLowerCase())));
+// The words AgentHub writes, in any documents language: only other words need a note. "Chờ" was
+// the Vietnamese "To do" before review became a state of its own.
+const STANDARD_WORDS = new Set([...LOCALES.flatMap((locale) => TASK_STATES.map((state) => TABLES[locale][STATE_LABELS[state]].toLowerCase())), 'chờ']);
 
 // The same grouping as Main's (ADR-021 item 4), for the list before a task is opened.
 const word = (alternatives: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}])(?:${alternatives})(?![\\p{L}\\p{N}])`, 'iu');
 const DONE = word('done|xong|complete|completed|hoàn thành|closed|cancell?ed|huỷ|hủy|archived|완료|종료');
 const BLOCKED = word('blocked|blocker|on hold|bị chặn|chặn|tạm dừng|막힘|보류|차단');
+const REVIEW = word('in[ -]review|review|reviewing|needs review|chờ duyệt|duyệt|đang review|chờ review|검토 중|검토|리뷰');
 const ACTIVE = word('in[ -]progress|doing|active|wip|đang làm|đang|진행 중|진행');
 export function groupOf(state: string | null): TaskStateDto {
   if (!state) return 'todo';
   if (DONE.test(state)) return 'done';
   if (BLOCKED.test(state)) return 'blocked';
+  if (REVIEW.test(state)) return 'review';
   if (ACTIVE.test(state)) return 'active';
   return 'todo';
 }
@@ -81,6 +89,7 @@ interface Props {
   onShowFile: (path: string) => void;
   onError: (message: string | undefined) => void;
   accounts: ProfileDto[] | undefined;
+  usages: Record<string, UsageDto>;
   history: LaunchAttemptDto[];
   onOpenSettings: () => void;
   onOpenTools: () => void;
@@ -89,6 +98,19 @@ interface Props {
 
 type View = 'list' | 'board';
 const VIEW_KEY = 'agenthub.tasks.view';
+const PANEL_WIDTH_KEY = 'agenthub.tasks.panelWidth';
+const PANEL_MIN_WIDTH = 320;
+// The list or board keeps at least this much room beside the panel.
+const MAIN_MIN_WIDTH = 280;
+
+function readPanelWidth(): number | null {
+  try {
+    const stored = Number(localStorage.getItem(PANEL_WIDTH_KEY));
+    return Number.isFinite(stored) && stored >= PANEL_MIN_WIDTH ? stored : null;
+  } catch {
+    return null;
+  }
+}
 
 function readView(): View {
   try {
@@ -112,6 +134,16 @@ export function ProjectTasks(props: Props) {
   const [creatingWorkstream, setCreatingWorkstream] = useState(false);
   const [launchFor, setLaunchFor] = useState<{ ref: string; purpose: 'resume' | 'refine' } | null>(null);
   const [collapsed, setCollapsed] = useState<Set<TaskStateDto>>(() => new Set(['done']));
+  const [panelWidth, setPanelWidth] = useState<number | null>(readPanelWidth);
+
+  useEffect(() => {
+    try {
+      if (panelWidth === null) localStorage.removeItem(PANEL_WIDTH_KEY);
+      else localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth));
+    } catch {
+      // Only a convenience.
+    }
+  }, [panelWidth]);
 
   useEffect(() => {
     try {
@@ -220,7 +252,7 @@ export function ProjectTasks(props: Props) {
 
         {tasks.length > 0 && view === 'list' && (
           <div className="tasks-scroll" aria-label={t('tasks.region')} role="region">
-            {GROUP_ORDER.map((group) => {
+            {LIST_ORDER.map((group) => {
               const items = byGroup(group);
               const isCollapsed = collapsed.has(group);
               return (
@@ -251,7 +283,7 @@ export function ProjectTasks(props: Props) {
 
         {tasks.length > 0 && view === 'board' && (
           <div className="task-board" role="region" aria-label={t('tasks.region')}>
-            {GROUP_ORDER.map((group) => (
+            {BOARD_ORDER.map((group) => (
               <BoardColumn key={group} group={group} tasks={byGroup(group)} open={open} titles={titles} onOpen={setViewing} onDrop={(ref) => void move(ref, group)} />
             ))}
           </div>
@@ -269,6 +301,8 @@ export function ProjectTasks(props: Props) {
           launch={launchFor?.ref === open ? launchFor.purpose : null}
           onLaunch={(purpose) => setLaunchFor(purpose ? { ref: open, purpose } : null)}
           onClose={() => setViewing(null)}
+          panelWidth={panelWidth}
+          onPanelWidth={setPanelWidth}
         />
       )}
 
@@ -302,7 +336,7 @@ export function ProjectTasks(props: Props) {
   );
 }
 
-// --- The board: four columns, a card moves to another state when dropped there ---
+// --- The board: one column per state, a card moves to another state when dropped there ---
 
 const DRAG_TYPE = 'application/x-agenthub-task';
 
@@ -383,6 +417,8 @@ interface DetailProps extends Props {
   branch: string | null;
   launch: 'resume' | 'refine' | null;
   onLaunch: (purpose: 'resume' | 'refine' | null) => void;
+  panelWidth: number | null;
+  onPanelWidth: (width: number | null) => void;
   onClose: () => void;
 }
 
@@ -434,7 +470,9 @@ type Editing = { kind: 'section'; id: number } | { kind: 'add'; section: Editabl
 
 function TaskDetail(props: DetailProps) {
   const { project, taskRef, task: listed, workstreamTitle, branch, active, selected, onSelect, onReload, onShowFile, onError, launch, onLaunch, onClose } = props;
-  const { accounts, history, onOpenSettings, onOpenTools, onLaunched } = props;
+  const { accounts, usages, history, onOpenSettings, onOpenTools, onLaunched, panelWidth, onPanelWidth } = props;
+  // ADR-024 item 10: "Continue this task" opens the project's usual account right away.
+  const [resumeRequest, setResumeRequest] = useState<LaunchRequestView | null>(null);
   const i18n = useI18n();
   const { t } = i18n;
   const [task, setTask] = useState<TaskViewDto>();
@@ -466,7 +504,44 @@ function TaskDetail(props: DetailProps) {
     }
   }, [changed, editing]);
 
-  if (!task) return <aside className="task-panel" aria-label={t('tasks.detail')} />;
+  // Dragging the left edge sets the width, kept for the next task and the next launch.
+  function startResize(event: ReactPointerEvent<HTMLDivElement>): void {
+    event.preventDefault();
+    const aside = event.currentTarget.parentElement;
+    const page = aside?.parentElement;
+    if (!aside || !page) return;
+    const startX = event.clientX;
+    const startWidth = aside.getBoundingClientRect().width;
+    const max = Math.max(PANEL_MIN_WIDTH, page.clientWidth - MAIN_MIN_WIDTH);
+    const move = (moved: PointerEvent): void => onPanelWidth(Math.round(Math.min(max, Math.max(PANEL_MIN_WIDTH, startWidth + startX - moved.clientX))));
+    const stop = (): void => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      document.body.style.removeProperty('cursor');
+      document.body.style.removeProperty('user-select');
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+  }
+
+  const panel = (children?: ReactNode) => (
+    <aside className="task-panel" aria-label={t('tasks.detail')} style={panelWidth ? ({ '--task-panel-width': `${panelWidth}px` } as CSSProperties) : undefined}>
+      <div
+        className="task-panel-resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t('documents.resize')}
+        title={t('documents.resize')}
+        onPointerDown={startResize}
+        onDoubleClick={() => onPanelWidth(null)}
+      />
+      {children}
+    </aside>
+  );
+
+  if (!task) return panel();
   const sections = task.document.sections;
 
   async function run(action: () => Promise<TaskViewDto>): Promise<void> {
@@ -516,7 +591,11 @@ function TaskDetail(props: DetailProps) {
       return;
     }
     // The overview's launch follows the task the user works on (ADR-023 item 5).
-    if (purpose === 'resume') onSelect(taskRef);
+    if (purpose === 'resume') {
+      onSelect(taskRef);
+      const account = accounts ? defaultAccount(accounts, usages, history) : undefined;
+      setResumeRequest(account ? { profileId: account.id, mode: account.preferredMode, useTranscript: false, at: Date.now() } : null);
+    } else setResumeRequest(null);
     onLaunch(purpose);
   }
 
@@ -582,8 +661,8 @@ function TaskDetail(props: DetailProps) {
     );
   }
 
-  return (
-    <aside className="task-panel" aria-label={t('tasks.detail')}>
+  return panel(
+    <>
       <div className="task-panel-head">
         <span className="task-id">{task.id}</span>
         <span className="grow" />
@@ -667,8 +746,11 @@ function TaskDetail(props: DetailProps) {
             <ProjectLaunch
               project={project}
               taskRef={taskRef}
+              taskTitle={task.document.title || task.id}
               {...(launch === 'refine' ? { purpose: 'refine' as const } : {})}
               accounts={accounts}
+              usages={usages}
+              request={launch === 'resume' ? resumeRequest : null}
               history={history}
               onOpenSettings={onOpenSettings}
               onOpenTools={onOpenTools}
@@ -791,7 +873,7 @@ function TaskDetail(props: DetailProps) {
           </>
         )}
       </div>
-    </aside>
+    </>,
   );
 }
 

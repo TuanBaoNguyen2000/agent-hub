@@ -172,21 +172,23 @@ export function newTaskDocument(input: { id: string; title: string; goal: string
   ].join('\n');
 }
 
-// --- Task states (ADR-021 item 4): four fixed values, written in the documents' language. ---
+// --- Task states (ADR-021 item 4, review added 2026-11-09): five fixed values, written in the documents' language. ---
 
-export const TASK_STATES = ['todo', 'active', 'blocked', 'done'] as const;
+export const TASK_STATES = ['todo', 'active', 'blocked', 'review', 'done'] as const;
 export type TaskState = (typeof TASK_STATES)[number];
 
 export const STATE_WORDS: Record<ContextLanguage, Record<TaskState, string>> = {
-  en: { todo: 'To do', active: 'In progress', blocked: 'Blocked', done: 'Done' },
-  vi: { todo: 'Chờ', active: 'Đang làm', blocked: 'Bị chặn', done: 'Xong' },
-  ko: { todo: '대기', active: '진행 중', blocked: '막힘', done: '완료' },
+  en: { todo: 'To do', active: 'In progress', blocked: 'Blocked', review: 'In review', done: 'Done' },
+  vi: { todo: 'Cần làm', active: 'Đang làm', blocked: 'Bị chặn', review: 'Chờ duyệt', done: 'Xong' },
+  ko: { todo: '대기', active: '진행 중', blocked: '막힘', review: '검토 중', done: '완료' },
 };
 
 // Whole words only; \b would not see Vietnamese or Korean letters.
 const word = (alternatives: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}])(?:${alternatives})(?![\\p{L}\\p{N}])`, 'iu');
 const DONE = word('done|xong|complete|completed|hoàn thành|closed|cancell?ed|huỷ|hủy|archived|완료|종료');
 const BLOCKED = word('blocked|blocker|on hold|bị chặn|chặn|tạm dừng|막힘|보류|차단');
+// Before ACTIVE: "đang review" is a review, not work in progress.
+const REVIEW = word('in[ -]review|review|reviewing|needs review|chờ duyệt|duyệt|đang review|chờ review|검토 중|검토|리뷰');
 const ACTIVE = word('in[ -]progress|doing|active|wip|đang làm|đang|진행 중|진행');
 
 // The nearest of the four for whatever words an agent wrote; null when STATUS has no state.
@@ -194,6 +196,7 @@ export function stateGroup(state: string | null): TaskState | null {
   if (state === null || state.trim() === '') return null;
   if (DONE.test(state)) return 'done';
   if (BLOCKED.test(state)) return 'blocked';
+  if (REVIEW.test(state)) return 'review';
   if (ACTIVE.test(state)) return 'active';
   return 'todo';
 }
@@ -259,9 +262,16 @@ export const VERIFIED_LINES: Record<ContextLanguage, string> = {
 
 const pad = (value: number): string => String(value).padStart(2, '0');
 
-// A handoff entry with an absolute local time, in the shape the overview reads back.
+// "+0700" for the machine's offset at that moment, as `date +%z` prints it (ADR-026 item 4).
+export function utcOffset(at: Date): string {
+  const minutes = -at.getTimezoneOffset();
+  const sign = minutes < 0 ? '-' : '+';
+  return `${sign}${pad(Math.floor(Math.abs(minutes) / 60))}${pad(Math.abs(minutes) % 60)}`;
+}
+
+// A handoff entry with an absolute local time and its offset, in the shape the overview reads back.
 export function verifiedHandoff(at: Date, language: ContextLanguage): string {
-  const stamp = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  const stamp = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}${utcOffset(at)}`;
   return `### ${stamp} — AgentHub\n${VERIFIED_LINES[language]}`;
 }
 

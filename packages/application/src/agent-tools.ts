@@ -27,6 +27,35 @@ export interface SkillInstaller {
   addCopy(folder: string, name: string): void;
   removeCopy(name: string): void;
   describe(name: string): string | null;
+  // ADR-026 items 7, 8: what a skill holds, what changed in an update, and a user's skill against
+  // the folder it came from.
+  files(name: string): SkillFile[];
+  previousFiles(name: string): SkillFile[] | null;
+  updated(name: string): boolean;
+  acknowledge(name: string): void;
+  sourceState(name: string, folder: string): SkillSourceState;
+  sourceFiles(folder: string): SkillFile[];
+  updateCopy(folder: string, name: string): void;
+}
+
+// A file of a skill; text is null for a large or binary file.
+export interface SkillFile {
+  path: string;
+  text: string | null;
+}
+
+// 'missing': the folder a user's skill was added from is gone; AgentHub's copy still works.
+export type SkillSourceState = 'same' | 'changed' | 'missing';
+
+export interface SkillDetail {
+  name: string;
+  kind: 'builtin' | 'custom';
+  files: SkillFile[];
+  // Builtin: the copy before an app update, until the user has seen the change. Custom: the files
+  // in the folder it was added from, when they differ from AgentHub's copy.
+  compare: { kind: 'previous' | 'source'; files: SkillFile[] } | null;
+  // Accounts whose skill folder links to this skill.
+  installedIn: Message[];
 }
 
 // --- MCP: AgentHub's server registered under one name in each of the account's configs. ---
@@ -40,6 +69,10 @@ export interface ToolSkill {
   description: string | null;
   // Where a custom skill was added from; AgentHub uses its own copy, not this folder.
   sourcePath: string | null;
+  // A builtin skill an app update changed, until the user looks at it (ADR-026 item 7).
+  updated: boolean;
+  // A custom skill against its folder (ADR-026 item 8); null for builtin skills.
+  source: SkillSourceState | null;
 }
 
 export interface AccountTools {
@@ -169,8 +202,17 @@ export function createAgentTools({ store, launcher, skills, mcpServer, cliOverri
       const custom = customSkills();
       return {
         skills: [
-          ...skills.builtin.map((name): ToolSkill => ({ name, kind: 'builtin', description: skills.describe(name), sourcePath: null })),
-          ...custom.map((skill): ToolSkill => ({ name: skill.name, kind: 'custom', description: skills.describe(skill.name), sourcePath: skill.sourcePath })),
+          ...skills.builtin.map((name): ToolSkill => ({ name, kind: 'builtin', description: skills.describe(name), sourcePath: null, updated: skills.updated(name), source: null })),
+          ...custom.map(
+            (skill): ToolSkill => ({
+              name: skill.name,
+              kind: 'custom',
+              description: skills.describe(skill.name),
+              sourcePath: skill.sourcePath,
+              updated: false,
+              source: skills.sourceState(skill.name, skill.sourcePath),
+            }),
+          ),
         ],
         accounts: await Promise.all(store.profiles.list().map(accountTools)),
         leaked: leaked(),
@@ -214,7 +256,38 @@ export function createAgentTools({ store, launcher, skills, mcpServer, cliOverri
       if (allNames().includes(manifest.name)) throw new DomainError('SKILL_EXISTS', 'tools.skillTaken', { name: manifest.name });
       skills.addCopy(folder, manifest.name);
       store.skills.insert({ id: newId(), name: manifest.name, sourcePath: folder, addedAt: now() });
-      return { name: manifest.name, kind: 'custom', description: manifest.description, sourcePath: folder };
+      return { name: manifest.name, kind: 'custom', description: manifest.description, sourcePath: folder, updated: false, source: 'same' };
+    },
+
+    skillDetail(name: string): SkillDetail {
+      const custom = customSkills().find((skill) => skill.name === name);
+      if (!custom && !skills.builtin.includes(name)) throw new DomainError('NOT_FOUND', 'tools.noSkill', { name });
+      let compare: SkillDetail['compare'] = null;
+      if (custom) {
+        if (skills.sourceState(name, custom.sourcePath) === 'changed') compare = { kind: 'source', files: skills.sourceFiles(custom.sourcePath) };
+      } else {
+        const before = skills.previousFiles(name);
+        if (before) compare = { kind: 'previous', files: before };
+      }
+      const installedIn = store.profiles
+        .list()
+        .filter((profile) => skills.inspect(launcher.skillsDirectory(profile), [name])[name] === 'installed')
+        .map(accountName);
+      return { name, kind: custom ? 'custom' : 'builtin', files: skills.files(name), compare, installedIn };
+    },
+
+    // The user has looked at what an app update changed in a builtin skill.
+    acknowledgeSkill(name: string): void {
+      if (skills.builtin.includes(name)) skills.acknowledge(name);
+    },
+
+    // Copies a user's skill again from its folder, checked as when it was added; the folder name
+    // is the skill name, so the name cannot change under it.
+    updateSkill(name: string): void {
+      const custom = customSkills().find((skill) => skill.name === name);
+      if (!custom) throw new DomainError('NOT_FOUND', 'tools.noCustomSkill', { name });
+      readSkill(custom.sourcePath);
+      skills.updateCopy(custom.sourcePath, name);
     },
 
     // Unlinks it from every account first, so no account is left with a broken link.

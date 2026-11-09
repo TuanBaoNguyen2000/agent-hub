@@ -179,6 +179,16 @@ describe('parsing the documents', () => {
     expect(handoffTime('yesterday')).toBeNull();
   });
 
+  it('reads the UTC offset of newer entries exactly, and older entries as local time (ADR-026)', () => {
+    expect(handoffTime('2026-11-09 17:40+0700 — Claude B / Claude Code')).toBe('2026-11-09T10:40:00.000Z');
+    expect(handoffTime('2026-11-09 17:40+07:00 — B')).toBe('2026-11-09T10:40:00.000Z');
+    expect(handoffTime('2026-11-09 05:10 -05:30 — B')).toBe('2026-11-09T10:40:00.000Z');
+    expect(handoffTime('2026-11-09T10:40:00Z — B')).toBe('2026-11-09T10:40:00.000Z');
+    expect(handoffTime('2026-11-09 17:40 — B')).toBe(new Date(2026, 10, 9, 17, 40).toISOString());
+    // A number after the time that is not an offset changes nothing.
+    expect(handoffTime('2026-11-09 17:40 -2 tasks')).toBe(new Date(2026, 10, 9, 17, 40).toISOString());
+  });
+
   it('only takes a heading inside the Handoff log as a handoff', () => {
     expect(latestHandoff('# T\n### 2026-11-01 — not in the log\n## Handoff log\n\n## Notes\n### 2026-11-02')).toBeNull();
     expect(latestHandoff('# T\n## Handoff log\nfree text\n### 2026-11-03 — A')?.heading).toBe('2026-11-03 — A');
