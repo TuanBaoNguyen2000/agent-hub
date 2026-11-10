@@ -97,6 +97,25 @@ Từ đánh giá layout trong `references/document-layout.md` có hỏi "dùng �
 | H5 | **Repo đã có tài liệu: link, không chép** | Repo có `docs/STATUS.md`, ADR… thì `PROJECT_CONTEXT.md` trỏ tới chúng, `DECISIONS.md` chỉ ghi quyết định chưa có ở chỗ khác. Thêm vào `context-init` và layout | P1 |
 | H6 | **Tên thư mục workstream khác `Workstreams/`** | Cho phép (ví dụ `Playables/`) nhưng app và agent phải đọc `README.md` mới biết, dễ đọc sai. Hướng: AgentHub nhận diện theo cấu trúc (thư mục con có `STATUS.md` + `Tasks/`) thay vì theo tên, và test cho trường hợp đổi tên | P2 |
 
+## I. Kết quả thử trên `.app` với account thật (2026-11-10)
+
+Người dùng chạy [kịch bản thử](../testing/phase3-runbook.md) tới B1.2 trên `sandbox_shooter`.
+
+**Kết quả các bước:**
+- **Đạt:** chuyển account; A4.2 (cảnh báo branch `thu` khác `VN/playable001`); A4.3 ("Có việc chưa lưu", phiên Codex còn làm tới 14:11); B1.2 (`context-resume` tự tìm ra đủ năm chỗ lệch).
+- **Nhận xét chung:** phải chuyển qua lại giữa các cửa sổ quá nhiều. Người dùng chốt giữ màn quản lý Task, còn lời nhắc và việc giữ context thì đơn giản hoá bằng skill và MCP: [ADR-028](../decisions/028-resume-with-one-sentence.md) (Accepted 2026-11-10). Góp ý thêm: cần chọn được giữa câu ngắn và lệnh gọi skill, biết khi account thiếu skill (bổ sung vào ADR-028 mục 7); MCP và skill nằm sâu trong Cài đặt, màn bốn account rối: [ADR-029](../decisions/029-agent-tools-as-main-area.md) (Accepted 2026-11-10).
+
+**Lỗi giao diện còn sửa**, vì màn Task được giữ:
+
+| ID | Việc | Chi tiết | Ưu tiên |
+|---|---|---|---|
+| I1 | **Xoá task và workstream** | Chưa có. Xoá task: bỏ file và dòng trong `STATUS.md`. Xoá workstream: cả thư mục. Cả hai có hỏi xác nhận, chuyển vào Thùng rác thay vì xoá hẳn. **Số đã cấp không dùng lại**, kể cả khi xoá task số lớn nhất. Đây là trả lời câu hỏi của người dùng: không đổi TASK-010 về TASK-009 sau khi xoá `TASK-009-copy`, vì lịch sử Git và handoff đã nhắc tới số đó với nghĩa khác | P1 |
+| I2 | **Panel Tài liệu vỡ khi hẹp** (ảnh 1) | Cây file và vùng xem file đè lên nhau. Cần độ rộng tối thiểu; khi hẹp thì xếp dọc hoặc ẩn cây file. Gần với F4, F5 | P1 |
+| I3 | **"Làm tiếp task này" trong panel task** (ảnh 2, 7) | Danh sách account bị nhét vào cột hẹp: chữ và thanh usage đè nhau, không có nút đóng. Cần dòng account co giãn được (usage xuống dòng dưới khi hẹp) và nút đóng hoặc Esc | P0 |
+| I4 | **"Có 1 cảnh báo ở các task. Xem ở tab Task"** (ảnh 3) | Mở tab Task nhưng không thấy cảnh báo nào, ở task nào. Cần nêu tên task ngay trong thẻ, và bấm vào thì mở đúng task, cuộn tới cảnh báo. Gần với F6 | P1 |
+| I5 | **Account Codex free không hiện usage** (ảnh 6) | Account này chỉ có hạn mức 30 ngày, loại `other`, mà `AccountRow` (`ProjectLaunch.tsx`) lọc bỏ `kind === 'other'`. Khi không có cửa sổ 5 giờ hay tuần thì hiện cửa sổ `other` | P1 |
+| I6 | **Thứ tự account trông như ngẫu nhiên** | `orderAccounts` xếp theo phần trăm còn lại (B3, đã duyệt), nên usage đổi là thứ tự đổi theo. Đề xuất: thứ tự cố định như ở sidebar, đánh dấu account được gợi ý. **Chờ người dùng chọn**, vì sẽ đổi B3 | P2 |
+
 ## G. Để sau (chưa lên kế hoạch)
 
 - **Resume phiên CLI ở account khác** bằng cách dùng chung thư mục `projects/` giữa các account (cách Orca làm). SPIKE-01 và SPIKE-08 ghi rằng resume chéo account bị từ chối, nhưng đó là khi thư mục session tách riêng. Cần spike mới, và phải hỏi trước khi đụng cấu hình account chính.
@@ -112,6 +131,8 @@ Từ đánh giá layout trong `references/document-layout.md` có hỏi "dùng �
 | ADR-024 — Luồng chuyển việc và trạng thái tiến độ | B1–B4, B8, D4, F1, F2, E4; sửa ADR-019 (chuyển ngữ cảnh), ADR-020 mục 1, ADR-023 mục 5 và 9 | Không | 1 |
 | ADR-025 — Hook, file chỉ dẫn cấp account và trạng thái agent | B5–B7, C1–C4 | S1–S3 | 2, sau spike |
 | ADR-026 — Cấu trúc và quản lý skill | D1–D3, D5–D6, E1–E3 | Không | Song song với ADR-024 |
+| ADR-028 — Làm tiếp bằng một câu ngắn | Tool `context_here`, `context_task`; định tuyến câu ngắn; lời nhắc ngắn; phần skill của B7 | Không (kiểm chứng baseline trước) | Sau kết quả thử 2026-11-10 (mục I) |
+| ADR-029 — Công cụ agent thành mục chính | Dòng ở thanh bên, trang tổng quan, trang account, Lệnh nhanh; Cài đặt còn ba tab | Không | Cùng đợt với ADR-028 |
 
 F3–F7 không đổi quyết định kiến trúc. Chỗ nào chạm ADR-023 thì ghi trong ADR-024; còn lại ghi vào STATUS khi làm.
 

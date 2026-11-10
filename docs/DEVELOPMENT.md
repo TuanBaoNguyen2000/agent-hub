@@ -96,6 +96,7 @@ Thử bản đóng gói bằng double-click trong Finder. Nếu mở bằng `ope
 - Provider/platform behavior cần evidence trên OS và exact version liên quan; mock test không thay thế native smoke test.
 - Tách `reported`, `observed` và `verified`. Git diff không chứng minh tính năng đúng; một lần mở app không chứng minh account đã đổi.
 - Báo rõ test chưa chạy, giới hạn môi trường và phần cần người dùng thao tác; không đánh dấu pass khi thiếu evidence.
+- Thử trên `.app` thật bằng bộ project thử ở [testing/sandbox-projects.md](testing/sandbox-projects.md), không bằng project đang làm của người dùng; tài liệu đó có cách tự kiểm tra logic nhận tài liệu không cần mở app và cách hướng dẫn người dùng thử.
 
 ## Bàn giao
 

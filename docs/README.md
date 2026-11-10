@@ -22,6 +22,7 @@ Tài liệu hiện viết bằng tiếng Việt, giữ tên file và thuật ng�
 | Tiến độ thực tế, blocker và bàn giao hiện tại | STATUS.md |
 | Quy tắc phát triển và package dependencies | DEVELOPMENT.md |
 | Capability đã kiểm thử theo OS/provider/version | feasibility.md; evidence trong `spikes/<spike-name>/evidence/` |
+| Danh sách thử của người dùng và bộ project thử trên `.app` | `testing/` ([sandbox-projects.md](testing/sandbox-projects.md)) |
 | Hướng dẫn cục bộ của app/package | README trong thư mục tương ứng |
 | Đánh giá công cụ bên ngoài (tham khảo, không phải quyết định) | `research/` |
 

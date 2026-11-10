@@ -201,6 +201,18 @@ describe('parsing the documents', () => {
     expect(statusBranch('no branch here')).toBeNull();
   });
 
+  it('finds a branch written without a colon, as documents made before AgentHub do', () => {
+    expect(statusBranch('# STATUS\n\nLast updated: 2026-11-09 · Branch `VN/playable005` · Scene `Scene/P005.unity`')).toBe('VN/playable005');
+    expect(statusBranch('- **Branch** `feature/x-1`')).toBe('feature/x-1');
+    expect(statusBranch('Branch `main`')).toBe('main');
+    // The colon form still wins when both are there.
+    expect(statusBranch('· Branch `old`\nBranch: `new`')).toBe('new');
+    // Prose about a branch is not the branch.
+    expect(statusBranch('Then it was merged into branch `main`.')).toBeNull();
+    expect(statusBranch('Planned branch `VN/playable002` (not created yet)')).toBeNull();
+    expect(statusBranch('· Branch VN/x without backticks')).toBeNull();
+  });
+
   it('ignores the separator row of a table', () => {
     expect([...taskStates('| Task | State |\n|---|---|\n| TASK-7 | blocked |')]).toEqual([['TASK-7', 'blocked']]);
   });

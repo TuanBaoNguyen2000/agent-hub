@@ -4,6 +4,8 @@
 **Date:** 2026-11-09  
 **Decision source:** Người dùng hỏi về cấu trúc skill theo chuẩn Agent Skills (`SKILL.md` bắt buộc, `scripts/`, `references/`, `assets/` tuỳ chọn), về việc chưa có cơ chế xem và sửa skill, và đồng ý danh sách việc cùng câu trả lời Q1–Q4 (2026-11-09). Người dùng đồng ý lọc transcript theo thời gian, bỏ thân kết quả tool, cho agent lọc bằng lệnh (2026-11-09). ADR này gồm các mục D1–D5, E1, E2 của [danh sách việc](../plans/2026-11-09-context-flow-backlog.md). Sửa đổi [ADR-019](019-agent-maintained-context.md) mục 5 và [ADR-020](020-phase3-review-changes.md) mục 1 (skill riêng).
 
+> **Sửa đổi:** [ADR-028](028-resume-with-one-sentence.md) (2026-11-10) sửa mục 9: lời nhắc mở phiên dùng câu ngắn khi account có đủ skill và MCP; tên skill chỉ giữ ở lời nhắc dự phòng.
+
 ## Context
 
 - Bốn skill `context-*` ở `apps/desktop/skills/` chỉ có `SKILL.md` (28–52 dòng). Nhiều phần bị chép lại:

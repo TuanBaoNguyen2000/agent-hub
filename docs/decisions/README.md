@@ -25,14 +25,16 @@ Giữ mã ADR ổn định; phân biệt quyết định đã chốt với lựa
 | ADR-017 | Git observation tối thiểu trong MVP | Accepted | [017-mvp-git-observations.md](017-mvp-git-observations.md) |
 | ADR-018 | Đăng nhập qua cửa sổ riêng tư, tên account theo email | Accepted for MVP (conditional) | [018-account-login-and-identity.md](018-account-login-and-identity.md) |
 | ADR-019 | Context do agent duy trì qua tài liệu, skill và MCP của AgentHub | Accepted for MVP (conditional, chờ spike); sửa đổi một phần bởi ADR-020, ADR-021 | [019-agent-maintained-context.md](019-agent-maintained-context.md) |
-| ADR-020 | Sửa Phase 3 theo đánh giá của người dùng | Accepted | [020-phase3-review-changes.md](020-phase3-review-changes.md) |
+| ADR-020 | Sửa Phase 3 theo đánh giá của người dùng | Accepted; mục 1 (chỗ đặt màn Công cụ agent) sửa đổi bởi ADR-029 | [020-phase3-review-changes.md](020-phase3-review-changes.md) |
 | ADR-021 | AgentHub quản lý tài liệu và task của project | Accepted | [021-task-and-document-management.md](021-task-and-document-management.md) |
-| ADR-022 | Bố cục cửa sổ theo kiểu Claude/Codex Desktop và IDE | Accepted | [022-desktop-shell-layout.md](022-desktop-shell-layout.md) |
+| ADR-022 | Bố cục cửa sổ theo kiểu Claude/Codex Desktop và IDE | Accepted; mục 2–3 sửa đổi bởi ADR-029 | [022-desktop-shell-layout.md](022-desktop-shell-layout.md) |
 | ADR-023 | Thêm project có hỏi tài liệu, màn Task theo trạng thái, panel Tài liệu | Accepted; mục 4 sửa đổi bởi ADR-027 | [023-project-setup-tasks-and-panels.md](023-project-setup-tasks-and-panels.md) |
 | ADR-024 | Chuyển việc một nút và trạng thái tiến độ | Accepted | [024-one-click-handoff-and-progress-state.md](024-one-click-handoff-and-progress-state.md) |
 | ADR-025 | Hook, file chỉ dẫn cấp account và trạng thái agent đang chạy | Open; chờ spike S1–S3 | [Danh sách việc 2026-11-09](../plans/2026-11-09-context-flow-backlog.md) mục A–C |
-| ADR-026 | Cấu trúc skill và quản lý skill trong AgentHub | Accepted | [026-skill-structure-and-management.md](026-skill-structure-and-management.md) |
+| ADR-026 | Cấu trúc skill và quản lý skill trong AgentHub | Accepted; mục 9 sửa đổi bởi ADR-028 | [026-skill-structure-and-management.md](026-skill-structure-and-management.md) |
 | ADR-027 | Số task không trùng, file task là nguồn trạng thái, dẫn link tài liệu có sẵn của repo | Accepted; sửa đổi ADR-023 mục 4 | [027-task-numbers-state-source-and-existing-docs.md](027-task-numbers-state-source-and-existing-docs.md) |
+| ADR-028 | Làm tiếp task bằng một câu ngắn trong cửa sổ chat bất kỳ (`context_here`, `context_task`, định tuyến câu ngắn, lời nhắc ngắn, checkpoint giữa chừng, Lệnh nhanh, báo thiếu skill) | Accepted 2026-11-10; sửa đổi ADR-026 mục 9 | [028-resume-with-one-sentence.md](028-resume-with-one-sentence.md) |
+| ADR-029 | Công cụ agent thành mục chính: dòng ở thanh bên, trang tổng quan mọi account, trang từng account, Cài đặt còn ba tab | Accepted 2026-11-10; sửa đổi ADR-020 mục 1, ADR-022 mục 2–3 | [029-agent-tools-as-main-area.md](029-agent-tools-as-main-area.md) |
 
 Kết quả capability cần evidence trong [feasibility.md](../feasibility.md), kể cả khi quyết định kiến trúc đã Accepted.
 

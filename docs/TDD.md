@@ -2,7 +2,7 @@
 
 > **Project:** AgentHub — Cross-platform AI Agent Workspace & Context Manager  
 > **Version:** 0.1.26 (ADR-023: thêm project có hỏi tài liệu, khung tài liệu, trạng thái task trong file, màn Task theo trạng thái, panel Tài liệu; ADR-020: sửa Phase 3 theo đánh giá, bước 1–4 đã triển khai; ADR-021: quản lý tài liệu và task; ADR-009, ADR-013–019: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP, login, context do agent duy trì; Phase 0 macOS exit review; Phase 1 và 2 trên macOS; FR-018 usage limit; Phase 3 đủ deliverables trên macOS, đang sửa theo đánh giá)  
-> **Updated:** 2026-11-09 (ADR-024, ADR-026, ADR-027 Accepted; ADR-025 Open)  
+> **Updated:** 2026-11-10 (ADR-028, ADR-029 Accepted, chưa triển khai; ADR-025 Open)  
 > **Status:** Draft for implementation review  
 > **Platforms:** macOS and Windows  
 > **Language:** Vietnamese (technical identifiers in English)  
@@ -653,6 +653,10 @@ Skill theo chuẩn Agent Skills (`SKILL.md`), dùng chung cho Claude và Codex. 
 - **Skill riêng:** chọn folder có `SKILL.md`; frontmatter phải có `name` (chữ thường, số, gạch nối đơn, tối đa 64 ký tự, trùng tên folder) và `description` (tối đa 1024 ký tự). Không trùng tên skill có sẵn hay skill riêng khác; không thêm từ `~/.agents/skills`. AgentHub copy vào `<userData>/skills/<name>` rồi symlink như skill có sẵn, nên folder gốc có thể đổi chỗ. Xoá khỏi AgentHub thì gỡ symlink ở mọi account rồi xoá bản copy; folder gốc giữ nguyên.
 - Bản chung của skill có sẵn được làm mới mỗi lần app khởi động (trước đây là mỗi lần mở account).
 
+**ADR-028 (Accepted 2026-11-10, chưa triển khai):** làm tiếp task bằng một câu ngắn trong cửa sổ chat bất kỳ. Tool MCP `context_here` khớp thư mục của phiên với project, trả task đang làm, cảnh báo cấu trúc và skill thiếu hoặc cũ của account; `context_task` tìm task theo số hoặc tên; `context_projects` trả thêm đường dẫn project. `INSTRUCTIONS` và mô tả skill định tuyến câu ngắn (vi, en, ko). `context-resume` đọc ít hơn khi đã biết task. Lời nhắc mở phiên là đúng câu ngắn khi account đủ skill và MCP. Checkpoint ngắn không cần nhắc. Bảng Lệnh nhanh: câu ngắn hoặc lệnh gọi skill (`/context-resume …`).
+
+**ADR-029 (Accepted 2026-11-10, chưa triển khai):** Công cụ agent ra khỏi Cài đặt: dòng ở thanh bên (chấm khi có account cần xử lý), trang tổng quan mọi account (một nút mỗi dòng, "Cài đủ cho tất cả", Thư viện skill, Chi tiết MCP, Lệnh nhanh), trang từng account (usage, skill, MCP, tự cài, Lệnh nhanh). Cài đặt còn tab Chung, Account, Nâng cao. Mô tả "Cài đặt → Công cụ agent" dưới đây là trạng thái trước ADR-029.
+
 **MCP server của AgentHub** cung cấp `context_projects`, `context_read`, `context_write` (ghi cả file kèm checksum bản đã đọc), `context_append_handoff`, `context_capture`. Server chỉ đụng vào thư mục tài liệu, không nhận đường dẫn tuỳ ý, và chỉ cho thấy project mà account đăng ký nó được phép dùng (FR-016). Server chạy được khi app AgentHub đóng. Đăng ký vào cấu hình MCP của từng account; với account chính phải hỏi người dùng trước.
 
 **Đã triển khai (2026-11-05), trừ `context_capture`** (để sang bước "Chat rời"):
@@ -703,7 +707,7 @@ Khi phiên cũ dừng trước checkpoint, với chat có folder (CLI, tab Code,
 - UI cảnh báo khi có thay đổi file hoặc commit mới hơn handoff gần nhất, khi branch lệch với `STATUS`, và khi task đang làm không có handoff trong thời gian dài; không tạo cảm giác an toàn giả.
 - Tạo chat mới không tự làm mới quota account; đổi account chỉ dùng account hợp lệ theo quy định provider.
 
-**Đã triển khai (2026-11-05):** trang project đọc lại tài liệu (task theo `<thư mục workstream>/*/Tasks/TASK-*.md`; thư mục workstream là `Workstreams/` hoặc mọi thư mục cấp một không ẩn có ít nhất một thư mục con chứa `STATUS.md` hoặc `Tasks/`, ví dụ `Playables/` (ADR-020 mục 4); `ref` của task là đường dẫn thật, trạng thái từ bảng trong `STATUS.md`, dòng `Branch:`, heading đầu tiên dưới "Handoff log" là handoff mới nhất, giờ ghi trong heading coi là giờ máy) và Git (§10.1), rồi cảnh báo: thay đổi chưa commit; branch khác với `STATUS`; task chưa xong có commit mới hơn handoff; task đang làm chưa có handoff hoặc handoff quá 7 ngày. Task có trạng thái kiểu "done", "xong" không bị cảnh báo. Cảnh báo không chặn việc mở. Đọc lại khi cửa sổ được focus và khi bấm "Tải lại".
+**Đã triển khai (2026-11-05):** trang project đọc lại tài liệu (task theo `<thư mục workstream>/*/Tasks/TASK-*.md`; thư mục workstream là `Workstreams/` hoặc mọi thư mục cấp một không ẩn có ít nhất một thư mục con chứa `STATUS.md` hoặc `Tasks/`, ví dụ `Playables/` (ADR-020 mục 4); `ref` của task là đường dẫn thật, trạng thái từ bảng trong `STATUS.md`, dòng `Branch:` (từ 2026-11-10 nhận cả `Branch \`<tên>\`` không dấu hai chấm khi đứng đầu dòng hoặc sau `·`), heading đầu tiên dưới "Handoff log" là handoff mới nhất, giờ ghi trong heading coi là giờ máy) và Git (§10.1), rồi cảnh báo: thay đổi chưa commit; branch khác với `STATUS`; task chưa xong có commit mới hơn handoff; task đang làm chưa có handoff hoặc handoff quá 7 ngày. Task có trạng thái kiểu "done", "xong" không bị cảnh báo. Cảnh báo không chặn việc mở. Đọc lại khi cửa sổ được focus và khi bấm "Tải lại".
 
 **Đã triển khai (ADR-024, 2026-11-09):** trạng thái tiến độ của project (Đã lưu, Có việc chưa lưu, Chưa có checkpoint) ở đầu Tổng quan và trong sidebar; nút "Chuyển sang account khác" có hai cách (lưu rồi chuyển, chuyển ngay kèm ghi bù bằng `context-recover`); đồng ý đọc transcript lưu theo project; danh sách account xếp theo usage; một nút mở cho mỗi account, bảng trước khi mở chỉ khi cần quyết định; nhắc khi một cửa sổ usage vượt 85%. Chi tiết ở mục Triển khai của ADR-024. Hook, file chỉ dẫn cấp account và trạng thái agent đang chạy chờ spike (ADR-025, Open).
 

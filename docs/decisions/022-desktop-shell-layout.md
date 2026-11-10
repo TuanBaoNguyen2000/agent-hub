@@ -4,6 +4,8 @@
 **Date:** 2026-11-06  
 **Decision source:** Người dùng đánh giá giao diện (2026-11-06): "muốn AgentHub có thiết kế UI tương tự Claude/Codex Desktop hay là các IDE": thanh bên ẩn/hiện được và có chuyển Project/Chat, Cài đặt là popup nhiều tab, khung bên phải là nơi làm việc chính, chữ hướng dẫn tự nhiên hơn. Sửa đổi bố cục của [ADR-020](020-phase3-review-changes.md) bước 1 (cột trái hai phần, Cài đặt là một trang).
 
+> **Sửa đổi:** [ADR-029](029-agent-tools-as-main-area.md) (2026-11-10) thêm dòng Công cụ agent và trang account vào thanh bên (mục 2); Cài đặt chỉ còn tab Chung, Account, Nâng cao (mục 3).
+
 ## Context
 
 - Sau ADR-020 bước 1, cột trái có hai phần cố định (Project, Ghi chú) và danh sách account; Cài đặt là một trang dài gồm Chung, Account, Công cụ agent, Nâng cao; trang project là một cột giữa rộng tối đa 880px với tiêu đề lớn và tab.

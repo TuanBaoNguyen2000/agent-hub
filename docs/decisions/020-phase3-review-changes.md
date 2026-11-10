@@ -4,6 +4,8 @@
 **Date:** 2026-11-05  
 **Decision source:** Người dùng thử `.app` của Phase 3 với hai project Unity thật (một project có `Docs/` riêng, một project có sẵn bộ `AgentContext/` trong repo), gửi đánh giá và trả lời bốn câu hỏi (2026-11-05). Sửa đổi một phần [ADR-019](019-agent-maintained-context.md).
 
+> **Sửa đổi:** mục 1 vẫn giữ chức năng, nhưng màn Công cụ agent chuyển từ Cài đặt ra vùng làm việc theo [ADR-029](029-agent-tools-as-main-area.md) (2026-11-10).
+
 ## Context
 
 Người dùng thử tới bước khởi tạo tài liệu (scenario 1 của TDD §9.4) và báo (reported):

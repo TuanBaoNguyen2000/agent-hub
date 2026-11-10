@@ -5,7 +5,7 @@ Exit criteria của Phase 3 (TDD §13): chạy được bảy scenario ở TDD �
 ## Chuẩn bị
 
 1. Thoát hẳn AgentHub (⌘Q), mở `apps/desktop/release/mac-arm64/AgentHub.app` bản mới nhất (`npm run package`).
-2. Chọn một project thử có folder là Git repo, và ít nhất hai account (ví dụ Claude ở cửa sổ riêng và Codex).
+2. Chọn một project thử có folder là Git repo, và ít nhất hai account (ví dụ Claude ở cửa sổ riêng và Codex). Dùng bộ project thử ở [sandbox-projects.md](sandbox-projects.md) (có bảng scenario → project và cách đưa về `baseline`); kịch bản từng bước, xếp từ không tốn token tới tốn nhiều, ở [phase3-runbook.md](phase3-runbook.md); project thật chỉ dùng để thử "Thêm project".
 3. Nếu có sự cố MCP, gửi kèm `~/Library/Application Support/AgentHub/logs/mcp.log`.
 
 ## Scenario

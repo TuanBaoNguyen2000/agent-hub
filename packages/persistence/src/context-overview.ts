@@ -123,8 +123,13 @@ export function workstreamTitle(heading: string | null): string | null {
   return title === '' || /^(?:STATUS|Trạng thái|상태)(?:\.md)?$/iu.test(title) ? null : title;
 }
 
+// Documents written before AgentHub often drop the colon ("Last updated: … · Branch `VN/x` · …").
+// Without it the name must be in backticks and "Branch" must start the line or follow a separator,
+// so prose such as "merged into branch `main`" is not taken for the branch.
+const BRANCH_NO_COLON = /(?:^[ \t]*(?:[-*+][ \t]+)?|[·•|][ \t]*)(?:\*\*|__)?Branch(?:\*\*|__)?[ \t]+`([\w./-]+)`/m;
+
 export function statusBranch(status: string): string | null {
-  const match = /\bBranch:(?:\*\*|__)?[ \t]*`?([\w./-]+?)`?(?=[\s,;)]|\.(?:\s|$)|$)/im.exec(status);
+  const match = /\bBranch:(?:\*\*|__)?[ \t]*`?([\w./-]+?)`?(?=[\s,;)]|\.(?:\s|$)|$)/im.exec(status) ?? BRANCH_NO_COLON.exec(status);
   return match?.[1] ?? null;
 }
 
