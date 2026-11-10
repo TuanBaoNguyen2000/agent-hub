@@ -227,6 +227,8 @@ export function registerIpcHandlers({ workspace, launching, engineStatus, dataDi
   handle(IpcChannel.tasksCreateWorkstream, (input) => workspace.createWorkstream(input));
   handle(IpcChannel.tasksRenumber, (input) => workspace.renumberTask(input));
   handle(IpcChannel.tasksSyncStatus, (input) => workspace.syncStatusTable(input));
+  handle(IpcChannel.tasksDelete, (input) => workspace.deleteTask(input));
+  handle(IpcChannel.tasksDeleteWorkstream, (input) => workspace.deleteWorkstream(input));
 
   const { tools } = launching;
   handle(IpcChannel.toolsOverview, () => tools.view());

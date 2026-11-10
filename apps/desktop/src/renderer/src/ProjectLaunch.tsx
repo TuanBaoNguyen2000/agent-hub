@@ -1,12 +1,12 @@
-import type { ClientModeDto, LaunchAttemptDto, LaunchPreviewDto, LaunchResultDto, MessageDto, ProfileDto, ProjectDto, UsageDto } from '@agenthub/contracts';
+import type { ClientModeDto, LaunchPreviewDto, LaunchResultDto, MessageDto, ProfileDto, ProjectDto, UsageDto } from '@agenthub/contracts';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { AccountAvatar, MODE_LABELS, PROVIDER_LABELS, type AccountReadiness, orderAccounts, readiness, windowLabel } from './accounts';
+import { AccountAvatar, MODE_LABELS, PROVIDER_LABELS, type AccountReadiness, readiness, windowLabel } from './accounts';
 import type { MessageKey } from '@agenthub/i18n';
 import { api, unwrap } from './api';
 import { useI18n } from './i18n';
 import { ChevronDown, Gear, Monitor, Terminal } from './icons';
 import { Dialog, Menu, MenuItem, StatusText, type StatusTone } from './ui';
-import { usageTone, windowTitle } from './usage';
+import { shownWindows, usageTone, windowTitle } from './usage';
 
 const WORKSPACE_LABELS: Record<'opened' | 'requested' | 'manual', MessageKey> = {
   opened: 'launch.result.opened',
@@ -42,12 +42,11 @@ interface Props {
   usages: Record<string, UsageDto>;
   onOpenSettings: () => void;
   // Settings, at the Agent tools section.
-  onOpenTools: () => void;
+  // Opens the agent tools of that account (ADR-029).
+  onOpenTools: (profileId?: string) => void;
   // The task the next launch points the agent at; null leaves the choice to the agent.
   taskRef: string | null;
   taskTitle?: string | null;
-  // The project's earlier launches, newest first; kept for callers, the order comes from usage.
-  history?: LaunchAttemptDto[];
   // After each launch, so the page reloads the history and the progress.
   onLaunched: () => void;
   // The task line, shown above the accounts.
@@ -55,8 +54,6 @@ interface Props {
   // 'refine': the agent fills in the task instead of resuming it (ADR-021 item 7).
   purpose?: 'refine' | 'init';
   request?: LaunchRequestView | null;
-  // The account the work last went on in, listed after the others (ADR-024 item 5).
-  sourceId?: string | null;
 }
 
 interface Pending {
@@ -77,7 +74,7 @@ function needsAnswer(preview: LaunchPreviewDto): boolean {
 }
 
 // Opens an account at the project's folder: one row per account, with its limits and one button.
-export function ProjectLaunch({ project, accounts, usages, onOpenSettings, onOpenTools, taskRef, taskTitle, onLaunched, taskSummary, purpose, request, sourceId = null }: Props) {
+export function ProjectLaunch({ project, accounts, usages, onOpenSettings, onOpenTools, taskRef, taskTitle, onLaunched, taskSummary, purpose, request }: Props) {
   const { t, tr, date } = useI18n();
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState<Pending>();
@@ -185,7 +182,9 @@ export function ProjectLaunch({ project, accounts, usages, onOpenSettings, onOpe
 
   const missingConfirmation = pending?.preview.requiredConfirmations.some((item) => !confirmed.includes(item.id)) ?? false;
   const canContinue = pending !== undefined && pending.preview.permission === 'allowed' && !pending.preview.blocker && !missingConfirmation && !busy;
-  const ordered = accounts ? orderAccounts(accounts, usages, sourceId) : [];
+  // Backlog I6 and review 2026-11-10: every account can be opened the same way, so they keep the
+  // order of the account list and none is put forward.
+  const ordered = accounts ?? [];
   const lastResult = last?.result;
 
   return (
@@ -200,8 +199,8 @@ export function ProjectLaunch({ project, accounts, usages, onOpenSettings, onOpe
         </div>
       ) : (
         <ul className="launch-accounts" aria-label={t('launch.bar')}>
-          {ordered.map((account, index) => (
-            <AccountRow key={account.id} account={account} usage={usages[account.id]} first={index === 0} busy={busy} onOpen={(mode) => void open(account, mode)} />
+          {ordered.map((account) => (
+            <AccountRow key={account.id} account={account} usage={usages[account.id]} busy={busy} onOpen={(mode) => void open(account, mode)} />
           ))}
           <li className="launch-accounts-footer">
             <button type="button" className="link" onClick={onOpenSettings}>
@@ -295,9 +294,9 @@ export function ProjectLaunch({ project, accounts, usages, onOpenSettings, onOpe
                     type="button"
                     className="link"
                     onClick={() => {
-                      // Settings opens under this dialog otherwise.
+                      const profileId = pending.account.id;
                       setPending(undefined);
-                      onOpenTools();
+                      onOpenTools(profileId);
                     }}
                   >
                     {t('launch.openTools')}
@@ -367,13 +366,13 @@ export function ProjectLaunch({ project, accounts, usages, onOpenSettings, onOpe
 }
 
 // ADR-024 items 5, 7: an account, its limits, and one button that opens it the way it was opened last.
-function AccountRow({ account, usage, first, busy, onOpen }: { account: ProfileDto; usage: UsageDto | undefined; first: boolean; busy: boolean; onOpen: (mode: ClientModeDto) => void }) {
+function AccountRow({ account, usage, busy, onOpen }: { account: ProfileDto; usage: UsageDto | undefined; busy: boolean; onOpen: (mode: ClientModeDto) => void }) {
   const i18n = useI18n();
   const { t, tr } = i18n;
   const state = READINESS[readiness(usage)];
   const name = tr(account.name);
   const mode = account.preferredMode;
-  const windows = usage?.state === 'ok' ? usage.windows.filter((window) => window.kind !== 'other').slice(0, 2) : [];
+  const windows = usage?.state === 'ok' ? shownWindows(usage.windows) : [];
   return (
     <li className="launch-account">
       <AccountAvatar account={account} />
@@ -405,11 +404,11 @@ function AccountRow({ account, usage, first, busy, onOpen }: { account: ProfileD
         <StatusText tone={state.tone}>{t(state.text)}</StatusText>
       </span>
       <span className="split-button">
-        <button type="button" className={first ? 'primary' : undefined} disabled={busy} aria-label={t('launch.openAccountMode', { account: name, mode: MODE_LABELS[mode] })} onClick={() => onOpen(mode)}>
+        <button type="button" disabled={busy} aria-label={t('launch.openAccountMode', { account: name, mode: MODE_LABELS[mode] })} onClick={() => onOpen(mode)}>
           {MODE_ICONS[mode]}
           {t('launch.openMode', { mode: MODE_LABELS[mode] })}
         </button>
-        <Menu label={t('launch.moreModes', { account: name })} trigger={<ChevronDown />} triggerClassName={first ? 'primary split-arrow' : 'split-arrow'} align="end" disabled={busy}>
+        <Menu label={t('launch.moreModes', { account: name })} trigger={<ChevronDown />} triggerClassName="split-arrow" align="end" disabled={busy}>
           <MenuItem icon={MODE_ICONS[other(mode)]} onSelect={() => onOpen(other(mode))}>
             {t('launch.openMode', { mode: MODE_LABELS[other(mode)] })}
           </MenuItem>

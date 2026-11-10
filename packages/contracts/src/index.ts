@@ -172,6 +172,8 @@ export const ipcInput = {
   [IpcChannel.tasksCreateWorkstream]: z.strictObject({ id: idSchema, title: labelSchema.min(1) }),
   [IpcChannel.tasksRenumber]: z.strictObject({ id: idSchema, ref: taskRefSchema }),
   [IpcChannel.tasksSyncStatus]: z.strictObject({ id: idSchema, workstream: documentPathSchema }),
+  [IpcChannel.tasksDelete]: z.strictObject({ id: idSchema, ref: taskRefSchema }),
+  [IpcChannel.tasksDeleteWorkstream]: z.strictObject({ id: idSchema, workstream: documentPathSchema }),
 } as const;
 
 export type IpcInput<C extends keyof typeof ipcInput> = z.infer<(typeof ipcInput)[C]>;
@@ -596,6 +598,8 @@ export interface IpcOutput {
   [IpcChannel.tasksCreateWorkstream]: ContextOverviewDto;
   [IpcChannel.tasksRenumber]: TaskViewDto;
   [IpcChannel.tasksSyncStatus]: { changed: number };
+  [IpcChannel.tasksDelete]: null;
+  [IpcChannel.tasksDeleteWorkstream]: ContextOverviewDto;
 }
 
 export interface IpcErrorDto {
@@ -682,4 +686,6 @@ export interface AgentHubApi {
   createWorkstream(input: IpcInput<typeof IpcChannel.tasksCreateWorkstream>): Reply<typeof IpcChannel.tasksCreateWorkstream>;
   renumberTask(input: IpcInput<typeof IpcChannel.tasksRenumber>): Reply<typeof IpcChannel.tasksRenumber>;
   syncStatusTable(input: IpcInput<typeof IpcChannel.tasksSyncStatus>): Reply<typeof IpcChannel.tasksSyncStatus>;
+  deleteTask(input: IpcInput<typeof IpcChannel.tasksDelete>): Reply<typeof IpcChannel.tasksDelete>;
+  deleteWorkstream(input: IpcInput<typeof IpcChannel.tasksDeleteWorkstream>): Reply<typeof IpcChannel.tasksDeleteWorkstream>;
 }

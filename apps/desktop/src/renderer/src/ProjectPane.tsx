@@ -3,17 +3,17 @@ import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 
 import type { MessageKey } from '@agenthub/i18n';
 import { api, unwrap } from './api';
 import { useI18n } from './i18n';
-import { Folder, More, PanelRight } from './icons';
+import { PanelRight } from './icons';
 import { SetUpDocsDialog } from './ContextSetup';
 import { DocsFoundNotice, ProjectDocs } from './ProjectDocs';
 import { DocumentsPanel, readPanelWidth } from './ProjectDocuments';
 import { ProjectHandoffs } from './ProjectHandoffs';
 import { ProjectHistory } from './ProjectHistory';
-import { type LaunchRequestView, ProjectLaunch } from './ProjectLaunch';
-import { ProgressRow, SwitchDialog } from './ProjectProgress';
+import { ProjectLaunch } from './ProjectLaunch';
+import { ProgressRow } from './ProjectProgress';
 import { ProjectSettings } from './ProjectSettings';
-import { ProjectTasks, allTasks } from './ProjectTasks';
-import { Menu, MenuItem, TabPanel, Tabs } from './ui';
+import { ProjectTasks } from './ProjectTasks';
+import { TabPanel, Tabs } from './ui';
 
 type Tab = 'overview' | 'tasks' | 'handoffs' | 'history' | 'settings';
 
@@ -30,7 +30,7 @@ interface Props {
   accounts: ProfileDto[] | undefined;
   usages: Record<string, UsageDto>;
   onOpenSettings: () => void;
-  onOpenTools: () => void;
+  onOpenTools: (profileId?: string) => void;
   // The sidebar shows the same state beside the project (ADR-024 item 2).
   onProgress: (projectId: string, progress: ProjectProgressDto) => void;
   onChanged: (project: ProjectDto) => void;
@@ -67,7 +67,6 @@ export function ProjectPane({ project, accounts, usages, onOpenSettings, onOpenT
   const [tab, setTab] = useState<Tab>('overview');
   const [context, setContext] = useState<ProjectContextDto>();
   const [history, setHistory] = useState<LaunchAttemptDto[]>([]);
-  const [taskRef, setTaskRef] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   // How many sets of documents an old project's folder holds, until the user answers.
   const [notice, setNotice] = useState<number>();
@@ -78,9 +77,6 @@ export function ProjectPane({ project, accounts, usages, onOpenSettings, onOpenT
   const [contextVersion, setContextVersion] = useState(0);
   const [taskFocus, setTaskFocus] = useState<{ ref: string; at: number } | null>(null);
   const [progress, setProgress] = useState<ProjectProgressDto>();
-  const [switching, setSwitching] = useState(false);
-  const [launchRequest, setLaunchRequest] = useState<LaunchRequestView | null>(null);
-  const chosen = useRef(false);
   const launchRef = useRef<HTMLDivElement>(null);
   const searched = useRef(false);
 
@@ -176,16 +172,9 @@ export function ProjectPane({ project, accounts, usages, onOpenSettings, onOpenT
     setCreating(true);
   }
 
-  // Starts on the task opened last time, until the user picks one; a task gone from the
-  // documents falls back to none.
-  const tasks = allTasks(context);
-  const lastLaunchedTask = history.find((attempt) => attempt.taskRef)?.taskRef ?? null;
-  const known = (ref: string | null): boolean => ref === null || tasks.some((task) => task.ref === ref);
-  useEffect(() => {
-    if (!chosen.current && lastLaunchedTask && known(lastLaunchedTask) && taskRef === null) setTaskRef(lastLaunchedTask);
-    else if (!known(taskRef)) setTaskRef(null);
-  });
-  const selectedTask = tasks.find((task) => task.ref === taskRef);
+  // Review 2026-11-10: the overview opens an account for the project; the agent says what is in
+  // progress and asks (ADR-028). A task of its own is opened from the Task tab. Switching accounts is
+  // opening another account here: the launch offers the unsaved work's transcript (ADR-024 item 4).
 
   async function attempt<T>(action: () => Promise<T>): Promise<T | undefined> {
     onError(undefined);
@@ -213,16 +202,6 @@ export function ProjectPane({ project, accounts, usages, onOpenSettings, onOpenT
     });
     if (done) onRemoved(project.id);
   }
-
-  const taskSummary = project.context.enabled && tasks.length > 0 && (
-    <p className="task-summary" data-testid="launch-task">
-      <span className="hint">{t('project.launchTask')}</span>
-      <span className="grow truncate">{selectedTask ? selectedTask.title : t('project.noTask')}</span>
-      <button type="button" className="link" onClick={() => setTab('tasks')}>
-        {t('project.changeTask')}
-      </button>
-    </p>
-  );
 
   // ADR-023 item 2: this launch asks the agent to fill the documents in, until it is opened.
   const fillSummary = (
@@ -263,16 +242,6 @@ export function ProjectPane({ project, accounts, usages, onOpenSettings, onOpenT
         >
           <PanelRight />
         </button>
-        <Menu label={t('project.actions')} triggerClassName="icon-button" align="end" trigger={<More />}>
-          {project.pathStatus === 'directory' && (
-            <MenuItem icon={<Folder />} onSelect={() => void relink()}>
-              {t('project.changeFolder')}
-            </MenuItem>
-          )}
-          <MenuItem tone="danger" onSelect={() => void remove()}>
-            {t('project.remove')}
-          </MenuItem>
-        </Menu>
       </div>
 
       {(project.pathStatus !== 'directory' || notice !== undefined) && (
@@ -294,14 +263,11 @@ export function ProjectPane({ project, accounts, usages, onOpenSettings, onOpenT
         <>
           <ProgressRow
             progress={progress}
-            checkpointPrompt={context?.checkpointPrompt}
             usages={usages}
-            onSwitch={() => setSwitching(true)}
             onOpenTask={(ref) => {
               setTaskFocus({ ref, at: Date.now() });
               setTab('tasks');
             }}
-            onError={onError}
           />
           <div ref={launchRef} />
           <ProjectLaunch
@@ -310,18 +276,14 @@ export function ProjectPane({ project, accounts, usages, onOpenSettings, onOpenT
             usages={usages}
             onOpenSettings={onOpenSettings}
             onOpenTools={onOpenTools}
-            taskRef={taskRef}
-            taskTitle={selectedTask?.title ?? null}
-            history={history}
-            request={launchRequest}
-            sourceId={progress?.session?.profileId ?? null}
+            taskRef={null}
             onLaunched={() => {
               setPurpose(undefined);
               void loadHistory();
               void loadContext();
               void loadProgress();
             }}
-            taskSummary={purpose === 'init' ? fillSummary : taskSummary}
+            {...(purpose === 'init' ? { taskSummary: fillSummary } : {})}
             {...(purpose ? { purpose } : {})}
           />
           <ProjectDocs
@@ -330,7 +292,10 @@ export function ProjectPane({ project, accounts, usages, onOpenSettings, onOpenT
             onChanged={onChanged}
             onSetUp={startCreating}
             onCheck={loadContext}
-            onShowTasks={() => setTab('tasks')}
+            onShowTasks={(ref) => {
+              setTaskFocus({ ref, at: Date.now() });
+              setTab('tasks');
+            }}
             onFill={() => {
               setPurpose('init');
               launchRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -344,11 +309,6 @@ export function ProjectPane({ project, accounts, usages, onOpenSettings, onOpenT
           project={project}
           context={context}
           active={tab === 'tasks'}
-          selected={taskRef}
-          onSelect={(ref) => {
-            chosen.current = true;
-            setTaskRef(ref);
-          }}
           focus={taskFocus}
           onCreateDocs={startCreating}
           onReload={loadContext}
@@ -359,7 +319,6 @@ export function ProjectPane({ project, accounts, usages, onOpenSettings, onOpenT
           onError={onError}
           accounts={accounts}
           usages={usages}
-          history={history}
           onOpenSettings={onOpenSettings}
           onOpenTools={onOpenTools}
           onLaunched={() => {
@@ -374,7 +333,7 @@ export function ProjectPane({ project, accounts, usages, onOpenSettings, onOpenT
         <ProjectHandoffs project={project} context={context} onReload={() => void loadContext()} onError={onError} />,
       )}
       {page('history', <ProjectHistory history={history} onChanged={() => void loadHistory()} onError={onError} />)}
-      {page('settings', <ProjectSettings project={project} onChanged={onChanged} onCreateDocs={startCreating} onError={onError} />)}
+      {page('settings', <ProjectSettings project={project} onChanged={onChanged} onCreateDocs={startCreating} onError={onError} onRelink={() => void relink()} onRemove={() => void remove()} />)}
 
     </div>
       {docsOpen && (
@@ -391,21 +350,6 @@ export function ProjectPane({ project, accounts, usages, onOpenSettings, onOpenT
             setTab('tasks');
           }}
           request={docsRequest}
-          onError={onError}
-        />
-      )}
-      {switching && progress && accounts && (
-        <SwitchDialog
-          projectId={project.id}
-          progress={progress}
-          accounts={accounts}
-          usages={usages}
-          checkpointPrompt={context?.checkpointPrompt}
-          onLaunch={(launch) => {
-            setTab('overview');
-            setLaunchRequest({ ...launch, at: Date.now() });
-          }}
-          onClose={() => setSwitching(false)}
           onError={onError}
         />
       )}

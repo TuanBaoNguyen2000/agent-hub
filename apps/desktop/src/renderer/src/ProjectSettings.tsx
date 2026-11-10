@@ -13,11 +13,14 @@ interface Props {
   onChanged: (project: ProjectDto) => void;
   onCreateDocs: () => void;
   onError: (message: string | undefined) => void;
+  // Review 2026-11-10: the project's folder and removing it live here, not in a menu.
+  onRelink: () => void;
+  onRemove: () => void;
 }
 
 // Where the project's context documents live (ADR-019). Agents write them; the user reads them in
 // their own editor, so AgentHub only keeps the settings. Stopping never deletes the files.
-export function ProjectSettings({ project, onChanged, onCreateDocs, onError }: Props) {
+export function ProjectSettings({ project, onChanged, onCreateDocs, onError, onRelink, onRemove }: Props) {
   const { t } = useI18n();
   const { context } = project;
   // A new place waiting for the user to say whether the files move with it (ADR-020 item 5).
@@ -264,6 +267,32 @@ export function ProjectSettings({ project, onChanged, onCreateDocs, onError }: P
           <p className="hint">{t('settings.docs.leaveHint')}</p>
         </Dialog>
       )}
+    </section>
+    <section className="settings-group" aria-label={t('project.manageRegion')}>
+      <div className="settings-row">
+        <span className="grow settings-row-text">
+          <span className="settings-row-label">{t('project.folder')}</span>
+          {project.path ? (
+            <span className="path">
+              <PathText path={project.path} />
+            </span>
+          ) : (
+            <span className="hint">{t('project.noPath')}</span>
+          )}
+        </span>
+        <button type="button" onClick={onRelink}>
+          {t('project.changeFolder')}
+        </button>
+      </div>
+      <div className="settings-row">
+        <span className="grow settings-row-text">
+          <span className="settings-row-label">{t('project.remove')}</span>
+          <span className="hint">{t('project.removeHint')}</span>
+        </span>
+        <button type="button" className="danger-outline" onClick={onRemove}>
+          {t('project.removeButton')}
+        </button>
+      </div>
     </section>
     </>
   );

@@ -72,6 +72,8 @@ export const IpcChannel = {
   tasksCreateWorkstream: 'tasks:create-workstream',
   tasksRenumber: 'tasks:renumber',
   tasksSyncStatus: 'tasks:sync-status',
+  tasksDelete: 'tasks:delete',
+  tasksDeleteWorkstream: 'tasks:delete-workstream',
 } as const;
 
 // The four task states AgentHub writes into STATUS (ADR-021 item 4).

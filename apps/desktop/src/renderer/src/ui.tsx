@@ -89,7 +89,11 @@ export function Menu({ label, trigger, triggerClassName, align = 'start', disabl
       const target = event.target as Node;
       if (!panelRef.current?.contains(target) && !triggerRef.current?.contains(target)) close(false);
     };
+    // A scroll that began before the menu opened (the page bringing the trigger into view) still
+    // arrives a frame later; only a scroll after the menu is up closes it.
+    const openedAt = performance.now();
     const onScroll = (event: Event) => {
+      if (performance.now() - openedAt < 300) return;
       if (!panelRef.current?.contains(event.target as Node)) close(false);
     };
     const onBlur = () => close(false);
@@ -398,15 +402,16 @@ export function TabPanel({ idBase, value, selected, children, className = 'stack
 // A long path wraps after a slash, never inside a folder name.
 export function PathText({ path }: { path: string }) {
   const parts = path.split(/(?<=\/)/);
+  // One inline element: inside a flex column the parts would otherwise stack one per line.
   return (
-    <>
+    <span className="path-text">
       {parts.map((part, index) => (
         <span key={index}>
           {part}
           {index < parts.length - 1 && <wbr />}
         </span>
       ))}
-    </>
+    </span>
   );
 }
 

@@ -58,6 +58,13 @@ export interface SkillDetail {
   installedIn: Message[];
 }
 
+// SPIKE-14: the folder each provider reads an account's skills from; the default account uses its
+// home. The launcher and the MCP server (which reads the account from AgentHub's database) both use
+// this, so they always agree. Parts, for the caller to join with its platform's separator.
+export function skillsDirectoryParts(account: { provider: Provider; cliConfigRoot: string | null }, home: string): string[] {
+  return account.cliConfigRoot !== null ? [account.cliConfigRoot, 'skills'] : [home, account.provider === 'claude' ? '.claude' : '.codex', 'skills'];
+}
+
 // --- MCP: AgentHub's server registered under one name in each of the account's configs. ---
 
 // 'partial': registered in some configs, or with an older command; 'unknown': a config could not be read.

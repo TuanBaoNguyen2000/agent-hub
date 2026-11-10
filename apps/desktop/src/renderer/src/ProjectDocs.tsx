@@ -1,7 +1,6 @@
 import type { ProjectContextDto, ProjectDto } from '@agenthub/contracts';
 import { type ReactNode, useState } from 'react';
 import { api, unwrap } from './api';
-import { CopyButton } from './CopyButton';
 import { useI18n } from './i18n';
 import { PathText, StatusText } from './ui';
 
@@ -25,7 +24,8 @@ interface Props {
   onSetUp: () => void;
   // Reads the documents and Git again.
   onCheck: () => Promise<void>;
-  onShowTasks: () => void;
+  // Opens the task a warning is about in the Task tab (backlog I4).
+  onShowTasks: (taskRef: string) => void;
   // The next launch asks the agent to fill the documents in (context-init).
   onFill: () => void;
   onError: (message: string | undefined) => void;
@@ -34,8 +34,7 @@ interface Props {
 // The documents card on the overview: Not used, Ready, Needs filling or Has problems, each with
 // what to do next (ADR-023 item 2).
 export function ProjectDocs({ project, context, onChanged, onSetUp, onCheck, onShowTasks, onFill, onError }: Props) {
-  const i18n = useI18n();
-  const { t, tr, date } = i18n;
+  const { t, tr, date } = useI18n();
   const [checkedAt, setCheckedAt] = useState<Date>();
   const [busy, setBusy] = useState(false);
   const settings = project.context;
@@ -131,7 +130,7 @@ export function ProjectDocs({ project, context, onChanged, onSetUp, onCheck, onS
 
   const tasks = overview.workstreams.reduce((count, workstream) => count + workstream.tasks.length, 0);
   const projectWarnings = warnings.filter((warning) => warning.taskRef === null);
-  const taskWarnings = warnings.length - projectWarnings.length;
+  const taskWarnings = warnings.filter((warning) => warning.taskRef !== null);
   const fixable = warnings.some((warning) => FIXABLE.has(warning.kind));
   const state = fixable
     ? { tone: 'warning' as const, text: t('docs.state.problem') }
@@ -168,7 +167,7 @@ export function ProjectDocs({ project, context, onChanged, onSetUp, onCheck, onS
           {gitText(t, git)}
         </p>
       </div>
-      {(projectWarnings.length > 0 || taskWarnings > 0) && (
+      {(projectWarnings.length > 0 || taskWarnings.length > 0) && (
         <div className="settings-row">
           <div className="stack grow">
             {projectWarnings.length > 0 && (
@@ -180,13 +179,18 @@ export function ProjectDocs({ project, context, onChanged, onSetUp, onCheck, onS
                 ))}
               </ul>
             )}
-            {taskWarnings > 0 && (
-              <p className="hint">
-                {t('docs.taskWarnings', { count: taskWarnings })}{' '}
-                <button type="button" className="link" onClick={onShowTasks}>
-                  {t('docs.seeTasks')}
-                </button>
-              </p>
+            {taskWarnings.length > 0 && (
+              <ul className="warning-list" aria-label={t('docs.taskWarningsLabel')}>
+                {taskWarnings.map((warning, index) => (
+                  <li key={index} className="warning-text">
+                    <button type="button" className="link" title={t('docs.openTaskWarning')} onClick={() => warning.taskRef && onShowTasks(warning.taskRef)}>
+                      {taskLabel(warning.taskRef ?? '')}
+                    </button>
+                    {': '}
+                    {withoutTask(tr(warning.message), taskLabel(warning.taskRef ?? ''))}
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
           {fixable && (
@@ -206,17 +210,8 @@ export function ProjectDocs({ project, context, onChanged, onSetUp, onCheck, onS
           </p>
         </div>
       )}
-      {/* ADR-024 item 2: the checkpoint prompt lives on the progress row at the top of the overview. */}
-      {overview.filled && (
-        <div className="settings-row">
-          <p className="hint grow">{t('docs.reconcileHint')}</p>
-          {/* An agent compares the documents with the code; AgentHub only checks their layout (ADR-020 item 3). */}
-          <CopyButton text={i18n.prompt(project.chatLocale, 'prompt.reconcile', { path: settings.path })} label={t('docs.copyReconcile')} />
-          <button type="button" className="small" onClick={onFill}>
-            {t('docs.refill')}
-          </button>
-        </div>
-      )}
+      {/* Review 2026-11-10: comparing the documents with the code is a sentence to the agent
+          ("trạng thái sao rồi"), so the card keeps only what AgentHub itself checks. */}
     </section>
   );
 }
@@ -244,4 +239,15 @@ export function DocsFoundNotice({ count, onSetUp, onClose }: NoticeProps) {
       </div>
     </div>
   );
+}
+
+// "Workstreams/a/Tasks/TASK-004-player.md" → "TASK-004"; any other file by its name.
+function taskLabel(ref: string): string {
+  const name = ref.slice(ref.lastIndexOf('/') + 1);
+  return /^TASK-\d+/i.exec(name)?.[0] ?? name.replace(/\.md$/i, '');
+}
+
+// The message often starts with the task's number already shown as the link before it.
+function withoutTask(message: string, task: string): string {
+  return message.startsWith(`${task}: `) ? message.slice(task.length + 2) : message;
 }

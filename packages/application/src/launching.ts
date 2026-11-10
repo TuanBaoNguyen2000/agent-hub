@@ -500,7 +500,15 @@ export function createLaunchService({
     warnings: PlannedStep[];
   }
 
-  async function promptFor(project: StoredProject & { path: string }, taskRef: string | null, purpose?: 'refine' | 'init'): Promise<PromptPlan | null> {
+  // ADR-028 item 5: when the account has every shipped skill and the MCP server, the opening prompt is
+  // the same short sentence the user would type in any chat window; otherwise the long form names the
+  // skill and the folder.
+  async function promptFor(
+    project: StoredProject & { path: string },
+    taskRef: string | null,
+    purpose?: 'refine' | 'init',
+    short = false,
+  ): Promise<PromptPlan | null> {
     if (!project.context.enabled) {
       if (taskRef) throw new DomainError('VALIDATION_FAILED', 'launch.noDocsNoTask');
       // §8.2: without documents, the newest saved handoff is the context.
@@ -528,7 +536,7 @@ export function createLaunchService({
       return { prompt: { text, addDir }, taskRef: null, warnings: [] };
     }
     if (!taskRef) {
-      const text = promptIn(locale, 'prompt.resume', { folder });
+      const text = short ? promptIn(locale, 'prompt.resumeShort') : promptIn(locale, 'prompt.resume', { folder });
       return { prompt: { text, addDir }, taskRef: null, warnings: [] };
     }
     const overview = documents.overview(folder);
@@ -539,7 +547,12 @@ export function createLaunchService({
     const warnings = contextWarnings(overview, observation, new Date(now()))
       .filter((warning) => warning.taskRef === taskRef || (warning.kind === 'branch_mismatch' && warning.workstream === workstream?.slug))
       .map((warning): PlannedStep => ({ label: msg('launch.step.checkContext'), execution: 'manual', warning: warning.message }));
-    const text = promptIn(locale, purpose === 'refine' ? 'prompt.refineTask' : 'prompt.resumeTask', { task: found.task.id, ref: taskRef, folder });
+    const text =
+      purpose === 'refine'
+        ? promptIn(locale, 'prompt.refineTask', { task: found.task.id, ref: taskRef, folder })
+        : short
+          ? promptIn(locale, 'prompt.resumeTaskShort', { task: found.task.id })
+          : promptIn(locale, 'prompt.resumeTask', { task: found.task.id, ref: taskRef, folder });
     return { prompt: { text, addDir }, taskRef, warnings };
   }
 
@@ -747,7 +760,15 @@ export function createLaunchService({
   async function preparedPlan(request: LaunchRequest) {
     const { project, profile } = requestContext(request);
     if (request.purpose === 'refine' && !request.taskRef) throw new DomainError('VALIDATION_FAILED', 'launch.refineNeedsTask');
-    const promptPlan = await promptFor(project, request.taskRef ?? null, request.purpose);
+    // The tools are checked first, so the prompt can be the short one when nothing is missing.
+    let setup: ContextSetup | null = null;
+    let setupError: unknown = null;
+    try {
+      setup = await contextSetup(profile, request.mode);
+    } catch (reason) {
+      setupError = reason;
+    }
+    const promptPlan = await promptFor(project, request.taskRef ?? null, request.purpose, setup !== null && setup.missing === null);
     const offer = promptPlan ? transcriptOffer(project, profile, promptPlan.taskRef) : null;
     const automatic = offer !== null && readsTranscriptByItself(project.id, offer);
     const prompt =
@@ -762,12 +783,13 @@ export function createLaunchService({
       prompt,
     });
     // Every project gets the tools: without documents, MCP is how a session saves its handoff.
-    const setup = !plan.blocker ? await contextSetup(profile, request.mode) : null;
+    if (!plan.blocker && setupError !== null) throw setupError;
+    const shownSetup = plan.blocker ? null : setup;
     const merged: LaunchPlan = {
       ...plan,
-      steps: [...(promptPlan?.warnings ?? []), ...(setup?.steps ?? []), ...plan.steps],
+      steps: [...(promptPlan?.warnings ?? []), ...(shownSetup?.steps ?? []), ...plan.steps],
     };
-    return { project, profile, prompt, taskRef: promptPlan?.taskRef ?? null, plan: merged, setup, offer, automatic };
+    return { project, profile, prompt, taskRef: promptPlan?.taskRef ?? null, plan: merged, setup: shownSetup, offer, automatic };
   }
 
   async function preview(request: LaunchRequest): Promise<LaunchPreview> {

@@ -241,6 +241,51 @@ export function nextTaskId(existing: readonly string[]): string {
   return `TASK-${String(highest + 1).padStart(3, '0')}`;
 }
 
+// --- Backlog I1: deleting a task or a workstream. Numbers handed out are never handed out again, so
+// what was deleted is listed under a heading the numbering reads (STATUS.md for a task, the context
+// README.md for a workstream). ---
+
+const DELETED_HEADINGS: Record<ContextLanguage, { tasks: string; workstreams: string }> = {
+  en: { tasks: 'Deleted tasks', workstreams: 'Deleted workstreams' },
+  vi: { tasks: 'Task đã xoá', workstreams: 'Workstream đã xoá' },
+  ko: { tasks: '삭제된 태스크', workstreams: '삭제된 워크스트림' },
+};
+
+// The table rows of the task: the first cell names its number, with its title or nothing else. A
+// row naming the same number with another task's title is left alone, as renumbering does.
+export function removeStatusRow(status: string, task: { id: string; title: string }): string {
+  const titleText = task.title
+    .replace(new RegExp(`^${task.id}[\\s:.-]*`, 'i'), '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  let result = status;
+  for (const line of [...lines(status)].reverse()) {
+    if (!line.text.trim().startsWith('|')) continue;
+    const cells = line.text.split('|');
+    const first = cells[1] ?? '';
+    if (cells.length < 4 || !idPatternOf(task.id).test(first)) continue;
+    const rest = first.replace(idPatternOf(task.id), '').replace(/[\s:.\-*`]/g, '');
+    if (titleText !== '' && rest !== '' && !first.replace(/\s+/g, ' ').toLowerCase().includes(titleText)) continue;
+    result = result.slice(0, line.start) + result.slice(line.end);
+  }
+  return result;
+}
+
+// Adds a bullet under "## <heading>" at the end of the document, creating the heading when needed.
+export function appendDeletedNote(text: string, kind: 'tasks' | 'workstreams', language: ContextLanguage, line: string): string {
+  const heading = `## ${DELETED_HEADINGS[language][kind]}`;
+  const body = text.endsWith('\n') ? text : `${text}\n`;
+  const index = body.split('\n').findIndex((row) => row.trim() === heading);
+  if (index < 0) return `${body}\n${heading}\n\n- ${line}\n`;
+  const rows = body.split('\n');
+  let end = index + 1;
+  while (end < rows.length && !/^#{1,2}\s/.test(rows[end] ?? '')) end += 1;
+  while (end > index + 1 && (rows[end - 1] ?? '').trim() === '') end -= 1;
+  rows.splice(end, 0, `- ${line}`);
+  return rows.join('\n');
+}
+
 export function taskSlug(title: string): string {
   const slug = title
     .normalize('NFD')

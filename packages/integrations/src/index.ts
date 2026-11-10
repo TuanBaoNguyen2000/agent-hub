@@ -1,19 +1,20 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import type {
-  LaunchPlan,
-  LaunchTarget,
-  Launcher,
-  LoginProcess,
-  McpRegistration,
-  McpServerSpec,
-  PlannedStep,
-  PlatformPort,
-  ProfileStatus,
-  RequiredConfirmation,
-  ToolProcess,
-  UsageReport,
-  UsageWindow,
+import {
+  type LaunchPlan,
+  type LaunchTarget,
+  type Launcher,
+  type LoginProcess,
+  type McpRegistration,
+  type McpServerSpec,
+  type PlannedStep,
+  type PlatformPort,
+  type ProfileStatus,
+  type RequiredConfirmation,
+  type ToolProcess,
+  type UsageReport,
+  type UsageWindow,
+  skillsDirectoryParts,
 } from '@agenthub/application';
 import { type AccountProfile, DomainError, type LaunchOutcome, type Message, type MessageKey, type Provider, msg, raw } from '@agenthub/domain';
 import { joinMessages } from '@agenthub/i18n';
@@ -204,6 +205,12 @@ async function readCodexIdentity(
   }
 }
 
+// Claude Code updates itself with `npm install -g` from any process it starts. AgentHub's own short
+// calls (login status, usage, sign-in) end or are stopped while that install may still be running,
+// which leaves the global package half installed and `claude` gone for every account. These calls
+// never update; the user's own sessions still do.
+const QUIET_CLAUDE = { DISABLE_AUTOUPDATER: '1' };
+
 async function readLogin(
   platform: PlatformPort,
   provider: Provider,
@@ -211,7 +218,7 @@ async function readLogin(
   extraEnv: Record<string, string>,
 ): Promise<{ login: ProfileStatus['login']; detail: string | null; email: string | null; fingerprint: string | null }> {
   if (provider === 'claude') {
-    const result = await platform.run(executable, ['auth', 'status'], { extraEnv, timeoutMs: 20_000 });
+    const result = await platform.run(executable, ['auth', 'status'], { extraEnv: { ...extraEnv, ...QUIET_CLAUDE }, timeoutMs: 20_000 });
     try {
       const data = JSON.parse(result.stdout) as Record<string, unknown>;
       const signedIn = data['loggedIn'] === true;
@@ -354,7 +361,7 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
   async function startClaudeLogin(spec: ProviderSpec, executable: string, extraEnv: Record<string, string>, cwd: string): Promise<LoginProcess | null> {
     const before = await readLogin(platform, 'claude', executable, extraEnv);
     const capture = platform.captureBrowserRequest();
-    const tool = platform.spawnTool(executable, spec.loginArgs, { cwd, extraEnv: { ...extraEnv, BROWSER: capture.command } });
+    const tool = platform.spawnTool(executable, spec.loginArgs, { cwd, extraEnv: { ...extraEnv, ...QUIET_CLAUDE, BROWSER: capture.command } });
 
     let running = true;
     void tool.exited.then(() => {
@@ -877,10 +884,7 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
     unregisterMcp,
 
     // SPIKE-14: each provider reads its account's own folder; the default account uses home.
-    skillsDirectory(profile) {
-      const root = profile.cliConfigRoot ?? join(platform.homeDirectory(), profile.provider === 'claude' ? '.claude' : '.codex');
-      return join(root, 'skills');
-    },
+    skillsDirectory: (profile) => join(...skillsDirectoryParts(profile, platform.homeDirectory())),
 
     // Codex reads this one for every account, which would cross the per-account limit (FR-016).
     sharedSkillsDirectories: () => [join(platform.homeDirectory(), '.agents', 'skills')],
@@ -934,7 +938,7 @@ export function createLauncher(platform: PlatformPort, { loginTimeoutMs = LOGIN_
       if (profile.provider === 'codex') return readCodexUsage(platform, executable, extraEnv);
       const result = await platform.run(executable, CLAUDE_USAGE_ARGS, {
         cwd: root ?? platform.homeDirectory(),
-        extraEnv,
+        extraEnv: { ...extraEnv, ...QUIET_CLAUDE },
         timeoutMs: USAGE_TIMEOUT_MS,
       });
       if (result.timedOut) return unavailable(msg('usage.claudeTimeout'));

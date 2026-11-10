@@ -1,14 +1,10 @@
 import type { AccountToolsDto, AgentToolsDto, SkillPresenceDto, ToolSkillDto } from '@agenthub/contracts';
-import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MessageKey } from '@agenthub/i18n';
-import { PROVIDER_LABELS } from './accounts';
-import { api, unwrap } from './api';
 import { More } from './icons';
 import { useI18n } from './i18n';
-import { SkillViewer } from './SkillViewer';
 import { Menu, MenuItem, StatusText, type StatusTone } from './ui';
 
-type Tool = { kind: 'skill'; name: string } | { kind: 'mcp' };
+export type Tool = { kind: 'skill'; name: string } | { kind: 'mcp' };
 
 const MCP_LABEL = 'MCP "agenthub"';
 
@@ -28,146 +24,6 @@ const MCP_STATES: Record<AccountToolsDto['mcp'], { text: MessageKey; tone: Statu
 
 const toolName = (tool: Tool): string => (tool.kind === 'mcp' ? MCP_LABEL : tool.name);
 
-interface Props {
-  onError: (message: string | undefined) => void;
-  // Changes whenever the accounts change, so the table reads them again.
-  accountsVersion: number;
-  // Scrolled into view when a launch sent the user here.
-  focused: boolean;
-  onOpenMcp: () => void;
-}
-
-// ADR-020 item 1: which skills and MCP server each account has, read from its own folders.
-export function AgentToolsSection({ onError, accountsVersion, focused, onOpenMcp }: Props) {
-  const { t, tr } = useI18n();
-  const [tools, setTools] = useState<AgentToolsDto>();
-  const [busy, setBusy] = useState<string>();
-  const [selected, setSelected] = useState<string>();
-  const [viewing, setViewing] = useState<ToolSkillDto>();
-  const section = useRef<HTMLElement>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setTools(await unwrap(api.getAgentTools()));
-    } catch (reason) {
-      onError((reason as Error).message);
-    }
-  }, [onError]);
-
-  useEffect(() => {
-    void load();
-  }, [load, accountsVersion]);
-
-  const loaded = tools !== undefined;
-  useEffect(() => {
-    if (focused && loaded) section.current?.scrollIntoView({ block: 'start' });
-  }, [focused, loaded]);
-
-  function replaceAccount(account: AccountToolsDto): void {
-    setTools(
-      (current) =>
-        current && {
-          ...current,
-          accounts: current.accounts.map((item) => (item.profileId === account.profileId ? account : item)),
-        },
-    );
-  }
-
-  async function run(key: string, action: () => Promise<void>): Promise<void> {
-    setBusy(key);
-    onError(undefined);
-    try {
-      await action();
-    } catch (reason) {
-      onError((reason as Error).message);
-    } finally {
-      setBusy(undefined);
-    }
-  }
-
-  const change = (account: AccountToolsDto, tool: Tool, install: boolean) =>
-    run(`${account.profileId}:${toolName(tool)}`, async () => {
-      const input = { profileId: account.profileId, tool };
-      replaceAccount(await unwrap(install ? api.installTool(input) : api.uninstallTool(input)));
-    });
-
-  const setAuto = (account: AccountToolsDto, on: boolean) =>
-    run(`${account.profileId}:auto`, async () => replaceAccount(await unwrap(api.setToolsAutoInstall({ profileId: account.profileId, on }))));
-
-  const addSkill = () =>
-    run('add-skill', async () => {
-      const path = await unwrap(api.pickProjectFolder());
-      if (path) setTools(await unwrap(api.addSkill({ path })));
-    });
-
-  const removeSkill = (name: string) => run(`remove:${name}`, async () => setTools(await unwrap(api.removeSkill({ name }))));
-
-  const selectedAccount = tools?.accounts.find((account) => account.profileId === selected) ?? tools?.accounts[0];
-
-  return (
-    <section className="settings-group" aria-label={t('tools.title')} ref={section}>
-      <div className="settings-group-header">
-        <div className="grow">
-          <h2>{t('tools.title')}</h2>
-          <p className="hint">{t('tools.hint')}</p>
-        </div>
-        <button type="button" disabled={busy !== undefined} onClick={() => void addSkill()}>
-          {t('tools.addSkill')}
-        </button>
-      </div>
-      {tools?.leaked.map((entry) => (
-        <p key={entry.directory} className="banner warning tools-banner">
-          {t('tools.leaked', { directory: entry.directory, names: entry.names.join(', ') })}
-        </p>
-      ))}
-      {!tools ? (
-        <p className="hint settings-empty">{t('tools.checking')}</p>
-      ) : !selectedAccount ? (
-        <p className="hint settings-empty">{t('accounts.empty')}</p>
-      ) : (
-        <div className="tools-layout">
-          <div className="tools-accounts" role="tablist" aria-orientation="vertical" aria-label={t('nav.accounts')}>
-            {tools.accounts.map((account) => {
-              const total = tools.skills.length + 1;
-              const installed = tools.skills.filter((skill) => account.skills[skill.name] === 'installed').length + (account.mcp === 'installed' ? 1 : 0);
-              return (
-                <button
-                  key={account.profileId}
-                  type="button"
-                  role="tab"
-                  aria-selected={account.profileId === selectedAccount.profileId}
-                  className="tools-account-item"
-                  onClick={() => setSelected(account.profileId)}
-                >
-                  <span className="truncate" title={tr(account.name)}>
-                    {tr(account.name)}
-                  </span>
-                  <span className="hint">
-                    {PROVIDER_LABELS[account.provider]}
-                    {account.mainConfig ? ` · ${t('tools.mainConfig')}` : ''}
-                  </span>
-                  <StatusText tone={installed === total ? 'ok' : 'neutral'}>{t('tools.summary', { installed, total })}</StatusText>
-                </button>
-              );
-            })}
-          </div>
-          <AccountTools
-            account={selectedAccount}
-            tools={tools}
-            busy={busy !== undefined}
-            onChange={(tool, install) => void change(selectedAccount, tool, install)}
-            onAuto={(on) => void setAuto(selectedAccount, on)}
-            onRemoveSkill={(name) => void removeSkill(name)}
-            onViewSkill={setViewing}
-            onOpenMcp={onOpenMcp}
-          />
-        </div>
-      )}
-      {viewing && <SkillViewer name={viewing.name} sourcePath={viewing.sourcePath} onClose={() => setViewing(undefined)} onChanged={setTools} onError={onError} />}
-    </section>
-  );
-}
-
 interface AccountToolsProps {
   account: AccountToolsDto;
   tools: AgentToolsDto;
@@ -177,10 +33,12 @@ interface AccountToolsProps {
   onRemoveSkill: (name: string) => void;
   onViewSkill: (skill: ToolSkillDto) => void;
   onOpenMcp: () => void;
+  // Installs the shipped skills the account lacks, in one click.
+  onInstallSkills?: (names: string[]) => void;
 }
 
-// ADR-026 items 7, 8: a skill that changed since the user last looked, as a status, not a button.
-function skillNotice(skill: ToolSkillDto): { text: MessageKey; hint: MessageKey; tone: StatusTone } | null {
+// The tools of one account, shown on its page (ADR-029); ADR-026 items 7, 8: a skill that changed since the user last looked, as a status, not a button.
+export function skillNotice(skill: ToolSkillDto): { text: MessageKey; hint: MessageKey; tone: StatusTone } | null {
   if (skill.updated) return { text: 'tools.updated', hint: 'tools.updatedHint', tone: 'warning' };
   if (skill.source === 'changed') return { text: 'tools.sourceChanged', hint: 'tools.sourceChangedHint', tone: 'warning' };
   if (skill.source === 'missing') return { text: 'tools.sourceMissing', hint: 'tools.sourceMissingHint', tone: 'neutral' };
@@ -188,7 +46,7 @@ function skillNotice(skill: ToolSkillDto): { text: MessageKey; hint: MessageKey;
 }
 
 // The tools of one account: what each one is, its state, and one action; removing is in the menu.
-function AccountTools({ account, tools, busy, onChange, onAuto, onRemoveSkill, onViewSkill, onOpenMcp }: AccountToolsProps) {
+export function AccountTools({ account, tools, busy, onChange, onAuto, onRemoveSkill, onViewSkill, onOpenMcp, onInstallSkills }: AccountToolsProps) {
   const { t, tr } = useI18n();
   const accountName = tr(account.name);
 
@@ -215,11 +73,6 @@ function AccountTools({ account, tools, busy, onChange, onAuto, onRemoveSkill, o
             )}
           </span>
           {info.description && <span className="hint tools-description">{info.description}</span>}
-          {tool.kind === 'mcp' && (
-            <button type="button" className="link tools-details" aria-label={t('mcpPage.openLabel')} onClick={onOpenMcp}>
-              {t('mcpPage.open')}
-            </button>
-          )}
           {info.skill && (
             <button type="button" className="link tools-details" aria-label={t('tools.viewFor', { name })} onClick={() => info.skill && onViewSkill(info.skill)}>
               {notice && notice.text !== 'tools.sourceMissing' ? t('tools.viewChanges') : t('tools.view')}
@@ -253,35 +106,68 @@ function AccountTools({ account, tools, busy, onChange, onAuto, onRemoveSkill, o
   }
 
   const mcpState = MCP_STATES[account.mcp];
+  const installed = tools.skills.filter((skill) => account.skills[skill.name] === 'installed').length;
+  const missing = tools.skills.filter((skill) => skill.kind === 'builtin' && (account.skills[skill.name] ?? 'missing') === 'missing').map((skill) => skill.name);
+  // Review 2026-11-10: skills and the MCP server are two different things, so two groups.
   return (
-    <div className="tools-detail" role="tabpanel" aria-label={accountName}>
-      <label className="settings-row choice">
-        <input type="checkbox" checked={account.autoInstall} disabled={busy} aria-label={t('tools.autoFor', { account: accountName })} onChange={(event) => onAuto(event.target.checked)} />
-        <span className="settings-row-text">
-          <span>{t('tools.auto')}</span>
-          <span className="hint">{t('tools.footnote')}</span>
-        </span>
-      </label>
-      <ul className="tools-list">
-        {tools.skills.map((skill) => {
-          const presence = account.skills[skill.name] ?? 'missing';
-          const state = SKILL_STATES[presence];
-          return row(
-            { kind: 'skill', name: skill.name },
-            { description: skill.description, custom: skill.kind === 'custom', skill },
-            { text: state.text, tone: state.tone, title: state.hint ? t(state.hint) : undefined },
-            presence === 'missing',
-            presence === 'installed',
-          );
-        })}
-        {row(
-          { kind: 'mcp' },
-          { description: t('tools.mcpDescription'), custom: false },
-          { text: mcpState.text, tone: mcpState.tone, title: account.mcpDetail.map(tr).join('\n') || undefined },
-          account.mcp === 'missing' || account.mcp === 'partial',
-          account.mcp === 'installed' || account.mcp === 'partial',
-        )}
-      </ul>
+    <div className="account-tools stack" role="region" aria-label={t('tools.title')}>
+      <section className="settings-group" aria-label={t('tools.auto')}>
+        <label className="settings-row choice">
+          <input type="checkbox" checked={account.autoInstall} disabled={busy} aria-label={t('tools.autoFor', { account: accountName })} onChange={(event) => onAuto(event.target.checked)} />
+          <span className="settings-row-text">
+            <span>{t('tools.auto')}</span>
+            <span className="hint">{t('tools.footnote')}</span>
+          </span>
+        </label>
+      </section>
+
+      <section className="settings-group" aria-label={t('tools.skills')}>
+        <div className="settings-group-header">
+          <div className="grow">
+            <h2>{t('tools.skills')}</h2>
+            <p className="hint">{t('tools.skillsInstalled', { installed, total: tools.skills.length })}</p>
+          </div>
+          {missing.length > 0 && onInstallSkills && (
+            <button type="button" className="primary" disabled={busy} onClick={() => onInstallSkills(missing)}>
+              {t('tools.installMissingSkills', { count: missing.length })}
+            </button>
+          )}
+        </div>
+        <ul className="tools-list">
+          {tools.skills.map((skill) => {
+            const presence = account.skills[skill.name] ?? 'missing';
+            const state = SKILL_STATES[presence];
+            return row(
+              { kind: 'skill', name: skill.name },
+              { description: skill.description, custom: skill.kind === 'custom', skill },
+              { text: state.text, tone: state.tone, title: state.hint ? t(state.hint) : undefined },
+              presence === 'missing',
+              presence === 'installed',
+            );
+          })}
+        </ul>
+      </section>
+
+      <section className="settings-group" aria-label={MCP_LABEL}>
+        <div className="settings-group-header">
+          <div className="grow">
+            <h2>{t('mcpPage.title')}</h2>
+            <p className="hint">{t('tools.mcpDescription')}</p>
+          </div>
+          <button type="button" className="small" aria-label={t('mcpPage.openLabel')} onClick={onOpenMcp}>
+            {t('mcpPage.open')}
+          </button>
+        </div>
+        <ul className="tools-list">
+          {row(
+            { kind: 'mcp' },
+            { description: null, custom: false },
+            { text: mcpState.text, tone: mcpState.tone, title: account.mcpDetail.map(tr).join('\n') || undefined },
+            account.mcp === 'missing' || account.mcp === 'partial',
+            account.mcp === 'installed' || account.mcp === 'partial',
+          )}
+        </ul>
+      </section>
     </div>
   );
 }

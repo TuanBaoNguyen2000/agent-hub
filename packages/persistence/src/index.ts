@@ -21,7 +21,8 @@ export { DEFAULT_WORKSTREAM_FOLDER, criteriaProgress, handoffTime, latestHandoff
 export { type CreateTaskInput, type LockOptions, contextLockPath, createContextTask, renumberContextTask, syncStatusTable, withContextLock } from './context-tasks';
 export { MAX_SCANNED_FOLDERS, detectContext, isContextFolder } from './context-detect';
 export { conflictingFiles, contextFiles, copyContextFiles } from './context-move';
-export { CONTEXT_CATALOG_SCHEMA, type ContextProjectEntry, contextProjectsFor, defaultContextFolder, handoffFolder, looseChatFolder } from './context-catalog';
+export { type AccountSkillsLocation, CONTEXT_CATALOG_SCHEMA, type ContextProjectEntry, accountSkillsLocation, contextProjectsFor, defaultContextFolder, handoffFolder, looseChatFolder, skillPresence } from './context-catalog';
+export { type FoundTask, type ProjectMatch, type TaskDetails, findContextTasks, foldText, inboxCount, matchProject, taskDetails } from './context-lookup';
 export { type ContextEntry, MAX_DOCUMENT_BYTES, appendHandoff, insertHandoff, listContext, makeContextFolder, readContext, renameContext, sha256, writeContext } from './context-files';
 
 interface ProjectRow {
@@ -329,3 +330,4 @@ export function openMetadataStore(databasePath: string, options: { backupDirecto
     },
   };
 }
+export { deleteContextTask, deleteContextWorkstream } from './context-delete';

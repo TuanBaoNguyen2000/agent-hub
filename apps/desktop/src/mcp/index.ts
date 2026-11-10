@@ -1,6 +1,7 @@
 import { appendFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { contextProjectsFor, looseChatFolder } from '@agenthub/persistence';
+import { accountSkillsLocation, contextProjectsFor, looseChatFolder } from '@agenthub/persistence';
 import { createServer } from './server';
 
 // Entry of the MCP server, started by an agent's client through the shim AgentHub writes:
@@ -33,6 +34,10 @@ const server = createServer({
   projects: () => (account && dataDirectory ? contextProjectsFor(dataDirectory, account) : []),
   looseChats: looseChatFolder(dataDirectory || '/nonexistent'),
   locks: join(dataDirectory || '/nonexistent', 'locks'),
+  // The account's skill folder from the database, as the launcher computes it, so the registration
+  // args stay the same and existing installs are not marked partial (ADR-028 item 7.3).
+  accountSkills: () => (account && dataDirectory ? accountSkillsLocation(dataDirectory, account, homedir()) : null),
+  cwd: () => process.cwd(),
   now: () => new Date(),
   version: process.env['AGENTHUB_VERSION'] ?? '0.0.0',
   log,

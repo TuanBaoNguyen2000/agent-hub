@@ -76,6 +76,8 @@ const api: AgentHubApi = {
   createWorkstream: (input) => ipcRenderer.invoke(IpcChannel.tasksCreateWorkstream, input),
   renumberTask: (input) => ipcRenderer.invoke(IpcChannel.tasksRenumber, input),
   syncStatusTable: (input) => ipcRenderer.invoke(IpcChannel.tasksSyncStatus, input),
+  deleteTask: (input) => ipcRenderer.invoke(IpcChannel.tasksDelete, input),
+  deleteWorkstream: (input) => ipcRenderer.invoke(IpcChannel.tasksDeleteWorkstream, input),
 };
 
 contextBridge.exposeInMainWorld('agentHub', api);

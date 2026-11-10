@@ -1,6 +1,6 @@
 ---
 name: context-capture
-description: Turn the current side conversation into a task or workstream in the project's shared context documents, or into a loose chat note when it belongs to no project yet. Use when a chat drifted into new work worth keeping, when the user says to save this as a task or note, or before checkpointing work that has no task.
+description: Turn the current side conversation into a task or workstream in the project's shared context documents, or into a loose chat note when it belongs to no project yet. Use when a chat drifted into new work worth keeping, when the user says to save this as a task or note, for example "ghi lại thành task", "save this as a task", "이거 태스크로 남겨줘", or before checkpointing work that has no task.
 ---
 
 # context-capture

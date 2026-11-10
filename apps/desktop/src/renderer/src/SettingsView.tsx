@@ -5,19 +5,16 @@ import { type ReactElement, useCallback, useEffect, useId, useRef, useState } fr
 import { createPortal } from 'react-dom';
 import { api, unwrap } from './api';
 import { AccountsSection } from './AccountsSection';
-import { AgentToolsSection } from './AgentToolsSection';
 import { useI18n } from './i18n';
-import { Close, Person, Plug, Puzzle, Sliders, Wrench } from './icons';
-import { McpServerPage } from './McpServerPage';
+import { Close, Person, Sliders, Wrench } from './icons';
 import { PathText, Segmented } from './ui';
 
-export type SettingsTab = 'general' | 'accounts' | 'tools' | 'mcp' | 'advanced';
+// ADR-029: agent tools and the MCP server left Settings for a place of their own.
+export type SettingsTab = 'general' | 'accounts' | 'advanced';
 
 const TABS: readonly { value: SettingsTab; label: MessageKey; icon: () => ReactElement }[] = [
   { value: 'general', label: 'settings.general', icon: Sliders },
   { value: 'accounts', label: 'nav.accounts', icon: Person },
-  { value: 'tools', label: 'tools.title', icon: Puzzle },
-  { value: 'mcp', label: 'settings.tab.mcp', icon: Plug },
   { value: 'advanced', label: 'settings.advanced', icon: Wrench },
 ];
 
@@ -62,13 +59,9 @@ export function SettingsDialog({ tab, onTab, onClose, onAccountsChanged }: Props
   const [settings, setSettings] = useState<SettingsDto>();
   const [status, setStatus] = useState<SystemStatusDto>();
   const [error, setError] = useState<string>();
-  const [accountsVersion, setAccountsVersion] = useState(0);
   const dialog = useRef<HTMLDivElement>(null);
   const onError = useCallback((message: string | undefined) => setError(message), []);
-  const accountsChanged = useCallback(() => {
-    setAccountsVersion((version) => version + 1);
-    onAccountsChanged();
-  }, [onAccountsChanged]);
+  const accountsChanged = useCallback(() => onAccountsChanged(), [onAccountsChanged]);
 
   useEffect(() => {
     Promise.all([unwrap(api.getSettings()), unwrap(api.getSystemStatus())]).then(
@@ -207,8 +200,6 @@ export function SettingsDialog({ tab, onTab, onClose, onAccountsChanged }: Props
               </section>
             )}
             {tab === 'accounts' && <AccountsSection onError={onError} onChanged={accountsChanged} />}
-            {tab === 'tools' && <AgentToolsSection onError={onError} accountsVersion={accountsVersion} focused={false} onOpenMcp={() => select('mcp')} />}
-            {tab === 'mcp' && <McpServerPage onError={onError} />}
             {tab === 'advanced' && settings && (
               <>
                 <section className="settings-group" aria-label={t('settings.cli')}>

@@ -14,9 +14,13 @@ data into the documents.
 ## Find the context folder
 
 1. Use the path given in the opening prompt ("Context documents: …").
-2. Otherwise use the AgentHub MCP tools if they are available: `context_projects` lists the projects
-   this account may use, with `documents: true` or `false`; `context_read` reads a file, and an
-   empty path or one ending in `/` lists a folder.
+2. Otherwise, with the AgentHub MCP tools, call `context_here` with your working directory as
+   `cwd`: it names the project this folder belongs to, its context folder, the tasks in progress
+   and the warnings AgentHub shows. When nothing matches it lists the projects this account may
+   use, with their folders: ask the user which one. Without `context_here` (an older AgentHub),
+   `context_projects` lists the same projects with `root`, the project folder on this device, and
+   `documents: true` or `false`. `context_read` reads a file; an empty path or one ending in `/`
+   lists a folder.
 3. Otherwise ask the user. Never guess a folder or search the disk for one.
 
 A project with `documents: false` has no folder. It keeps handoff notes instead: read them with
@@ -103,6 +107,10 @@ The heading starts with the absolute local date and time **with the UTC offset**
 `date +"%Y-%m-%d %H:%M%z"` (works on macOS and Linux) and write its output as is (`+0700`) or as
 `+07:00`; both are read. Older entries without an offset are read as the machine's local time.
 
+A short checkpoint written during work has the same heading with ` (short)` at the end and 2–5
+lines: done, next, branch and commit. The next full checkpoint replaces the `(short)` entries above
+the newest full entry with one full entry.
+
 ## Provenance
 
 - **verified**: a test passed or the user confirmed it.
@@ -117,7 +125,8 @@ done on reported evidence.
 - Re-read a file right before changing it. If it changed since you read it, merge with the newer
   content instead of overwriting it. With MCP, `context_write` needs the `base_sha256` that
   `context_read` returned, and `context_append_handoff` merges by itself.
-- Never rewrite `DECISIONS.md` or old handoff entries; only add.
+- Never rewrite `DECISIONS.md` or old handoff entries; only add. The one exception: a full
+  checkpoint folds the `(short)` entries above the newest full entry into itself.
 - Run only read-only Git commands (`git status`, `git branch --show-current`, `git log`). Never
   checkout, reset, stash or clean.
 - Use absolute dates. Write in the documents' language; keep file names and the four state words

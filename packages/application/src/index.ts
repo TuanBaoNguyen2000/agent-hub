@@ -199,6 +199,9 @@ export interface ContextDocuments {
   renumberTask(folder: string, ref: string, language: ContextLanguage): { ref: string; id: string };
   // ADR-027 item 2: the STATUS table written back from the task files; the rows changed.
   syncStatus(folder: string, workstream: string): number;
+  // Backlog I1: takes the task or workstream out of the documents and says what to move to the Trash.
+  deleteTask(folder: string, ref: string, language: ContextLanguage, at: Date): { path: string; id: string };
+  deleteWorkstream(folder: string, slug: string, language: ContextLanguage, at: Date): { path: string };
 }
 
 export interface DocumentEntry {
@@ -903,6 +906,26 @@ export function createWorkspace({
       const folder = contextFolder(input.id);
       if (!documents.overview(folder).workstreams.some((item) => item.slug === input.workstream)) throw new DomainError('NOT_FOUND', 'tasks.noWorkstream');
       return { changed: busyAsMessage(() => documents.syncStatus(folder, input.workstream)) };
+    },
+
+    // Backlog I1: the file goes to the Trash, the STATUS row goes, and the number stays listed so it
+    // is never handed out again.
+    async deleteTask(input: { id: string; ref: string }): Promise<null> {
+      const project = requireProject(input.id);
+      const folder = contextFolder(input.id);
+      if (!findTask(documents.overview(folder), input.ref)) throw new DomainError('NOT_FOUND', 'project.taskNotFound');
+      const { path } = busyAsMessage(() => documents.deleteTask(folder, input.ref, project.context.language, new Date(now())));
+      await trash(path);
+      return null;
+    },
+
+    async deleteWorkstream(input: { id: string; workstream: string }): Promise<ContextOverview> {
+      const project = requireProject(input.id);
+      const folder = contextFolder(input.id);
+      if (!documents.overview(folder).workstreams.some((item) => item.slug === input.workstream)) throw new DomainError('NOT_FOUND', 'tasks.noWorkstream');
+      const { path } = busyAsMessage(() => documents.deleteWorkstream(folder, input.workstream, project.context.language, new Date(now())));
+      await trash(path);
+      return documents.overview(folder);
     },
 
     // A new workstream beside the others (ADR-023 item 5): its STATUS.md and an empty Tasks/.

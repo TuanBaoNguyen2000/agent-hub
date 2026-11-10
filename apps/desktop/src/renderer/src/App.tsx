@@ -1,15 +1,17 @@
-import type { NoteDto, ProfileDto, ProjectDto, ProjectProgressDto, UsageDto } from '@agenthub/contracts';
+import type { AgentToolsDto, NoteDto, ProfileDto, ProjectDto, ProjectProgressDto, UsageDto } from '@agenthub/contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AccountAvatar, PROVIDER_LABELS, useAccountLauncher, windowLabel } from './accounts';
+import { AccountToolsPage, McpDetails, QuickCommandsPage, SkillLibrary, ToolsOverview, type ToolsView } from './AgentToolsPage';
 import { compareText } from '@agenthub/i18n';
 import { api, unwrap } from './api';
 import { AddProjectDialog } from './ContextSetup';
 import { useI18n } from './i18n';
-import { Chat, Folder, Gear, Monitor, Plus, Sidebar as SidebarIcon, Terminal } from './icons';
+import { Chat, Folder, Gear, Monitor, Plus, Puzzle, Sidebar as SidebarIcon, Terminal } from './icons';
 import { LooseChatView, NewLooseChat } from './LooseChats';
 import { ProjectPane } from './ProjectPane';
 import { SettingsDialog, type SettingsTab } from './SettingsView';
 import { Menu, MenuItem, MenuSeparator, Segmented } from './ui';
+import { accountsNeedingAttention } from './toolsHealth';
 import { highestUsage, resetText, usageTone, windowTitle } from './usage';
 import { PROGRESS_STATES } from './ProjectProgress';
 
@@ -37,6 +39,7 @@ type Screen =
   | { kind: 'project'; id: string }
   | { kind: 'loose-chat'; id: string }
   | { kind: 'new-loose-chat' }
+  | { kind: 'tools'; view: ToolsView }
   | { kind: 'none' };
 
 export function App() {
@@ -55,6 +58,8 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(readSidebar);
   const [mode, setMode] = useState<'projects' | 'notes'>('projects');
   const [adding, setAdding] = useState<string | null>(null);
+  // ADR-029: every account's skills and MCP server, for the sidebar's dots and the tools pages.
+  const [tools, setTools] = useState<AgentToolsDto>();
 
   const showError = useCallback((message: string | undefined) => setError(message), []);
   const launcher = useAccountLauncher(showError);
@@ -70,7 +75,17 @@ export function App() {
     }
   }, [showError]);
 
-  const reloadAccounts = useCallback(() => void loadAccounts(), [loadAccounts]);
+  const loadTools = useCallback(async () => {
+    try {
+      setTools(await unwrap(api.getAgentTools()));
+    } catch (reason) {
+      showError((reason as Error).message);
+    }
+  }, [showError]);
+
+  const reloadAccounts = useCallback(() => {
+    void loadAccounts().then(() => loadTools());
+  }, [loadAccounts, loadTools]);
 
   // Agents add loose chats through MCP, so the list is read again when the window regains focus.
   const loadLooseChats = useCallback(async () => {
@@ -156,8 +171,14 @@ export function App() {
     });
   }, [showError, loadAccounts]);
 
+  // The tools are read when the app starts and whenever a tools page opens; installs update them.
+  useEffect(() => {
+    void loadTools();
+  }, [loadTools]);
+
   function navigate(next: Screen): void {
     setError(undefined);
+    if (next.kind === 'tools' && (screen.kind !== 'tools' || next.view.kind === 'overview')) void loadTools();
     setScreen(next);
     if (next.kind === 'project') setMode('projects');
     if (next.kind === 'loose-chat' || next.kind === 'new-loose-chat') setMode('notes');
@@ -208,7 +229,13 @@ export function App() {
 
   const selectedProject = screen.kind === 'project' ? projects?.find((project) => project.id === screen.id) : undefined;
   const selectedNote = screen.kind === 'loose-chat' ? looseChats?.find((note) => note.id === screen.id) : undefined;
-  const title = selectedProject?.name ?? selectedNote?.title ?? (screen.kind === 'new-loose-chat' ? t('looseChat.new') : '');
+  const toolsAccount = screen.kind === 'tools' && screen.view.kind === 'account' ? accounts?.find((account) => account.id === (screen.view as { id: string }).id) : undefined;
+  const needingTools = accountsNeedingAttention(tools);
+  const title =
+    selectedProject?.name ??
+    selectedNote?.title ??
+    (screen.kind === 'new-loose-chat' ? t('looseChat.new') : screen.kind === 'tools' ? (toolsAccount ? tr(toolsAccount.name) : t('tools.title')) : '');
+  const openTools = (view: ToolsView): void => navigate({ kind: 'tools', view });
 
   return (
     <div className={`layout${sidebarOpen ? '' : ' sidebar-hidden'}`}>
@@ -327,10 +354,28 @@ export function App() {
           )}
         </div>
         <div className="sidebar-footer">
+          <button
+            type="button"
+            className="nav-item"
+            aria-current={screen.kind === 'tools' && screen.view.kind !== 'account' ? 'true' : undefined}
+            onClick={() => openTools({ kind: 'overview' })}
+          >
+            <span className="nav-icon">
+              <Puzzle />
+            </span>
+            <span className="grow truncate">{t('tools.title')}</span>
+            {needingTools.length > 0 && (
+              <span className="tools-count" title={t('tools.overview.attention', { count: needingTools.length })}>
+                <span className="progress-dot unsaved" aria-hidden="true" />
+                {needingTools.length}
+              </span>
+            )}
+          </button>
           <p className="sidebar-label">{t('nav.accounts')}</p>
-          <ul className="list" aria-label={t('nav.openAccount')}>
+          <ul className="list" aria-label={t('nav.accounts')}>
             {accounts?.map((account) => (
               <li key={account.id}>
+                {/* Opening an account from here is one click away; its tools are under Agent tools (ADR-029). */}
                 <Menu
                   label={t('nav.openAccountNamed', { account: tr(account.name) })}
                   triggerClassName="nav-item account-item"
@@ -338,6 +383,9 @@ export function App() {
                     <>
                       <AccountAvatar account={account} size="sm" />
                       <span className="grow truncate">{tr(account.name)}</span>
+                      {needingTools.includes(account.id) && (
+                        <span className="progress-dot unsaved" role="img" aria-label={t('tools.needsAttention')} title={t('tools.needsAttention')} />
+                      )}
                       <UsageChip usage={usages[account.id]} />
                     </>
                   }
@@ -349,6 +397,9 @@ export function App() {
                     {t('launch.openTerminal')}
                   </MenuItem>
                   <MenuSeparator />
+                  <MenuItem icon={<Puzzle />} onSelect={() => openTools({ kind: 'account', id: account.id })}>
+                    {t('nav.accountTools')}
+                  </MenuItem>
                   <MenuItem icon={<Gear />} onSelect={() => openSettings('accounts')}>
                     {t('accounts.manage')}
                   </MenuItem>
@@ -388,7 +439,7 @@ export function App() {
             usages={usages}
             onProgress={reportProgress}
             onOpenSettings={() => openSettings('accounts')}
-            onOpenTools={() => openSettings('tools')}
+            onOpenTools={(profileId) => openTools(profileId ? { kind: 'account', id: profileId } : { kind: 'overview' })}
             onError={showError}
             onChanged={(updated) => setProjects((current) => current?.map((project) => (project.id === updated.id ? updated : project)).sort(byName))}
             onRemoved={(id) => {
@@ -422,6 +473,28 @@ export function App() {
                   onError={showError}
                 />
               )}
+              {screen.kind === 'tools' && screen.view.kind === 'overview' && (
+                <ToolsOverview tools={tools} onTools={setTools} onError={showError} accounts={accounts} onView={openTools} />
+              )}
+              {screen.kind === 'tools' && screen.view.kind === 'account' && toolsAccount && (
+                <AccountToolsPage
+                  key={toolsAccount.id}
+                  tools={tools}
+                  onTools={setTools}
+                  onError={showError}
+                  account={toolsAccount}
+                  usage={usages[toolsAccount.id]}
+                  onBack={() => openTools({ kind: 'overview' })}
+                  onLaunch={launcher.launch}
+                  onManage={() => openSettings('accounts')}
+                  onOpenMcp={() => openTools({ kind: 'mcp' })}
+                />
+              )}
+              {screen.kind === 'tools' && screen.view.kind === 'library' && (
+                <SkillLibrary tools={tools} onTools={setTools} onError={showError} onBack={() => openTools({ kind: 'overview' })} />
+              )}
+              {screen.kind === 'tools' && screen.view.kind === 'mcp' && <McpDetails onError={showError} onBack={() => openTools({ kind: 'overview' })} />}
+              {screen.kind === 'tools' && screen.view.kind === 'commands' && <QuickCommandsPage onBack={() => openTools({ kind: 'overview' })} />}
               {screen.kind === 'none' && projects !== undefined && (
                 <div className="empty">
                   <span className="empty-icon" aria-hidden="true">

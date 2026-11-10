@@ -157,6 +157,42 @@ Thêm trường `root` (đường dẫn project trên máy này). Như vậy age
 - Bảng Lệnh nhanh phải theo kịp cú pháp gọi skill của từng client; client đổi cú pháp thì bảng sai. Có kiểm chứng theo version (mục Kiểm chứng 6).
 - Phải sửa các test đang so chuỗi lời nhắc (`prompt.resume`, `prompt.resumeTask`) và E2E đếm số tool MCP.
 
+## Triển khai (2026-11-10)
+
+- **MCP** (`apps/desktop/src/mcp/server.ts`):
+  - `context_projects` trả thêm `root`.
+  - Hai tool chỉ đọc mới:
+    - `context_here`: khớp `cwd` với project, đường dẫn dài nhất thắng. Trả workstream với số task theo nhóm, task đang làm, chờ duyệt, bị chặn kèm heading handoff mới nhất, số ghi chú Inbox, mọi cảnh báo của overview kèm số task, skill thiếu hoặc trùng tên của account. Giới hạn 40 task, 30 cảnh báo, 30 workstream.
+    - `context_task`: theo số nhiều dạng hoặc chữ trong tên, bỏ dấu tiếng Việt; nhiều kết quả thì trả danh sách ứng viên.
+  - `INSTRUCTIONS` viết lại theo mục 4.1 và 7.3.
+  - Thư mục skill của account tính từ database chỉ đọc bằng cùng helper với launcher (`skillsDirectoryParts` trong `packages/application/src/agent-tools.ts`). Không đổi tham số đăng ký MCP.
+  - Phần tìm kiếm nằm ở `packages/persistence/src/context-lookup.ts`.
+  - **Chưa làm:** so branch với Git. MCP không được dùng `platform`, nên tool trả branch ghi trong STATUS và nhắc agent tự chạy `git branch --show-current`.
+- **Skill:**
+  - Mô tả của `context-resume`, `context-checkpoint`, `context-capture` có câu kích hoạt vi/en/ko.
+  - `context-resume` có: một lần gọi `context_here`, trả lời trạng thái (cả `/context-resume status`), đường tắt qua `context_task`, ba lúc tự ghi checkpoint ngắn.
+  - `context-checkpoint` có chế độ ngắn `(short)`; checkpoint đầy đủ gộp các mục ngắn.
+  - `document-layout.md` thêm `context_here`.
+- **Lời nhắc mở phiên** (`packages/application/src/launching.ts`):
+  - Tool được kiểm tra trước khi soạn lời nhắc.
+  - Không thiếu gì (hoặc account tự cài) thì dùng `prompt.resumeShort` hoặc `prompt.resumeTaskShort` ("Làm tiếp TASK-004."). Thiếu thì giữ lời nhắc dài.
+  - Chưa tách theo provider: chờ kiểm chứng 3, 5.
+- **Lệnh nhanh** (`apps/desktop/src/renderer/src/quickCommands.ts`):
+  - Bảng ở trang account và trang Lệnh nhanh (ADR-029).
+  - Nút "Copy lệnh" ở panel task.
+  - Câu ngắn lấy từ khoá i18n `quick.phrase.*`, trùng với mô tả skill và `INSTRUCTIONS`; test MCP kiểm tra các câu này có mặt.
+- **Kiểm chứng tự động:** `npm run check` đạt (476 unit test). `npm run test:e2e` đạt 33, bỏ qua 2 như trước, trên cả bản build và `.app` đóng gói lại ngày 2026-11-10. Test mới gồm:
+  - `context_here`, `context_task` và câu kích hoạt (`mcp.test.ts`, `context-lookup.test.ts`);
+  - lời nhắc ngắn và lời nhắc dài khi thiếu công cụ (`launching.test.ts`);
+  - lệnh nhanh (`tools-health.test.ts`).
+- **Chưa kiểm chứng:** baseline (mục Kiểm chứng 1) không chạy được trước khi đóng gói lại; mốc so sánh là kết quả B1.2 ngày 2026-11-10. Chưa thử với agent thật: Claude, Codex, cú pháp `$skill`, checkpoint ngắn. Các bước thử nằm ở mục G của [kịch bản thử](../testing/phase3-runbook.md).
+
+### Sửa sau góp ý (2026-11-10)
+
+- **Codex nhận cả `/<skill>` lẫn `$<skill>`** (reported: người dùng tự thử, ngày 2026-11-10). Vì vậy Lệnh nhanh dùng chung dạng `/context-resume …` cho mọi account; bỏ nút chọn Claude/Codex và ghi chú về cú pháp `$`. Kiểm chứng 5 xem như đạt cho Codex CLI theo lời người dùng; chưa ghi version.
+- **Bảng Lệnh nhanh không còn ví dụ "TASK-004"**: ví dụ cố định dễ hiểu nhầm là task thật của project. Bảng ghi câu chung ("làm tiếp", `/context-resume`) kèm một dòng: muốn làm đúng một task thì thêm số task vào sau. Nút "Copy lệnh" trong từng task vẫn có sẵn số của task đó.
+- `INSTRUCTIONS` của MCP và mô tả `context-resume` thêm câu "làm tiếp" / "continue" / "이어서 해줘" không kèm số task.
+
 ## Kiểm chứng cần có
 
 1. **Baseline trước khi làm.** Trên `sandbox_shooter`, không qua AgentHub, mở `claude` (một account đã cài skill và MCP) và gõ lần lượt:

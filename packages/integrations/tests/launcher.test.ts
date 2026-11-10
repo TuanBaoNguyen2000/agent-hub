@@ -807,7 +807,7 @@ describe('Claude sign-in', () => {
     expect(callsOf(fake, 'spawnTool')[0]).toEqual([
       '/bin/claude',
       ['auth', 'login'],
-      { cwd: '/Users/test/b', extraEnv: { CLAUDE_CONFIG_DIR: '/Users/test/b', BROWSER: '/tmp/capture' } },
+      { cwd: '/Users/test/b', extraEnv: { CLAUDE_CONFIG_DIR: '/Users/test/b', DISABLE_AUTOUPDATER: '1', BROWSER: '/tmp/capture' } },
     ]);
     expect(callsOf(fake, 'dispose')).toHaveLength(1);
     login?.cancel();
@@ -1027,7 +1027,7 @@ describe('usage limits (SPIKE-16)', () => {
     expect(parseCodexUsage(null).state).toBe('unavailable');
   });
 
-  it('runs Claude /usage in the profile of the account, with hooks and MCP servers off', async () => {
+  it('runs Claude /usage in the profile of the account, with hooks, MCP servers and self-update off', async () => {
     const fake = fakePlatform({
       run: async (executable, args, options) => {
         fake.calls.push({ method: 'run', args: [executable, args, options] });
@@ -1042,8 +1042,10 @@ describe('usage limits (SPIKE-16)', () => {
     expect(callsOf(fake, 'run').at(-1)).toEqual([
       '/bin/claude',
       CLAUDE_USAGE_ARGS,
-      { cwd: '/Users/test/b', extraEnv: { CLAUDE_CONFIG_DIR: '/Users/test/b' }, timeoutMs: 30_000 },
+      { cwd: '/Users/test/b', extraEnv: { CLAUDE_CONFIG_DIR: '/Users/test/b', DISABLE_AUTOUPDATER: '1' }, timeoutMs: 30_000 },
     ]);
+    // A self-update stopped halfway leaves the global package without its `claude` (2026-11-10).
+    expect((callsOf(fake, 'run')[0]?.[2] as RunOptions).extraEnv).toMatchObject({ DISABLE_AUTOUPDATER: '1' });
     expect(CLAUDE_USAGE_ARGS).toEqual(expect.arrayContaining(['--no-session-persistence', '--strict-mcp-config']));
   });
 

@@ -24,6 +24,8 @@ import {
   contextLockPath,
   createContextTask,
   renumberContextTask,
+  deleteContextTask,
+  deleteContextWorkstream,
   syncStatusTable,
 } from '@agenthub/persistence';
 import { createGitObserver, createMacPlatform, createPathInspector } from '@agenthub/platform';
@@ -46,6 +48,8 @@ const documentPorts = {
   createTask: (folder: string, input: Parameters<typeof createContextTask>[2]) => createContextTask(folder, testLocks, input),
   renumberTask: (folder: string, ref: string, language: Parameters<typeof renumberContextTask>[3]) => renumberContextTask(folder, testLocks, ref, language),
   syncStatus: syncStatusTable,
+  deleteTask: (folder: string, ref: string, language: Parameters<typeof deleteContextTask>[3], at: Date) => deleteContextTask(folder, testLocks, ref, language, at),
+  deleteWorkstream: (folder: string, slug: string, language: Parameters<typeof deleteContextWorkstream>[3], at: Date) => deleteContextWorkstream(folder, testLocks, slug, language, at),
 };
 
 // Real persistence and platform adapters on temporary folders; only Electron is absent.
@@ -700,6 +704,23 @@ describe('managing tasks and documents (ADR-021)', () => {
     expect(readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toContain('| TASK-001 | in progress |\n| TASK-017 Đếm combo trên màn hình | Cần làm |\n');
     expect(codeOf(() => workspace.createTask({ id, workstream: 'Workstreams/none', title: 'x', goal: '' }))).toBe('NOT_FOUND');
     expect(codeOf(() => workspace.createTask({ id, workstream: 'Workstreams/combo', title: '  ', goal: '' }))).toBe('VALIDATION_FAILED');
+  });
+
+  it('deletes a task and a workstream into the Trash, keeping their numbers out of use (backlog I1)', async () => {
+    const { id, folder } = withDocuments();
+    await workspace.deleteTask({ id, ref: REF });
+    expect(trashed).toEqual([join(folder, REF)]);
+    expect(existsSync(join(folder, REF))).toBe(false);
+    const status = readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8');
+    expect(status).not.toContain('| TASK-001 | in progress |');
+    expect(status).toContain('## Deleted tasks\n\n- TASK-001 Counter');
+    await expect(workspace.deleteTask({ id, ref: REF })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+    const overview = await workspace.deleteWorkstream({ id, workstream: 'Workstreams/intro' });
+    expect(trashed.at(-1)).toBe(join(folder, 'Workstreams', 'intro'));
+    expect(overview.workstreams.map((item) => item.slug)).toEqual(['Workstreams/combo']);
+    expect(readFileSync(join(folder, 'README.md'), 'utf8')).toContain('TASK-016');
+    expect(workspace.createTask({ id, workstream: 'Workstreams/combo', title: 'Next', goal: '' }).id).toBe('TASK-017');
   });
 
   it('renumbers a task that shares its number, and syncs the STATUS table only when asked (ADR-027)', async () => {

@@ -39,6 +39,8 @@ import {
   writeContext,
   createContextTask,
   renumberContextTask,
+  deleteContextTask,
+  deleteContextWorkstream,
   syncStatusTable,
 } from '@agenthub/persistence';
 import { createMacPlatform, createPathInspector, createSkillInstaller, readSkillManifest } from '@agenthub/platform';
@@ -61,6 +63,8 @@ const documentPorts = {
   createTask: (folder: string, input: Parameters<typeof createContextTask>[2]) => createContextTask(folder, testLocks, input),
   renumberTask: (folder: string, ref: string, language: Parameters<typeof renumberContextTask>[3]) => renumberContextTask(folder, testLocks, ref, language),
   syncStatus: syncStatusTable,
+  deleteTask: (folder: string, ref: string, language: Parameters<typeof deleteContextTask>[3], at: Date) => deleteContextTask(folder, testLocks, ref, language, at),
+  deleteWorkstream: (folder: string, slug: string, language: Parameters<typeof deleteContextWorkstream>[3], at: Date) => deleteContextWorkstream(folder, testLocks, slug, language, at),
 };
 
 // Real persistence with a scripted launcher: this tests the rules around a launch.
@@ -809,7 +813,7 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
 
     const result = await launching.execute(request, []);
 
-    expect(result.prompt).toContain('Existing docs in the project folder: AGENTS.md, Docs/Continuity.md — link and summarise them, do not copy them.');
+    expect(result.prompt).toContain('Existing docs in the project folder: AGENTS.md, Docs/Continuity.md. Link and summarise them, do not copy them.');
   });
 
   it('writes the prompt in the chat language and asks for replies in it; the documents keep their own language (ADR-020 item 6)', async () => {
@@ -840,8 +844,24 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
 
     const result = await launching.execute(request, []);
 
-    expect(result.prompt).toMatch(/^Use the context-resume skill\. Context documents: /);
+    // ADR-028 item 5: the account gets every skill and the MCP server, so the prompt is the short
+    // sentence a user would type in any chat window.
+    expect(result.prompt).toBe('Continue this project.');
     expect(plannedPrompts.at(-1)?.addDir).toBeNull();
+  });
+
+  it('keeps the long prompt, with the skill and the folder, for an account that lacks its tools (ADR-028 item 5.4)', async () => {
+    const { project, profile, request } = allowedProject();
+    await launching.tools.setAutoInstall(profile.id, false);
+    const folder = workspace.updateProjectContext({ id: project.id, enabled: true }).context.path;
+    writeFileSync(join(folder, 'README.md'), '# Context');
+    writeFileSync(join(folder, 'PROJECT_CONTEXT.md'), '# Project\n\nUnity 6.\n');
+    mkdirSync(join(folder, 'Workstreams', 'combo', 'Tasks'), { recursive: true });
+    const ref = 'Workstreams/combo/Tasks/TASK-001-counter.md';
+    writeFileSync(join(folder, ref), '# TASK-001\n## Handoff log\n');
+
+    expect((await launching.preview(request)).prompt).toMatch(/^Use the context-resume skill\. Context documents: /);
+    expect((await launching.preview({ ...request, taskRef: ref })).prompt).toContain(`context-resume skill for TASK-001 (${ref})`);
   });
 
   it('asks an agent to fill the empty layout AgentHub wrote, and again when the user asks for it (ADR-023 item 2)', async () => {
@@ -851,7 +871,7 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
     expect((await launching.execute(request, [])).prompt).toMatch(/^Use the context-init skill\. Context documents: .*AgentContext\. If AgentHub already wrote the empty layout/);
 
     writeFileSync(join(projectDir, 'AgentContext', 'PROJECT_CONTEXT.md'), '# Project\n\nUnity 6.\n');
-    expect((await launching.execute(request, [])).prompt).toMatch(/^Use the context-resume skill/);
+    expect((await launching.execute(request, [])).prompt).toBe('Continue this project.');
     expect((await launching.execute({ ...request, purpose: 'init' }, [])).prompt).toMatch(/^Use the context-init skill/);
   });
 
@@ -949,7 +969,7 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
     const preview = await launching.preview({ ...request, taskRef: ref });
     const result = await launching.execute({ ...request, taskRef: ref }, []);
 
-    expect(result.prompt).toContain(`context-resume skill for TASK-001 (${ref})`);
+    expect(result.prompt).toBe('Continue TASK-001.');
     expect(result.taskRef).toBe(ref);
     expect(launching.listLaunches(project.id)[0]?.taskRef).toBe(ref);
     const warnings = preview.plan.steps.map((step) => text(step.warning)).join(' ');
@@ -968,7 +988,7 @@ describe('opening with context documents (ADR-019, TDD §8.2)', () => {
 
     const result = await launching.execute({ ...request, taskRef: ref }, []);
 
-    expect(result.prompt).toContain(`context-resume skill for TASK-016 (${ref})`);
+    expect(result.prompt).toBe('Continue TASK-016.');
   });
 
   it('refuses a task that is not in the documents, or a task while the documents are off', async () => {

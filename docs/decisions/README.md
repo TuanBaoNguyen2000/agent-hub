@@ -29,7 +29,7 @@ Giữ mã ADR ổn định; phân biệt quyết định đã chốt với lựa
 | ADR-021 | AgentHub quản lý tài liệu và task của project | Accepted | [021-task-and-document-management.md](021-task-and-document-management.md) |
 | ADR-022 | Bố cục cửa sổ theo kiểu Claude/Codex Desktop và IDE | Accepted; mục 2–3 sửa đổi bởi ADR-029 | [022-desktop-shell-layout.md](022-desktop-shell-layout.md) |
 | ADR-023 | Thêm project có hỏi tài liệu, màn Task theo trạng thái, panel Tài liệu | Accepted; mục 4 sửa đổi bởi ADR-027 | [023-project-setup-tasks-and-panels.md](023-project-setup-tasks-and-panels.md) |
-| ADR-024 | Chuyển việc một nút và trạng thái tiến độ | Accepted | [024-one-click-handoff-and-progress-state.md](024-one-click-handoff-and-progress-state.md) |
+| ADR-024 | Chuyển việc một nút và trạng thái tiến độ | Accepted; mục 3 (hộp thoại chuyển account) và mục 10 (tự mở account quen dùng) bỏ theo góp ý 2026-11-10, ghi ở ADR-029 | [024-one-click-handoff-and-progress-state.md](024-one-click-handoff-and-progress-state.md) |
 | ADR-025 | Hook, file chỉ dẫn cấp account và trạng thái agent đang chạy | Open; chờ spike S1–S3 | [Danh sách việc 2026-11-09](../plans/2026-11-09-context-flow-backlog.md) mục A–C |
 | ADR-026 | Cấu trúc skill và quản lý skill trong AgentHub | Accepted; mục 9 sửa đổi bởi ADR-028 | [026-skill-structure-and-management.md](026-skill-structure-and-management.md) |
 | ADR-027 | Số task không trùng, file task là nguồn trạng thái, dẫn link tài liệu có sẵn của repo | Accepted; sửa đổi ADR-023 mục 4 | [027-task-numbers-state-source-and-existing-docs.md](027-task-numbers-state-source-and-existing-docs.md) |

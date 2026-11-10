@@ -32,6 +32,12 @@ Ranh giới này được kiểm tra bằng `no-restricted-imports` trong `eslin
 
 **Chữ hiển thị (ADR-020 mục 6):** không viết chữ cho người dùng thẳng trong code. Backend trả `Message` (khoá `@agenthub/i18n` kèm tham số), `DomainError` nhận khoá thay cho câu; renderer dịch bằng `useI18n()`. Thêm khoá vào cả ba bảng `vi`, `en`, `ko` (test kiểm tra cùng khoá và tham số). Lời nhắc cho agent dịch theo ngôn ngữ trò chuyện; lỗi chỉ agent đọc qua MCP để tiếng Anh với `raw()`. E2E chạy với `--lang=vi`.
 
+**Cách viết chữ giao diện** (người dùng góp ý 2026-11-10):
+- Mỗi ý là một câu ngắn. Không nối hai câu bằng dấu chấm phẩy ("a; b"); tách thành hai câu hoặc nối bằng "và", "nên", "rồi".
+- Không nhắc lại điều giao diện đã cho thấy. Ví dụ: tiêu đề đã ghi "Gỡ khỏi AgentHub" thì gợi ý không viết lại "Chỉ gỡ khỏi AgentHub"; lựa chọn "Folder khác" thì gợi ý không mở đầu bằng "Folder bạn chọn".
+- Gợi ý nói điều người dùng cần biết để quyết định, không giải thích cách AgentHub làm bên trong.
+- Khi đổi nội dung một khoá, sửa cả ba bảng `vi`, `en`, `ko`.
+
 Renderer không gọi Node APIs, SQLite, filesystem hoặc process. Preload không expose raw `ipcRenderer` hoặc API thực thi tùy ý. Domain validation và transport validation phục vụ hai boundary khác nhau; không đưa quy tắc nghiệp vụ vào Renderer để thay cho kiểm tra trong Main/application.
 
 ## Lệnh phát triển

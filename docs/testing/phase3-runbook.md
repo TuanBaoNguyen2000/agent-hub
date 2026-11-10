@@ -1,6 +1,6 @@
 # Phase 3 — kịch bản thử từng bước
 
-Kịch bản chi tiết để chạy [danh sách thử](phase3-acceptance.md) trên bộ [project thử](sandbox-projects.md). Các phần xếp theo chi phí: **phần A không gọi agent** (0 token), phần B–D dùng agent với việc nhỏ, phần E tốn nhiều token nhất nên để cuối. Tạo ngày 2026-11-10, cho bản `.app` đóng gói cùng ngày (có ADR-024, ADR-026, ADR-027).
+Kịch bản chi tiết để chạy [danh sách thử](phase3-acceptance.md) trên bộ [project thử](sandbox-projects.md). Các phần xếp theo chi phí: **phần A không gọi agent** (0 token), phần B–D dùng agent với việc nhỏ, phần E tốn nhiều token nhất nên để cuối. Tạo ngày 2026-11-10, cho bản `.app` đóng gói cùng ngày (có ADR-024, ADR-026, ADR-027). Bản đóng gói lại sau ADR-028 và ADR-029 (2026-11-10) đổi chỗ của Công cụ agent và lời nhắc khi mở; các bước liên quan đã sửa theo, và phần mới nằm ở **mục G**: chạy mục G trước nếu chỉ muốn thử thay đổi mới.
 
 Mỗi bước có **Làm** (thao tác) và **Đạt khi** (điều phải thấy). Ghi kết quả vào bảng ở cuối file: Đạt / Không đạt / Khựng (làm được nhưng phải dừng để đoán), kèm một dòng ghi chú. Không chép nội dung hội thoại.
 
@@ -12,7 +12,7 @@ Mỗi bước có **Làm** (thao tác) và **Đạt khi** (điều phải thấy
 | 0.2 | Đưa ba repo về `baseline`: trong từng repo chạy `git reset --hard baseline && git clean -fd`; với `sandbox_shooter` chạy `git switch VN/playable001` trước | `git status` sạch; shooter ở `VN/playable001` |
 | 0.3 | Nếu ba project thử đã có trong sidebar từ lần trước: gỡ chúng khỏi AgentHub | Sidebar không còn project thử |
 | 0.4 | Chuẩn bị account. Gọi tên trong file này: **A** = Claude account riêng, **B** = Claude account riêng thứ hai (hoặc account chính), **C** = Codex. Tối thiểu cần A và C | Mỗi account là một dòng ở Account, có usage |
-| 0.5 | Cài đặt → Công cụ agent: với A, B, C, bấm "Cài" cho 6 skill `context-*` và MCP (hoặc bật "Tự cài khi mở") | Các ô đều chấm xanh; `~/.agents/skills` không có skill `context-*` |
+| 0.5 | Thanh bên → **Công cụ agent** → "Cài đủ cho tất cả" (hoặc nút Cài trên từng dòng) | Mọi dòng ghi "Skill 6/6 · Đủ" và "MCP · Đã cài"; dòng Công cụ agent ở thanh bên hết chấm vàng; `~/.agents/skills` không có skill `context-*` |
 | 0.6 | Ghi % usage tuần của A, B, C trước khi thử | Có số để so ở cuối |
 
 **Tiết kiệm token:** trong các phiên agent, chỉ nói đúng câu ghi trong bước. Nếu account cho chọn model, dùng model rẻ cho phần B–D; phần E (`context-init`) nên dùng model tốt hơn vì chất lượng tài liệu ảnh hưởng mọi phiên sau.
@@ -67,10 +67,10 @@ Mỗi bước có **Làm** (thao tác) và **Đạt khi** (điều phải thấy
 
 | # | Làm | Đạt khi |
 |---|---|---|
-| A5.1 | Tổng quan → khu mở account | Mỗi account một dòng, hai thanh usage, trạng thái (Sẵn sàng / Hết hạn mức…), account còn nhiều quota đứng đầu; chip ở sidebar ghi "Tuần …%" |
-| A5.2 | Cài đặt → Công cụ agent → chọn A → "Xem" ở `context-capture` | Thấy `SKILL.md` có `context_create_task`, và `references/document-layout.md` |
+| A5.1 | Tổng quan → khu mở account | Mỗi account một dòng, hai thanh usage, trạng thái (Sẵn sàng / Hết hạn mức…); thứ tự giống danh sách account, account gợi ý có nút tô đậm; chip ở sidebar ghi "Tuần …%" |
+| A5.2 | Bấm A ở thanh bên (trang của A) → "Xem" ở `context-capture` | Thấy `SKILL.md` có `context_create_task`, và `references/document-layout.md` |
 | A5.3 | Gỡ MCP của C trong menu ⋯, rồi mở C cho shooter | Bảng "Trước khi mở" báo thiếu MCP, có nút "Cài cho account này"; bấm thì cài xong và mở tiếp. (Nếu không muốn tốn token: thoát CLI ngay khi nó mở) |
-| A5.4 | Trang MCP → "Thử kết nối" cho A | "Kết nối được · 9 tool" |
+| A5.4 | Công cụ agent → Chi tiết MCP server → "Thử kết nối" cho A | "Kết nối được · 11 tool" |
 
 ## B. Agent, việc nhỏ trên `sandbox_shooter` TASK-004
 
@@ -83,7 +83,7 @@ Một chuỗi liền mạch kiểu "một ngày làm việc". TASK-004 chỉ cò
 | B1.1 | Tab Task → TASK-004 → "Làm tiếp task này" → chọn A, cách mở Terminal | Terminal mở ở folder project, lời nhắc tự gửi; nếu Claude hỏi tin folder, chọn Yes |
 | B1.2 | Đợi agent báo cáo (`context-resume`) | Agent nêu đúng: task, việc còn lại (phần `TODO(TASK-004)`), handoff mới nhất của Codex, tách verified / observed / reported, **chưa sửa code** |
 | B1.3 | Gõ: "Làm phần còn lại của TASK-004, chỉ sửa code, chưa checkpoint." | Agent sửa `PlayerHealth.cs` (và 1 file nữa nếu cần) |
-| B1.4 | Tổng quan → menu ⋯ của dòng Tiến độ → "Copy lời nhắc checkpoint" → dán vào phiên A | Agent dùng `context-checkpoint`: handoff mới ở đầu Handoff log của TASK-004 (giờ có `+0700`), `Status:` trong file đổi (thường In review), dòng trong `STATUS.md` cùng chữ. Dòng Tiến độ thành "Đã lưu · … · A" |
+| B1.4 | Trong phiên A, gõ "lưu lại" | Agent dùng `context-checkpoint`: handoff mới ở đầu Handoff log của TASK-004 (giờ có `+0700`), `Status:` trong file đổi (thường In review), dòng trong `STATUS.md` cùng chữ. Dòng Tiến độ thành "Đã lưu · … · A" |
 
 ### B2. A → B qua Desktop (scenario 2)
 
@@ -104,17 +104,18 @@ Một chuỗi liền mạch kiểu "một ngày làm việc". TASK-004 chỉ cò
 | # | Làm | Đạt khi |
 |---|---|---|
 | B4.1 | Ở phiên A (Terminal, hoặc mở lại A), gõ: "Thêm một dòng comment giải thích ở đầu PlayerHealth.cs. Không checkpoint." Đợi xong, **không** checkpoint | Dòng Tiến độ chuyển "Có việc chưa lưu · phiên Claude của A còn làm tới …"; chấm vàng cạnh project ở sidebar |
-| B4.2 | Tổng quan → **Chuyển sang account khác** → chọn B → **Chuyển ngay** | Bảng trước khi mở hỏi đọc transcript: Không đọc / Lần này / Luôn với project này; có cảnh báo khác account |
+| B4.2 | Tổng quan → mở B ở danh sách account | Bảng trước khi mở hỏi đọc transcript: Không đọc / Lần này / Luôn với project này; có cảnh báo khác account |
 | B4.3 | Chọn "Lần này", mở B (Terminal nếu được, để đỡ bước dán) | B dùng `context-recover`: lọc transcript sau giờ checkpoint, viết handoff bù ghi rõ "Recovered from the session transcript", các ý đánh dấu reported (hoặc observed nếu B tự kiểm tra Git) |
 | B4.4 | Xem Tổng quan | Dòng Tiến độ về "Đã lưu" |
 
 ### B5. Lưu rồi chuyển (scenario 8)
 
+Từ 2026-11-10 không còn hộp thoại "Chuyển sang account khác" (người dùng chọn bỏ): lưu là một câu trong phiên cũ, chuyển là mở account khác ở danh sách.
+
 | # | Làm | Đạt khi |
 |---|---|---|
-| B5.1 | Đang có phiên B mở. Tổng quan → Chuyển sang account khác → chọn A (hoặc C) → **Lưu rồi chuyển** → "Copy lời nhắc và chờ" | Hộp thoại "Đang chờ agent ghi tiến độ" |
-| B5.2 | Dán lời nhắc vào phiên B, gửi | Ngay khi B ghi handoff, account đích tự mở với lời nhắc `context-resume`, không bấm thêm |
-| B5.3 | Lặp lại B5.1 nhưng bấm "Mở luôn, không chờ" | Chuyển sang cách Chuyển ngay |
+| B5.1 | Đang có phiên B mở. Gõ "lưu lại" trong phiên B | B ghi checkpoint đầy đủ; dòng Tiến độ thành "Đã lưu" |
+| B5.2 | Tổng quan → mở A (hoặc C) ở danh sách account | Account mới mở với "Làm tiếp project này."; agent nêu đúng task và handoff mới nhất của B |
 
 ### B6. Mở lại khi đã đổi branch (scenario 4)
 
@@ -165,6 +166,55 @@ Một chuỗi liền mạch kiểu "một ngày làm việc". TASK-004 chỉ cò
 | F3 | Ghi % usage tuần của A, B, C | So với bước 0.6 |
 | F4 | Reset ba repo về `baseline` (runner về `after-init`); gỡ project thử khỏi AgentHub nếu muốn | |
 
+## G. Sau ADR-028 và ADR-029: làm tiếp bằng một câu, Công cụ agent, sửa lỗi I1–I5
+
+Chạy sau bước 0. G1–G2 không gọi agent. G3–G4 dùng agent với câu rất ngắn. Ở G3 **không mở qua AgentHub**: tự mở Terminal.app (hoặc tab Code của Claude Desktop) trong folder `sandbox_shooter`.
+
+### G1. Công cụ agent (0 token)
+
+| # | Làm | Đạt khi |
+|---|---|---|
+| G1.1 | Mở Cài đặt (⌘,) | Chỉ còn ba tab: Chung, Account, Nâng cao |
+| G1.2 | Gỡ MCP của C trên trang của C (bấm C ở thanh bên, menu ⋯ của dòng MCP) | Dòng **Công cụ agent** ở thanh bên có chấm vàng và số 1; dòng C có chấm vàng |
+| G1.3 | Thanh bên → Công cụ agent | Mỗi account một dòng: số skill, MCP, đúng một nút (Cài / Cập nhật / Xem). Dòng C có nút **Cài** |
+| G1.4 | "Cài đủ cho tất cả" | Hộp thoại nêu C và "MCP "agenthub""; account chính (nếu có) có dòng cảnh báo riêng. Bấm Cài: câu tóm tắt thành "Mọi account đã đủ công cụ.", chấm vàng mất |
+| G1.5 | Công cụ agent → Lệnh nhanh; bấm một lệnh | Bảng có câu ngắn ("làm tiếp") và lệnh gọi skill (`/context-resume`), không có số task mẫu, không có nút chọn Claude/Codex; bấm thì báo đã copy |
+| G1.6 | Bấm A ở thanh bên → "Công cụ agent của account này" | Menu còn "Mở trong Desktop", "Mở trong Terminal". Trang của A: usage, "Tự cài khi mở", nhóm Skill và nhóm MCP tách riêng, Lệnh nhanh cho Claude; hai nút Desktop và Terminal ngang nhau |
+| G1.7 | Trang của account Codex free | Có thanh usage (hạn mức 30 ngày), không còn trống (I5) |
+
+### G2. Task và giao diện (0 token)
+
+| # | Làm | Đạt khi |
+|---|---|---|
+| G2.1 | Tab Task → tạo task "Xoá thử" → mở → ⋯ → "Xoá task…" → Xoá | File vào Thùng rác của macOS; dòng biến khỏi bảng `STATUS.md`, xuất hiện ở mục "Deleted tasks" (hoặc "Task đã xoá") cuối file |
+| G2.2 | Tạo task mới ngay sau đó | Nhận số **kế tiếp số đã xoá**, không dùng lại số đó (I1) |
+| G2.3 | Tạo workstream "Thử xoá" → nút ⋯ cạnh "Tạo task" → "Xoá workstream "Thử xoá"…" | Folder vào Thùng rác; `README.md` của bộ tài liệu có mục "Deleted workstreams" |
+| G2.4 | Làm lệch trạng thái một task (sửa dòng `Status:` bằng editor), "Kiểm tra tài liệu" ở Tổng quan | Thẻ Tài liệu liệt kê cảnh báo **kèm số task**; bấm số task thì mở đúng task ở tab Task (I4) |
+| G2.5 | Thu hẹp cửa sổ còn khoảng 1000px, mở panel Tài liệu (⌘⇧E) và một file | Cây file nằm trên, nội dung bên dưới; không chữ nào đè nhau (I2) |
+| G2.6 | Trong panel task, "Làm tiếp task này" khi panel hẹp | Mỗi account một hàng, usage xuống dưới tên; có nút **×** để đóng (I3) |
+| G2.7 | Panel task → "Copy lệnh" | Menu có câu ngắn và một lệnh `/context-resume TASK-…` dùng chung cho Claude và Codex, đúng số task |
+| G2.8 | Tổng quan của shooter | Không còn thanh "Task cho lần mở tới"; dòng Tiến độ chỉ để xem (trạng thái, Lần lưu cuối / Task / Sau lần lưu, câu "Muốn lưu: gõ lưu lại…"), không còn nút; danh sách account không có nút nào tô đậm; khung Tài liệu context không còn "Copy lời nhắc đối chiếu" |
+| G2.9 | Tab Cài đặt của project | Có "Đổi folder" và "Gỡ project"; thanh tab không còn menu ⋯ |
+
+### G3. Làm tiếp bằng một câu, không qua AgentHub
+
+| # | Làm | Đạt khi |
+|---|---|---|
+| G3.1 | Terminal.app: `cd` vào `sandbox_shooter`, chạy `claude` với account A (`CLAUDE_CONFIG_DIR` của A, hoặc mở Terminal của A từ trang của A rồi `cd`). Gõ: **làm tiếp TASK-004** | Agent gọi `context_here` rồi `context_task`, dùng `context-resume`; không hỏi đường dẫn tài liệu; nêu đúng TASK-004, cảnh báo kèm số task; chưa sửa code |
+| G3.2 | Gõ: **trạng thái sao rồi** | Trả lời vài dòng (task đang làm, chờ duyệt, bị chặn, cảnh báo, thay đổi chưa commit); không đọc thêm tài liệu, không đề xuất việc |
+| G3.3 | Cho agent làm một tiêu chí nhỏ của TASK-004 | Sau khi tick tiêu chí, Handoff log có mục ngắn `(short)` mà bạn không nhắc |
+| G3.4 | Gõ: **lưu lại** | Checkpoint đầy đủ; các mục `(short)` trước đó được gộp |
+| G3.5 | Phiên mới, gõ `/context-resume TASK-004` | Chạy đúng skill như G3.1 |
+| G3.6 | Lặp G3.1, G3.2 với `codex` (account C); thử `/context-resume TASK-004` | Ghi lại Codex có tự nhận câu ngắn không. Lệnh `/` và `$` đều chạy (người dùng đã thử 2026-11-10) |
+| G3.7 | Gỡ `context-checkpoint` khỏi C (trang của C). Trong phiên `codex`, gõ **lưu lại** | Agent báo thiếu skill và chỉ chỗ cài trong AgentHub; không tự chép skill. Cài lại sau bước này |
+
+### G4. Mở từ AgentHub
+
+| # | Làm | Đạt khi |
+|---|---|---|
+| G4.1 | TASK-004 → "Làm tiếp task này" với A (Terminal) | Lời nhắc gửi đi chỉ là "Làm tiếp TASK-004." (cộng câu chọn ngôn ngữ); agent làm như G3.1 |
+| G4.2 | Tắt "Tự cài khi mở" của một account rồi gỡ một skill của nó; mở lại TASK-004 bằng account đó | Lời nhắc quay về dạng dài, có tên skill và đường dẫn tài liệu |
+
 ## Bảng kết quả
 
 Điền khi chạy; gửi lại nguyên bảng cùng các ghi chú. Cột "Thao tác" là số lần click, copy, dán hoặc gõ giải thích lại cho bước đó, nếu bạn muốn đo mức giảm thao tác.
@@ -186,6 +236,11 @@ Một chuỗi liền mạch kiểu "một ngày làm việc". TASK-004 chỉ cò
 | D1–D4 | | | |
 | E1–E6 | | | |
 | F1–F4 | | | |
+| G1 | | | |
+| G2 | | | |
+| G3 (Claude) | | | |
+| G3 (Codex) | | | |
+| G4 | | | |
 | Usage trước → sau | A: · B: · C: | | |
 
 ## Điểm cần bạn quyết định khi thử

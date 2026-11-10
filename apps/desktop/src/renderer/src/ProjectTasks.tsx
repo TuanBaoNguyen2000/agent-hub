@@ -1,6 +1,5 @@
 import type {
   ContextTaskDto,
-  LaunchAttemptDto,
   ProfileDto,
   ProjectContextDto,
   ProjectDto,
@@ -10,7 +9,7 @@ import type {
   UsageDto,
 } from '@agenthub/contracts';
 import { TASK_STATES } from '@agenthub/contracts/constants';
-import { LOCALES, type MessageKey, TABLES } from '@agenthub/i18n';
+import { LOCALES, type MessageKey, TABLES, translate } from '@agenthub/i18n';
 import { type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { api, unwrap } from './api';
 import { useExternalChange } from './documentWatch';
@@ -18,8 +17,8 @@ import { useI18n } from './i18n';
 import { ChevronDown, ChevronRight, Close, More, Plus } from './icons';
 import { Markdown } from './Markdown';
 import { PasteHandoff } from './ProjectHandoffs';
-import { defaultAccount } from './accounts';
-import { type LaunchRequestView, ProjectLaunch } from './ProjectLaunch';
+import { ProjectLaunch } from './ProjectLaunch';
+import { skillCommand } from './quickCommands';
 import { Dialog, Menu, MenuItem, PathText, Segmented, Select, StatusText, type StatusTone } from './ui';
 
 type I18n = ReturnType<typeof useI18n>;
@@ -77,9 +76,6 @@ interface Props {
   context: ProjectContextDto | undefined;
   // Only while the tab is shown: what is not shown is not watched.
   active: boolean;
-  // The task the overview's launch points the agent at; null leaves the choice to the agent.
-  selected: string | null;
-  onSelect: (taskRef: string | null) => void;
   // A task another part of the page asks to show, such as a task file in the documents panel.
   focus: { ref: string; at: number } | null;
   onCreateDocs: () => void;
@@ -90,9 +86,8 @@ interface Props {
   onError: (message: string | undefined) => void;
   accounts: ProfileDto[] | undefined;
   usages: Record<string, UsageDto>;
-  history: LaunchAttemptDto[];
   onOpenSettings: () => void;
-  onOpenTools: () => void;
+  onOpenTools: (profileId?: string) => void;
   onLaunched: () => void;
 }
 
@@ -123,7 +118,7 @@ function readView(): View {
 // ADR-023 item 5 (after ADR-021 items 2–7): the tasks the documents hold, grouped by state, in a
 // list or on a board; one opens in a panel on the right with its properties and sections.
 export function ProjectTasks(props: Props) {
-  const { project, context, selected, focus, onCreateDocs, onReload, onError } = props;
+  const { project, context, focus, onCreateDocs, onReload, onError } = props;
   const i18n = useI18n();
   const { t } = i18n;
   const [view, setView] = useState<View>(readView);
@@ -132,6 +127,8 @@ export function ProjectTasks(props: Props) {
   const [viewing, setViewing] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [creatingWorkstream, setCreatingWorkstream] = useState(false);
+  // Backlog I1: what the user asked to delete, waiting for the confirmation.
+  const [deleting, setDeleting] = useState<{ kind: 'workstream'; slug: string; title: string; tasks: number } | null>(null);
   const [launchFor, setLaunchFor] = useState<{ ref: string; purpose: 'resume' | 'refine' } | null>(null);
   const [collapsed, setCollapsed] = useState<Set<TaskStateDto>>(() => new Set(['done']));
   const [panelWidth, setPanelWidth] = useState<number | null>(readPanelWidth);
@@ -200,7 +197,6 @@ export function ProjectTasks(props: Props) {
         <button type="button" className="task-row" data-testid="context-task" aria-current={task.ref === open ? 'true' : undefined} onClick={() => setViewing(task.ref)}>
           <span className="task-id">{task.id}</span>
           <span className="task-row-title truncate">{task.title.replace(new RegExp(`^${task.id}[\\s:.-]*`, 'i'), '') || task.title}</span>
-          {task.ref === selected && <span className="badge ok">{t('tasks.forLaunch')}</span>}
           {taskWarnings.length > 0 && (
             <span className="task-warning-mark" title={taskWarnings.map((warning) => i18n.tr(warning.message)).join('\n')}>
               ▲ {taskWarnings.length}
@@ -242,6 +238,19 @@ export function ProjectTasks(props: Props) {
                 <Plus />
                 {t('tasks.create')}
               </button>
+            )}
+            {overview.workstreams.length > 0 && (
+              <Menu label={t('tasks.workstreamMenu')} triggerClassName="icon-button" align="end" trigger={<More />}>
+                {overview.workstreams.map((item) => (
+                  <MenuItem
+                    key={item.slug}
+                    tone="danger"
+                    onSelect={() => setDeleting({ kind: 'workstream', slug: item.slug, title: item.title, tasks: item.tasks.length })}
+                  >
+                    {t('tasks.deleteWorkstreamNamed', { name: item.title })}
+                  </MenuItem>
+                ))}
+              </Menu>
             )}
           </span>
         </div>
@@ -318,6 +327,21 @@ export function ProjectTasks(props: Props) {
             await onReload();
             setViewing(task.ref);
             setLaunchFor(refine ? { ref: task.ref, purpose: 'refine' } : null);
+          }}
+          onError={onError}
+        />
+      )}
+      {deleting && (
+        <ConfirmDelete
+          title={t('tasks.deleteWorkstreamTitle', { name: deleting.title })}
+          body={t('tasks.deleteWorkstreamBody', { count: deleting.tasks })}
+          onClose={() => setDeleting(null)}
+          onConfirm={async () => {
+            await unwrap(api.deleteWorkstream({ id: project.id, workstream: deleting.slug }));
+            setDeleting(null);
+            if (workstreamFilter === deleting.slug) setWorkstreamFilter('all');
+            if (open && workstreamOf(open) === deleting.slug) setViewing(null);
+            await onReload();
           }}
           onError={onError}
         />
@@ -472,10 +496,8 @@ function handoffEntries(body: string): { heading: string; body: string }[] {
 type Editing = { kind: 'section'; id: number } | { kind: 'add'; section: EditableKind } | { kind: 'title' } | { kind: 'markdown' } | null;
 
 function TaskDetail(props: DetailProps) {
-  const { project, context, taskRef, task: listed, workstreamTitle, branch, active, selected, onSelect, onReload, onShowFile, onError, launch, onLaunch, onRenumbered, onClose } = props;
-  const { accounts, usages, history, onOpenSettings, onOpenTools, onLaunched, panelWidth, onPanelWidth } = props;
-  // ADR-024 item 10: "Continue this task" opens the project's usual account right away.
-  const [resumeRequest, setResumeRequest] = useState<LaunchRequestView | null>(null);
+  const { project, context, taskRef, task: listed, workstreamTitle, branch, active, onReload, onShowFile, onError, launch, onLaunch, onRenumbered, onClose } = props;
+  const { accounts, usages, onOpenSettings, onOpenTools, onLaunched, panelWidth, onPanelWidth } = props;
   const i18n = useI18n();
   const { t } = i18n;
   const [task, setTask] = useState<TaskViewDto>();
@@ -484,6 +506,17 @@ function TaskDetail(props: DetailProps) {
   const [criteriaDraft, setCriteriaDraft] = useState<Criterion[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string>();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // ADR-028 item 7.2: what to type in any chat window to continue this task.
+  async function copyCommand(text: string): Promise<void> {
+    try {
+      await unwrap(api.copyText({ text }));
+      setNotice(t('tasks.commandCopied', { text }));
+    } catch (reason) {
+      onError((reason as Error).message);
+    }
+  }
   // ADR-027: problems only the user can settle, with the button that settles them.
   const fixes = context?.warnings.filter((warning) => warning.taskRef === taskRef && (warning.kind === 'duplicate_task_id' || warning.kind === 'state_mismatch')) ?? [];
 
@@ -572,7 +605,6 @@ function TaskDetail(props: DetailProps) {
     onError(undefined);
     try {
       const moved = await unwrap(api.renumberTask({ id: project.id, ref: taskRef }));
-      if (taskRef === selected) onSelect(moved.ref);
       await onReload();
       onRenumbered(moved.ref);
     } catch (reason) {
@@ -625,12 +657,7 @@ function TaskDetail(props: DetailProps) {
       onLaunch(null);
       return;
     }
-    // The overview's launch follows the task the user works on (ADR-023 item 5).
-    if (purpose === 'resume') {
-      onSelect(taskRef);
-      const account = accounts ? defaultAccount(accounts, usages, history) : undefined;
-      setResumeRequest(account ? { profileId: account.id, mode: account.preferredMode, useTranscript: false, at: Date.now() } : null);
-    } else setResumeRequest(null);
+    // Review 2026-11-10: no account is put forward; the user picks one from the list.
     onLaunch(purpose);
   }
 
@@ -712,7 +739,9 @@ function TaskDetail(props: DetailProps) {
           </MenuItem>
           <MenuItem onSelect={() => onShowFile(taskRef)}>{t('tasks.showInDocuments')}</MenuItem>
           <MenuItem onSelect={() => void openFile()}>{t('tasks.openFile')}</MenuItem>
-          {taskRef === selected && <MenuItem onSelect={() => onSelect(null)}>{t('tasks.unuse')}</MenuItem>}
+          <MenuItem tone="danger" onSelect={() => setConfirmDelete(true)}>
+            {t('tasks.delete')}
+          </MenuItem>
         </Menu>
         <button type="button" className="icon-button" aria-label={t('tasks.closeDetail')} onClick={onClose}>
           <Close />
@@ -798,10 +827,23 @@ function TaskDetail(props: DetailProps) {
           <button type="button" aria-expanded={launch === 'refine'} onClick={() => openLaunch('refine')}>
             {t('tasks.askAgent')}
           </button>
+          <Menu label={t('tasks.copyCommand')} trigger={t('tasks.copyCommand')} align="end">
+            <MenuItem description={t('tasks.copyPhraseHint')} onSelect={() => void copyCommand(translate(i18n.chatLocale, 'quick.phrase.resume', { task: task.id }))}>
+              {translate(i18n.chatLocale, 'quick.phrase.resume', { task: task.id })}
+            </MenuItem>
+            <MenuItem description={t('tasks.copySkillHint')} onSelect={() => void copyCommand(skillCommand('context-resume', task.id))}>
+              {skillCommand('context-resume', task.id)}
+            </MenuItem>
+          </Menu>
         </div>
         {launch && (
           <div className="refine-box" role="group" aria-label={t(launch === 'refine' ? 'tasks.askAgent' : 'tasks.launchWith')}>
-            <p className="hint">{t(launch === 'refine' ? 'tasks.askAgentHint' : 'tasks.launchHint')}</p>
+            <div className="row nowrap refine-head">
+              <p className="hint grow">{t(launch === 'refine' ? 'tasks.askAgentHint' : 'tasks.launchHint')}</p>
+              <button type="button" className="icon-button" aria-label={t('tasks.closeLaunch')} title={t('tasks.closeLaunch')} onClick={() => onLaunch(null)}>
+                <Close />
+              </button>
+            </div>
             <ProjectLaunch
               project={project}
               taskRef={taskRef}
@@ -809,8 +851,6 @@ function TaskDetail(props: DetailProps) {
               {...(launch === 'refine' ? { purpose: 'refine' as const } : {})}
               accounts={accounts}
               usages={usages}
-              request={launch === 'resume' ? resumeRequest : null}
-              history={history}
               onOpenSettings={onOpenSettings}
               onOpenTools={onOpenTools}
               onLaunched={onLaunched}
@@ -932,6 +972,20 @@ function TaskDetail(props: DetailProps) {
           </>
         )}
       </div>
+      {confirmDelete && (
+        <ConfirmDelete
+          title={t('tasks.deleteTitle', { task: task.id })}
+          body={t('tasks.deleteBody', { task: `${task.id} ${task.document.title}`.trim() })}
+          onClose={() => setConfirmDelete(false)}
+          onConfirm={async () => {
+            await unwrap(api.deleteTask({ id: project.id, ref: taskRef }));
+            setConfirmDelete(false);
+            onClose();
+            await onReload();
+          }}
+          onError={onError}
+        />
+      )}
     </>,
   );
 }
@@ -1025,6 +1079,44 @@ function CreateTaskDialog({
         <span className="field-label">{t('tasks.section.goal')}</span>
         <textarea rows={4} value={goal} onChange={(event) => setGoal(event.target.value)} />
       </label>
+    </Dialog>
+  );
+}
+
+// Backlog I1: deleting moves files to the system Trash; the number stays listed in the documents.
+function ConfirmDelete({ title, body, onClose, onConfirm, onError }: { title: string; body: string; onClose: () => void; onConfirm: () => Promise<void>; onError: (message: string | undefined) => void }) {
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+
+  async function confirm(): Promise<void> {
+    setBusy(true);
+    onError(undefined);
+    try {
+      await onConfirm();
+    } catch (reason) {
+      onError((reason as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog
+      label={title}
+      title={title}
+      onClose={onClose}
+      actions={
+        <>
+          <button type="button" onClick={onClose}>
+            {t('common.cancel')}
+          </button>
+          <button type="button" className="danger-fill" disabled={busy} onClick={() => void confirm()}>
+            {t('tasks.deleteConfirm')}
+          </button>
+        </>
+      }
+    >
+      <p>{body}</p>
+      <p className="hint">{t('tasks.deleteNumbersKept')}</p>
     </Dialog>
   );
 }

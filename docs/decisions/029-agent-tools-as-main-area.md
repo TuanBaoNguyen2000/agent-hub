@@ -87,7 +87,7 @@ Sửa đổi:
 ## Không thuộc ADR này
 
 - **"Đang chạy"** (account nào đang mở phiên, ở project nào): thuộc ADR-025 mục C, chờ spike S1–S3. Khi có, trang account sẽ là chỗ hiện thông tin này.
-- **Thứ tự account** (lỗi I6): trang tổng quan dùng chung thứ tự với thanh bên, theo quyết định của I6.
+- **Thứ tự account** (lỗi I6): trang tổng quan dùng chung thứ tự với thanh bên. Người dùng chọn (2026-11-10) giữ thứ tự của danh sách account ở mọi nơi; account được gợi ý chỉ có nút tô đậm.
 - **Chuyển đăng nhập và quản lý account** từ Cài đặt sang trang account: để sau, nếu người dùng thấy cần.
 - Không đổi cách cài, gỡ, symlink hay bản chung của skill (ADR-020, ADR-026); chỉ đổi chỗ hiện.
 
@@ -104,6 +104,47 @@ Sửa đổi:
 - Code của `AgentToolsSection` và `McpServerPage` phải tách khỏi hộp thoại Cài đặt; các E2E đang mở Cài đặt → Công cụ agent hoặc MCP server phải viết lại.
 - Trạng thái công cụ phải đọc cho mọi account khi app mở và khi account đổi, để chấm ở thanh bên đúng. Việc đọc thư mục skill cần nhẹ: chỉ đọc metadata và checksum, không đọc nội dung skill.
 - Thêm khoá i18n cho vi, en, ko.
+
+## Triển khai (2026-11-10)
+
+- **Trang mới** (`apps/desktop/src/renderer/src/AgentToolsPage.tsx`):
+  - `ToolsOverview`: tóm tắt, "Cài đủ cho tất cả" có hộp thoại nêu từng account, mỗi account một dòng với một nút.
+  - `AccountToolsPage`: usage, nút mở Desktop/Terminal, thẻ công cụ dùng lại `AccountTools`, Lệnh nhanh.
+  - Ba trang con: `SkillLibrary`, `McpDetails`, `QuickCommandsPage`.
+- **Trạng thái gộp** (`toolsHealth.ts`): skill có sẵn còn thiếu, trùng tên, skill riêng có folder gốc đổi, MCP thiếu hoặc chưa đủ; nút theo thứ tự Cài → Cập nhật → Xem.
+- **App và thanh bên** (`App.tsx`):
+  - Màn `tools` cạnh project và chat.
+  - Dòng Công cụ agent có chấm và số account cần xử lý.
+  - Dòng account mở trang account. Menu mở Desktop/Terminal cũ ở thanh bên chuyển lên đầu trang account.
+- **Cài đặt** (`SettingsView.tsx`) còn ba tab. "Mở Công cụ agent" ở bảng trước khi mở đưa tới trang của đúng account.
+- **"Cập nhật"**: mở trình xem skill (diff và nút cập nhật từ folder gốc), không tự chép đè.
+- **Menu:** cuộn trang bắt đầu trước khi menu mở (trang đưa nút vào tầm nhìn) không còn đóng menu (`ui.tsx`, bỏ qua cuộn trong 300 ms đầu).
+- **Bố cục hẹp:** dòng account trên trang tổng quan và trong bảng mở dùng container query, xuống hai dòng khi hẹp (lỗi I3).
+- **Kiểm chứng tự động:**
+  - `npm run check` đạt; `tools-health.test.ts` kiểm tra trạng thái gộp và nút.
+  - E2E (33 đạt, 2 bỏ qua, trên bản build và `.app` đóng gói lại 2026-11-10): các bài cũ về công cụ chuyển sang trang account và Thư viện skill. Bài mới kiểm tra: Cài đặt còn ba tab, chấm ở thanh bên, "Cài đủ cho tất cả", Lệnh nhanh, trang account.
+- **Chưa kiểm chứng:** trên `.app` với bốn account thật (mục G1 của [kịch bản thử](../testing/phase3-runbook.md)).
+
+## Sửa sau góp ý của người dùng (2026-11-10, sau khi dùng bản đóng gói)
+
+Người dùng duyệt các điểm dưới đây khi xem bản đóng gói (chọn "Bỏ thanh này" và "Gọn lại" cho hai câu hỏi).
+
+1. **Thanh bên** (sửa mục 1): bấm account mở lại **menu mở nhanh** như trước (Mở trong Desktop, Mở trong Terminal), thêm hai mục "Công cụ agent của account này" và "Quản lý account". Trang của account vào từ menu này hoặc từ trang Công cụ agent.
+2. **Trang account** (sửa mục 3):
+   - Skill và MCP là **hai nhóm riêng**: "Tự cài khi mở" ở trên cùng; nhóm Skill có số đã cài và nút "Cài N skill còn thiếu"; nhóm MCP server agenthub có trạng thái, Cài/Gỡ và "Chi tiết".
+   - "Mở trong Desktop" và "Mở trong Terminal" là **hai nút ngang nhau**, không còn ưu tiên Desktop.
+   - Hộp thoại "Cài đủ cho tất cả" ghi skill và MCP trên hai dòng riêng.
+3. **Ngoài ADR này**, cùng đợt sửa:
+   - Bỏ thanh **"Task cho lần mở tới"** ở Tổng quan, cùng nhãn "lần mở tới" và mục "Bỏ chọn" ở tab Task (sửa ADR-023 mục 5). Mở từ Tổng quan là "Làm tiếp project này"; muốn đúng một task thì dùng "Làm tiếp task này" hoặc "Copy lệnh" ở tab Task. "Chuyển sang account khác" làm tiếp task của checkpoint gần nhất.
+   - **Khung Tài liệu context**: bỏ "Copy lời nhắc đối chiếu" và lời nhắc `prompt.reconcile` (đối chiếu là một câu với agent, ADR-028). "Nhờ agent điền tài liệu" chỉ hiện khi tài liệu còn trống (sửa ADR-020 mục 3). Cảnh báo task không lặp số task.
+   - **Dòng Tiến độ**: trạng thái ở đầu, rồi từng dòng "Lần lưu cuối", "Task" (bấm để mở), "Sau lần lưu" (khi có việc chưa lưu); "Copy lời nhắc checkpoint" là nút cạnh "Chuyển sang account khác", không còn menu ⋯.
+   - **Đổi folder và Gỡ project** chuyển vào tab Cài đặt của project; bỏ menu ⋯ trên thanh tab. Mục menu "Gỡ" bị tô đỏ che chữ là lỗi của kiểu `button.danger` thêm ở đợt trước; đổi thành `button.danger-fill`.
+   - **Cửa sổ hẹp**: thanh tab project luôn một dòng, panel Tài liệu không chiếm phần project cần (tối đa `min(70%, 100% - 380px)`), nội dung tài liệu cuộn trong panel, bảng Markdown cuộn ngang, đầu thẻ và hàng có nút xuống dòng khi hẹp.
+
+### Đợt góp ý thứ hai (2026-11-10)
+
+- **Không ưu tiên account nào:** danh sách mở account không còn nút tô đậm. "Làm tiếp task này" không tự mở account dùng lần trước (sửa ADR-024 mục 10); người dùng chọn trong danh sách. Bỏ `orderAccounts`/`defaultAccount`.
+- **Dòng Tiến độ chỉ để xem** (người dùng chọn "Bỏ cả hai nút"): bỏ "Copy lời nhắc checkpoint" và "Chuyển sang account khác" cùng hộp thoại chuyển account (sửa ADR-024 mục 3). Dòng ghi cách làm: gõ "lưu lại" trong phiên đó để lưu; mở account khác ở danh sách để chuyển. Khi mở account khác, bảng trước khi mở vẫn hỏi đọc transcript như trước (ADR-024 mục 4). Mất cách "đợi lưu xong rồi tự mở account mới".
 
 ## Kiểm chứng cần có
 

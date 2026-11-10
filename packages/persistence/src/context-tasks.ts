@@ -90,7 +90,15 @@ export function withContextLock<T>(lockRoot: string, folder: string, work: () =>
 
 const allIds = (overview: ContextOverview): string[] => overview.workstreams.flatMap((workstream) => workstream.tasks.map((task) => task.id));
 
-function readOptional(folder: string, path: string): { content: string; sha256: string } | null {
+// Numbers to skip when handing out a new one: the task files, plus every number the STATUS files
+// and the README still name, so a deleted task's number is not handed out again (backlog I1).
+function reservedIds(folder: string, overview: ContextOverview): string[] {
+  const texts = [readOptional(folder, 'README.md'), ...overview.workstreams.map((workstream) => readOptional(folder, `${workstream.slug}/STATUS.md`))];
+  const named = texts.flatMap((text) => (text ? [...text.content.matchAll(/\bTASK-(\d+)\b/gi)].map((match) => `TASK-${match[1] ?? ''}`) : []));
+  return [...allIds(overview), ...named];
+}
+
+export function readOptional(folder: string, path: string): { content: string; sha256: string } | null {
   try {
     return readContext(folder, path);
   } catch (error) {
@@ -138,7 +146,7 @@ export function createContextTask(folder: string, lockRoot: string, input: Creat
         const known = overview.workstreams.map((item) => item.slug).join(', ') || 'none';
         throw new DomainError('NOT_FOUND', raw(`No workstream "${input.workstream}". Workstreams: ${known}.`));
       }
-      const id = nextTaskId(allIds(overview));
+      const id = nextTaskId(reservedIds(folder, overview));
       const ref = `${workstream.slug}/Tasks/${id}-${taskSlug(title)}.md`;
       const content =
         input.body && input.body.trim() !== ''
@@ -162,7 +170,7 @@ export function renumberContextTask(folder: string, lockRoot: string, ref: strin
       const workstream = overview.workstreams.find((item) => item.tasks.some((task) => task.ref === ref));
       const task = workstream?.tasks.find((item) => item.ref === ref);
       if (!workstream || !task) throw new DomainError('NOT_FOUND', raw(`No task at ${ref}.`));
-      const newId = nextTaskId(allIds(overview));
+      const newId = nextTaskId(reservedIds(folder, overview));
       const slash = ref.lastIndexOf('/');
       const newRef = `${ref.slice(0, slash + 1)}${ref.slice(slash + 1).replace(/^TASK-\d+/i, newId)}`;
       const current = readContext(folder, ref);

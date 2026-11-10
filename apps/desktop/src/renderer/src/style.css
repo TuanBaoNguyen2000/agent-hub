@@ -528,6 +528,21 @@ button.primary:active:not(:disabled) {
   opacity: 0.86;
 }
 
+/* Not "danger": menu items already use that class for their red text. */
+button.danger-fill {
+  background: var(--error-fg);
+  border-color: var(--error-fg);
+  color: var(--bg);
+}
+
+button.danger-fill:hover:not(:disabled) {
+  opacity: 0.86;
+}
+
+button.danger-outline {
+  color: var(--error-fg);
+}
+
 button.link {
   align-self: flex-start;
   background: none;
@@ -2290,9 +2305,12 @@ button.icon-button.pressed {
 }
 
 .documents-panel {
+  container: docs / inline-size;
   position: relative;
   flex: none;
   max-width: 70%;
+  min-width: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -2367,6 +2385,7 @@ button.icon-button.pressed {
 
 .documents-viewer-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
@@ -2466,7 +2485,8 @@ button.title-button {
   height: 13px;
 }
 
-/* A narrow panel shows the tree above the file. */
+/* A narrow panel shows the tree above the file. The panel's real width decides, since a window
+   narrower than the width the user dragged to shrinks it (backlog I2). */
 .documents-body.stacked {
   flex-direction: column-reverse;
 }
@@ -2479,6 +2499,22 @@ button.title-button {
 
 .documents-body.stacked .documents-viewer {
   border-right: none;
+}
+
+@container docs (max-width: 520px) {
+  .documents-body {
+    flex-direction: column-reverse;
+  }
+
+  .documents-body .documents-tree {
+    width: auto;
+    max-height: 40%;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .documents-body .documents-viewer {
+    border-right: none;
+  }
 }
 
 /* ---------- Tasks by state, list and board (ADR-023 item 5) ---------- */
@@ -3123,25 +3159,49 @@ button.add-section {
   box-shadow: var(--shadow-card);
 }
 
-.progress-main {
+.progress-head {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
-.progress-main .status-text {
+.progress-head .status-text {
   font-size: 13.5px;
   font-weight: 600;
 }
 
-.progress-detail {
-  flex: 1 1 220px;
+/* Review 2026-11-10: a label column and a value column, one fact per line. */
+.progress-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 16px;
+  row-gap: 4px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.progress-facts dt {
+  color: var(--fg-muted);
+}
+
+.progress-facts dd {
+  margin: 0;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.progress-facts .link {
+  text-align: left;
+}
+
+.account-open {
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.warning-list + .warning-list {
+  margin-top: 0;
 }
 
 .progress-quota {
@@ -3171,6 +3231,7 @@ button.add-section {
 }
 
 .launch-accounts {
+  container: launch / inline-size;
   list-style: none;
   margin: 0;
   padding: 4px;
@@ -3185,6 +3246,7 @@ button.add-section {
 .launch-account {
   display: grid;
   grid-template-columns: auto minmax(120px, 1fr) minmax(0, auto) auto;
+  grid-template-areas: 'avatar text usage open';
   align-items: center;
   gap: 12px;
   padding: 8px 10px;
@@ -3231,6 +3293,41 @@ button.add-section {
 
 .mini-usage .usage-bar {
   height: 4px;
+}
+
+.launch-account > :first-child {
+  grid-area: avatar;
+}
+
+.launch-account > .launch-account-text {
+  grid-area: text;
+}
+
+.launch-account > .launch-account-usage {
+  grid-area: usage;
+}
+
+.launch-account > .split-button {
+  grid-area: open;
+}
+
+/* Backlog I3: in a narrow column the usage moves under the name instead of squeezing it. */
+@container launch (max-width: 560px) {
+  .launch-account {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'avatar text open'
+      '. usage usage';
+    row-gap: 6px;
+  }
+
+  .launch-account > .launch-account-usage {
+    justify-content: flex-start;
+  }
+}
+
+.refine-head {
+  align-items: flex-start;
 }
 
 .launch-accounts-footer {
@@ -3310,4 +3407,307 @@ button.add-section {
     grid-row: 2;
     justify-content: flex-start;
   }
+}
+
+/* ---------- Agent tools as a place of their own (ADR-029) ---------- */
+
+.tools-page {
+  gap: 16px;
+}
+
+.tools-page h1 {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.tools-page-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.back-link {
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.tools-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.tools-accounts-list {
+  container: tools-accounts / inline-size;
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
+}
+
+.tools-account-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas: 'name state action';
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+}
+
+.tools-account-row + .tools-account-row {
+  border-top: 1px solid var(--border);
+}
+
+.tools-account-open {
+  grid-area: name;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  gap: 10px;
+  min-width: 0;
+  padding: 4px 6px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  text-align: left;
+  border-radius: var(--radius-sm);
+}
+
+.tools-account-open:hover {
+  background: var(--bg-hover);
+}
+
+.tools-account-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.tools-account-name .hint {
+  font-size: 11.5px;
+}
+
+.tools-account-state {
+  grid-area: state;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.tools-account-row > button.small {
+  grid-area: action;
+}
+
+/* Narrow: the state and the button go under the name. */
+@container tools-accounts (max-width: 560px) {
+  .tools-account-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'name name'
+      'state action';
+    row-gap: 4px;
+  }
+
+  .tools-account-state {
+    align-items: flex-start;
+    padding-left: 6px;
+  }
+}
+
+.tools-subpages {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.tools-subpage {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  text-align: left;
+}
+
+.tools-subpage + .tools-subpage {
+  border-top: 1px solid var(--border);
+}
+
+.tools-subpage:hover {
+  background: var(--bg-hover);
+}
+
+.tools-subpage .grow {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 13px;
+}
+
+.tools-subpage svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--fg-muted);
+}
+
+.account-usage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.install-plan {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.quick-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 13px;
+}
+
+.quick-table th,
+.quick-table td {
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+
+.quick-table thead th {
+  border-top: none;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+
+.quick-table tbody th {
+  font-weight: 500;
+  width: 28%;
+}
+
+button.quick-copy {
+  max-width: 100%;
+  padding: 2px 8px;
+  font-size: 12.5px;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+button.quick-copy.code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+/* ---------- Narrow windows (review 2026-11-10, picture 4) ---------- */
+
+/* The project tabs stay on one line and scroll sideways instead of stacking. */
+.workspace-bar .tabs {
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+/* The documents panel never takes the room the project needs to stay usable. */
+.documents-panel {
+  max-width: min(70%, calc(100% - 380px));
+  min-width: 260px;
+}
+
+/* Stacked, the file view scrolls inside the panel; the panel itself never scrolls its header away. */
+.documents-viewer {
+  min-height: 0;
+}
+
+/* A wide table scrolls sideways instead of squeezing every column to a few letters. */
+.markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.markdown th,
+.markdown td {
+  min-width: 72px;
+}
+
+/* A narrow card puts its buttons under the title instead of squeezing the title to one word. */
+.settings-group-header {
+  flex-wrap: wrap;
+}
+
+.settings-group-header > .grow {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.settings-group-header .path {
+  overflow-wrap: anywhere;
+}
+
+/* A row with a button wraps it under the text when the card is narrow. */
+.settings-row:has(> button) {
+  flex-wrap: wrap;
+}
+
+.settings-row > .grow {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+/* The note under the quick commands sits inside the card, like its rows. */
+.quick-note {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.quick-note p {
+  margin: 0;
+}
+
+.quick-examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.quick-examples code {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.quick-examples code.phrase {
+  font-family: inherit;
+  font-size: 13px;
 }

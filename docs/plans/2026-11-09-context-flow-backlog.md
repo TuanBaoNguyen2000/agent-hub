@@ -105,7 +105,7 @@ Người dùng chạy [kịch bản thử](../testing/phase3-runbook.md) tới B
 - **Đạt:** chuyển account; A4.2 (cảnh báo branch `thu` khác `VN/playable001`); A4.3 ("Có việc chưa lưu", phiên Codex còn làm tới 14:11); B1.2 (`context-resume` tự tìm ra đủ năm chỗ lệch).
 - **Nhận xét chung:** phải chuyển qua lại giữa các cửa sổ quá nhiều. Người dùng chốt giữ màn quản lý Task, còn lời nhắc và việc giữ context thì đơn giản hoá bằng skill và MCP: [ADR-028](../decisions/028-resume-with-one-sentence.md) (Accepted 2026-11-10). Góp ý thêm: cần chọn được giữa câu ngắn và lệnh gọi skill, biết khi account thiếu skill (bổ sung vào ADR-028 mục 7); MCP và skill nằm sâu trong Cài đặt, màn bốn account rối: [ADR-029](../decisions/029-agent-tools-as-main-area.md) (Accepted 2026-11-10).
 
-**Lỗi giao diện còn sửa**, vì màn Task được giữ:
+**Lỗi giao diện**, vì màn Task được giữ. I1–I6 đã sửa ngày 2026-11-10 (I1–I5 cùng đợt ADR-028, ADR-029; thử lại ở mục G2 của kịch bản thử):
 
 | ID | Việc | Chi tiết | Ưu tiên |
 |---|---|---|---|
@@ -114,7 +114,7 @@ Người dùng chạy [kịch bản thử](../testing/phase3-runbook.md) tới B
 | I3 | **"Làm tiếp task này" trong panel task** (ảnh 2, 7) | Danh sách account bị nhét vào cột hẹp: chữ và thanh usage đè nhau, không có nút đóng. Cần dòng account co giãn được (usage xuống dòng dưới khi hẹp) và nút đóng hoặc Esc | P0 |
 | I4 | **"Có 1 cảnh báo ở các task. Xem ở tab Task"** (ảnh 3) | Mở tab Task nhưng không thấy cảnh báo nào, ở task nào. Cần nêu tên task ngay trong thẻ, và bấm vào thì mở đúng task, cuộn tới cảnh báo. Gần với F6 | P1 |
 | I5 | **Account Codex free không hiện usage** (ảnh 6) | Account này chỉ có hạn mức 30 ngày, loại `other`, mà `AccountRow` (`ProjectLaunch.tsx`) lọc bỏ `kind === 'other'`. Khi không có cửa sổ 5 giờ hay tuần thì hiện cửa sổ `other` | P1 |
-| I6 | **Thứ tự account trông như ngẫu nhiên** | `orderAccounts` xếp theo phần trăm còn lại (B3, đã duyệt), nên usage đổi là thứ tự đổi theo. Đề xuất: thứ tự cố định như ở sidebar, đánh dấu account được gợi ý. **Chờ người dùng chọn**, vì sẽ đổi B3 | P2 |
+| I6 | **Thứ tự account trông như ngẫu nhiên** | `orderAccounts` xếp theo phần trăm còn lại (B3), nên usage đổi là thứ tự đổi theo. **Người dùng chọn (2026-11-10):** giữ đúng thứ tự của danh sách account (như ở Cài đặt → Account và thanh bên), vì account nào cũng mở được như nhau. Account được gợi ý (dùng lần trước nếu còn quota, không thì còn nhiều quota nhất; khi chuyển việc thì không phải account cũ) chỉ có nút tô đậm. Áp dụng cho danh sách mở ở Tổng quan, panel task và hộp thoại chuyển account. Sửa đổi B3. **Đã làm 2026-11-10** | P2 |
 
 ## G. Để sau (chưa lên kế hoạch)
 

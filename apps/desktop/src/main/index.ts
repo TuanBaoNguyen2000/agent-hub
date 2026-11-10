@@ -27,6 +27,8 @@ import {
   listContext,
   makeContextFolder,
   readContext,
+  deleteContextTask,
+  deleteContextWorkstream,
   renumberContextTask,
   syncStatusTable,
   writeContext,
@@ -172,6 +174,8 @@ function start(): void {
     createTask: (folder: string, input: CreateTaskInput) => createContextTask(folder, taskLocks, input),
     renumberTask: (folder: string, ref: string, language: ContextLanguage) => renumberContextTask(folder, taskLocks, ref, language),
     syncStatus: syncStatusTable,
+    deleteTask: (folder: string, ref: string, language: ContextLanguage, at: Date) => deleteContextTask(folder, taskLocks, ref, language, at),
+    deleteWorkstream: (folder: string, slug: string, language: ContextLanguage, at: Date) => deleteContextWorkstream(folder, taskLocks, slug, language, at),
   };
   const notes = { list: (folder: string) => listNotes(folder), read: readNote, save: saveNote, move: moveNote };
   const handoffDirectory = (projectId: string): string => handoffFolder(dataDirectory, projectId);

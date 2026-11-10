@@ -3,6 +3,8 @@ import { useI18n } from './i18n';
 
 type I18n = ReturnType<typeof useI18n>;
 
+export { shownWindows } from './usageWindows';
+
 // Figures come from the account's own CLI (SPIKE-16): Claude's `/usage`, Codex's app server.
 
 export function windowTitle(i18n: I18n, window: UsageWindowDto): string {
