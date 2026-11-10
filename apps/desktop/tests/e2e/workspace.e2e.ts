@@ -353,6 +353,38 @@ test('tasks are read, created, edited in place and moved between states in Agent
   await expect(ask.getByText('Chưa có account nào. Thêm account để mở project này.')).toBeVisible();
 });
 
+test('two tasks with one number are renumbered, and a STATUS table that disagrees is synced only on request (ADR-027)', async () => {
+  const page = await launch();
+  await addProject(page);
+  const folder = await createDocs(page);
+  const tasks = join(folder, 'Workstreams', 'combo', 'Tasks');
+  mkdirSync(tasks, { recursive: true });
+  writeFileSync(join(folder, 'PROJECT_CONTEXT.md'), '# Project\n\nUnity.\n');
+  writeFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), '# Combo\n\n| Task | State |\n|---|---|\n| TASK-001 Counter | in progress |\n');
+  writeFileSync(join(tasks, 'TASK-001-counter.md'), '# TASK-001 Counter\n\nStatus: Blocked\n\n## Handoff log\n');
+  writeFileSync(join(tasks, 'TASK-001-copy.md'), '# TASK-001 Copy\n\nStatus: To do\n\n## Handoff log\n');
+  await docsCard(page).getByRole('button', { name: 'Kiểm tra tài liệu' }).click();
+  await openTab(page, 'Task');
+  const detail = page.getByRole('complementary', { name: 'Chi tiết task' });
+
+  await page.getByTestId('context-task').filter({ hasText: 'Copy' }).click();
+  await expect(detail.getByText('TASK-001 trùng số với Workstreams/combo/Tasks/TASK-001-counter.md.')).toBeVisible();
+  await detail.getByRole('button', { name: 'Đổi số' }).click();
+  await expect(detail.getByRole('heading', { name: 'TASK-002 Copy' })).toBeVisible();
+  expect(existsSync(join(tasks, 'TASK-001-copy.md'))).toBe(false);
+  expect(readFileSync(join(tasks, 'TASK-002-copy.md'), 'utf8')).toBe('# TASK-002 Copy\n\nStatus: To do\nRenumbered from TASK-001.\n\n## Handoff log\n');
+  await expect(detail.getByRole('button', { name: 'Đổi số' })).toHaveCount(0);
+
+  // Reading never rewrites the table; the user syncs it from the task files.
+  await page.getByTestId('context-task').filter({ hasText: 'Counter' }).click();
+  await expect(detail.getByText('File task TASK-001 ghi "Blocked", bảng STATUS ghi "in progress"; AgentHub theo file task.')).toBeVisible();
+  expect(readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toContain('| TASK-001 Counter | in progress |');
+  await detail.getByRole('button', { name: 'Đồng bộ bảng STATUS' }).click();
+  await expect(detail.getByRole('status')).toHaveText('Đã sửa 1 dòng trong bảng STATUS.');
+  expect(readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toContain('| TASK-001 Counter | Blocked |\n| TASK-002 Copy | To do |');
+  await expect(detail.getByRole('button', { name: 'Đồng bộ bảng STATUS' })).toHaveCount(0);
+});
+
 test('the documents panel shows every Markdown file as a tree, reads, edits and creates them, and shows what an agent writes (ADR-023 item 6)', async () => {
   const page = await launch();
   await addProject(page);
@@ -1015,7 +1047,7 @@ test('the MCP page shows how the server runs, installs it per account and checks
 
   // The real shim, run with the app binary in Node mode, as the account's client would.
   await account.getByRole('button', { name: `Thử kết nối cho ${email}` }).click();
-  await expect(account.getByRole('status')).toContainText('Kết nối được · 8 tool', { timeout: 15_000 });
+  await expect(account.getByRole('status')).toContainText('Kết nối được · 9 tool', { timeout: 15_000 });
   await expect(account.getByRole('status')).toContainText('Chưa thấy project nào');
   await expect(page.getByTestId('mcp-log')).toContainText('agenthub-check');
 

@@ -16,10 +16,11 @@ Find the context folder as in `references/document-layout.md`. If it is empty or
 ## Read, in this order
 
 1. `README.md`: layout and conventions of this folder.
-2. `PROJECT_CONTEXT.md`: environment, terms, project-wide pitfalls.
+2. `PROJECT_CONTEXT.md`: environment, terms, project-wide pitfalls. Its `## Existing documents` lists the repository's own documents: open one only when the task touches it.
 3. `STATUS.md` of the workstream in progress. If several are active and the prompt names none, list them and ask.
-4. The task file it points to (the prompt may give its path): acceptance criteria and the newest handoff entry, at the top of its `## Handoff log`. Older entries only when needed; `Tasks/archive/` holds moved-out ones.
+4. The task file it points to (the prompt may give its path): its `Status:` line, acceptance criteria and the newest handoff entry, at the top of its `## Handoff log`. Older entries only when needed; `Tasks/archive/` holds moved-out ones. When the `Status:` line and the `STATUS.md` table disagree, the task file is right; say so in the report.
 5. `DECISIONS.md` of that workstream, only the parts the task touches.
+6. `Inbox/`, if it exists: list the note titles only (not `Inbox/archive/`). Do not act on them; mention them in the report so the user can turn one into a task with `context-capture`.
 
 ## Check against the working tree
 
@@ -33,5 +34,6 @@ Reply with a short summary:
 - What is done, split into **verified**, **observed** and **reported**. Checking Git yourself makes a fact observed, not verified.
 - What remains, and the next step you propose.
 - Anything that does not match, and open questions.
+- Notes waiting in `Inbox/`, if any, by title.
 
 Then wait for the user to confirm or redirect. Do not edit code in the same reply. At the end of the session, or before the user switches account, use `context-checkpoint`.

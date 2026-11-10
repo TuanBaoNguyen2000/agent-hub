@@ -3,13 +3,15 @@ import { chmodSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { type LaunchService, type MetadataStore, createLaunchService, createWorkspace } from '@agenthub/application';
-import { DomainError } from '@agenthub/domain';
+import { type ContextLanguage, DomainError } from '@agenthub/domain';
 import { createLauncher } from '@agenthub/integrations';
 import {
+  type CreateTaskInput,
   appendHandoff,
   conflictingFiles,
   contextFiles,
   copyContextFiles,
+  createContextTask,
   defaultContextFolder,
   detectContext,
   handoffFolder,
@@ -25,6 +27,8 @@ import {
   listContext,
   makeContextFolder,
   readContext,
+  renumberContextTask,
+  syncStatusTable,
   writeContext,
 } from '@agenthub/persistence';
 import { createGitObserver, createMacPlatform, createPathInspector, createSkillInstaller, readSkillManifest, shellQuote } from '@agenthub/platform';
@@ -149,6 +153,7 @@ function start(): void {
   const testTrash = usesOwnData ? process.env['AGENTHUB_E2E_TRASH_DIR'] : undefined;
   const platform = createMacPlatform(testBrowser ? { browserDirs: [testBrowser], browserOpenCommand: join(testBrowser, 'open') } : {});
   const git = createGitObserver(platform);
+  const taskLocks = join(dataDirectory, 'locks');
   const documents = {
     overview: readContextOverview,
     detect: (projectPath: string) => detectContext(projectPath),
@@ -163,6 +168,10 @@ function start(): void {
     appendHandoff: (folder: string, taskRef: string, entry: string) => {
       appendHandoff(folder, taskRef, entry);
     },
+    // The same lock folder as the MCP server (<userData>/locks), so numbers never repeat (ADR-027).
+    createTask: (folder: string, input: CreateTaskInput) => createContextTask(folder, taskLocks, input),
+    renumberTask: (folder: string, ref: string, language: ContextLanguage) => renumberContextTask(folder, taskLocks, ref, language),
+    syncStatus: syncStatusTable,
   };
   const notes = { list: (folder: string) => listNotes(folder), read: readNote, save: saveNote, move: moveNote };
   const handoffDirectory = (projectId: string): string => handoffFolder(dataDirectory, projectId);

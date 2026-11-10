@@ -22,9 +22,10 @@ When `context_projects` shows `documents: false`, or the prompt says the project
 ## Write
 
 1. **Handoff entry** at the top of the task's `## Handoff log`, following `assets/handoff-entry.md`. Mark each claim verified / observed / reported.
-2. **`STATUS.md`** of the workstream: in progress, blockers, next step, and the task table. Keep it readable in 30 seconds. Write the task's state in the table and in the `Status:` line of the task file, with one of the five words of the reference. Finished but unconfirmed is `In review`; `Done` only when the user or a test confirmed it.
-3. **`DECISIONS.md`**: append any decision made this session (what, why, rejected options). Never rewrite.
-4. **`PROJECT_CONTEXT.md`**: add a pitfall only when it applies to the whole project.
+2. **State:** write the task's state in the `Status:` line of the task file, with one of the five words of the reference: that line is the source. Finished but unconfirmed is `In review`; `Done` only when the user or a test confirmed it.
+3. **`STATUS.md`** of the workstream: in progress, blockers, next step, and the task's row in the table with the same word. Keep it readable in 30 seconds.
+4. **`DECISIONS.md`**: append any decision made this session (what, why, rejected options). Never rewrite. If the repository records decisions itself (ADRs), follow its instructions and only link from here.
+5. **`PROJECT_CONTEXT.md`**: add a pitfall only when it applies to the whole project.
 
 If there is no task for this work yet, create one with `context-capture` first.
 

@@ -84,6 +84,19 @@ Spike chỉ kiểm chứng, không phải tính năng. Các việc ở mục B v
 | F7 | **Chữ:** một tên cho account chính, mô tả skill dịch theo giao diện, cột handoff "17:40 · Claude B", ẩn tab Task ở project chưa dùng tài liệu | #10 | P2 |
 | F8 | **Mẫu lời nhắc theo task** (từ Orca): chọn ý định khi mở (làm task, điều tra lỗi, viết tiêu chí, test plan, checkpoint), cộng mẫu tự viết theo project | — | P2 |
 
+## H. Khuôn tài liệu (đánh giá 2026-11-09)
+
+Từ đánh giá layout trong `references/document-layout.md` có hỏi "dùng được cho mọi loại project chưa". Khuôn không có gì riêng cho Unity; các mục dưới là chỗ yếu khi dùng nhiều account song song, project nhỏ hoặc repo đã có tài liệu. `Inbox/` (thiếu trong layout dù app đã ghi vào đó) đã bổ sung vào layout, `context-resume` và `context-capture` ngày 2026-11-09. Người dùng duyệt ưu tiên dưới đây (2026-11-09). H1, H2, H5 nằm trong [ADR-027](../decisions/027-task-numbers-state-source-and-existing-docs.md) (Accepted 2026-11-09, triển khai 2026-11-10).
+
+| ID | Việc | Chi tiết | Ưu tiên |
+|---|---|---|---|
+| H1 | **Số task không trùng khi nhiều account cùng tạo** | Quy tắc "số lớn nhất + 1" cho hai agent song song cùng ra `TASK-007`; `base_sha256` không chặn vì là hai file khác tên. Hướng: tool MCP `context_new_task` cấp số và tạo file nguyên tử; skill dùng tool đó khi có MCP, không có MCP thì kiểm tra lại số ngay trước khi ghi và đổi số nếu đã có | P1 |
+| H2 | **Một nguồn cho trạng thái task** | Hiện ghi ở dòng `Status:` của file task và ở bảng trong `STATUS.md`, agent dễ sửa một chỗ quên chỗ kia. Hướng: file task là nguồn duy nhất; bảng trong `STATUS.md` bỏ cột trạng thái hoặc do AgentHub/`context-tidy` sinh lại; AgentHub cảnh báo khi hai nơi lệch (trong lúc chuyển đổi) | P1 |
+| H3 | **Gom `<TOPIC>.md` vào `Notes/`** | Gốc thư mục đầy file viết hoa ở project lớn hoặc monorepo, dễ trùng tên với `README.md`/`PROJECT_CONTEXT.md`. AgentHub và skill vẫn đọc file ở gốc của bộ tài liệu cũ | P2 |
+| H4 | **Khuôn nhẹ cho project nhỏ** | `BRIEF.md` và `DECISIONS.md` chỉ tạo khi có nội dung; `context-init` không tạo file rỗng; `context-resume` bỏ qua file không có | P2 |
+| H5 | **Repo đã có tài liệu: link, không chép** | Repo có `docs/STATUS.md`, ADR… thì `PROJECT_CONTEXT.md` trỏ tới chúng, `DECISIONS.md` chỉ ghi quyết định chưa có ở chỗ khác. Thêm vào `context-init` và layout | P1 |
+| H6 | **Tên thư mục workstream khác `Workstreams/`** | Cho phép (ví dụ `Playables/`) nhưng app và agent phải đọc `README.md` mới biết, dễ đọc sai. Hướng: AgentHub nhận diện theo cấu trúc (thư mục con có `STATUS.md` + `Tasks/`) thay vì theo tên, và test cho trường hợp đổi tên | P2 |
+
 ## G. Để sau (chưa lên kế hoạch)
 
 - **Resume phiên CLI ở account khác** bằng cách dùng chung thư mục `projects/` giữa các account (cách Orca làm). SPIKE-01 và SPIKE-08 ghi rằng resume chéo account bị từ chối, nhưng đó là khi thư mục session tách riêng. Cần spike mới, và phải hỏi trước khi đụng cấu hình account chính.

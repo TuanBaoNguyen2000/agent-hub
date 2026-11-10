@@ -22,10 +22,15 @@ import {
   readNote,
   saveNote,
   writeContext,
+  createContextTask,
+  renumberContextTask,
+  syncStatusTable,
 } from '@agenthub/persistence';
 import { createGitObserver, createMacPlatform, createPathInspector } from '@agenthub/platform';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { INSTRUCTIONS, createServer } from '../src/mcp/server';
+
+const testLocks = join(tmpdir(), 'agenthub-test-locks');
 
 const documentPorts = {
   overview: readContextOverview,
@@ -38,6 +43,10 @@ const documentPorts = {
   write: writeContext,
   makeFolder: makeContextFolder,
   isContextFolder,
+  // ADR-027: tasks numbered under a lock, kept out of the documents.
+  createTask: (folder: string, input: Parameters<typeof createContextTask>[2]) => createContextTask(folder, testLocks, input),
+  renumberTask: (folder: string, ref: string, language: Parameters<typeof renumberContextTask>[3]) => renumberContextTask(folder, testLocks, ref, language),
+  syncStatus: syncStatusTable,
 };
 
 // The server against a real AgentHub database and real folders, as an agent's client would use it.
@@ -52,6 +61,7 @@ function serverFor(account: string) {
   return createServer({
     projects: () => contextProjectsFor(root, account),
     looseChats: join(root, 'loose-chats'),
+    locks: join(root, 'locks'),
     now: () => new Date('2026-11-05T08:00:00.000Z'),
     version: 'test',
     log: (line) => logs.push(line),
@@ -123,6 +133,7 @@ describe('MCP protocol', () => {
       ['context_projects', true],
       ['context_read', true],
       ['context_write', false],
+      ['context_create_task', false],
       ['context_append_handoff', false],
       ['context_save_handoff', false],
       ['context_handoffs', true],
@@ -192,6 +203,26 @@ describe('context tools', () => {
     expect(readFileSync(join(folder, 'Workstreams/combo/Tasks/TASK-001.md'), 'utf8')).toContain('## Handoff log\n\n### 2026-11-05 — A');
     expect(textOf(call(server, 'context_read', { project: 'Game', path: '' })).split('\n')).toContain('Workstreams/combo/STATUS.md');
     expect(logs.some((line) => line.includes('context_write'))).toBe(true);
+  });
+
+  it('creates tasks with the next number and their STATUS row (ADR-027)', () => {
+    const project = addProject('Game', true);
+    store.permissions.set(project.id, accountA, true);
+    store.permissions.set(project.id, accountB, true);
+    const folder = project.context.path;
+    mkdirSync(join(folder, 'Workstreams', 'main', 'Tasks'), { recursive: true });
+    writeFileSync(join(folder, 'Workstreams', 'main', 'STATUS.md'), '# Main\n');
+
+    const first = textOf(call(serverFor(accountA), 'context_create_task', { project: 'Game', workstream: 'Workstreams/main', title: 'Combo', goal: 'Count hits.' }));
+    const second = textOf(call(serverFor(accountB), 'context_create_task', { project: 'Game', workstream: 'Workstreams/main', title: 'Menu', body: '## Goal\n\nOpen it.\n' }));
+
+    expect(first).toMatch(/^Created TASK-001 at Workstreams\/main\/Tasks\/TASK-001-combo\.md\. sha256: \w+$/);
+    expect(second).toContain('Created TASK-002 at Workstreams/main/Tasks/TASK-002-menu.md');
+    expect(readFileSync(join(folder, 'Workstreams', 'main', 'STATUS.md'), 'utf8')).toContain('| TASK-001 Combo | To do |\n| TASK-002 Menu | To do |');
+    expect(readFileSync(join(folder, 'Workstreams', 'main', 'Tasks', 'TASK-002-menu.md'), 'utf8')).toContain('## Goal\n\nOpen it.\n\n## Handoff log');
+    const missing = call(serverFor(accountA), 'context_create_task', { project: 'Game', workstream: 'Workstreams/none', title: 'X' });
+    expect(missing.result?.isError).toBe(true);
+    expect(textOf(missing)).toContain('Workstreams/main');
   });
 
   it('keeps every path inside the project\'s documents', () => {

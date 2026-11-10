@@ -169,3 +169,15 @@ export function makeContextFolder(root: string, relativePath: string): void {
   const { path } = resolveInside(root, relativePath);
   mkdirSync(path, { recursive: true, mode: 0o700 });
 }
+
+// A document moved to a new name inside the documents, such as a renumbered task (ADR-027 item 1.4).
+// Refused when the new name is taken, so nothing is ever overwritten.
+export function renameContext(root: string, from: string, to: string): void {
+  if (!/\.md$/i.test(from) || !/\.md$/i.test(to)) throw invalid('Only Markdown (.md) documents can be renamed.');
+  const source = resolveInside(root, from).path;
+  const target = resolveInside(root, to).path;
+  if (!existsSync(source) || !statSync(source).isFile()) throw new DomainError('NOT_FOUND', raw(`No document at ${from}.`));
+  if (existsSync(target)) throw new DomainError('CONTEXT_CONFLICT', raw(`${to} already exists.`));
+  mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+  renameSync(source, target);
+}

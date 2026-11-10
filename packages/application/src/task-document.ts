@@ -305,6 +305,74 @@ export function setTaskFileState(text: string, word: string): string {
   return `${titleText}${titleText.endsWith('\n') ? '' : '\n'}\nStatus: ${word}\n${rest === '' ? '' : `\n${rest}`}`;
 }
 
+// --- ADR-027: tasks created under a lock, renumbered when two share a number. ---
+
+// A task an agent wrote the body of (context_create_task): AgentHub sets the title and the
+// "Status:" line, and adds the "Handoff log" section when the body has none.
+export function taskDocumentFromBody(input: { id: string; title: string; body: string; language: ContextLanguage }): string {
+  // An agent may repeat the title or the state line; they are AgentHub's to write here.
+  const body = input.body
+    .replace(/^\s*#[ \t].*\r?\n/, '')
+    .replace(/^\s*(?:[-*][ \t]+)?(?:\*\*|__)?(?:Status|Trạng thái|상태)(?:\*\*|__)?[ \t]*:.*\r?\n/iu, '')
+    .trim();
+  const handoffLog = /^#{1,6}[ \t]+Handoff log\b/im.test(body) ? '' : '\n\n## Handoff log\n';
+  return `# ${input.id} ${input.title.replace(/\s+/g, ' ').trim()}\n\nStatus: ${STATE_WORDS[input.language].todo}\n\n${body}${handoffLog}`.replace(/\s*$/, '\n');
+}
+
+const idPatternOf = (id: string): RegExp => new RegExp(`(?<![\\w-])${id}(?![\\d])`, 'i');
+
+// The title line gets the new number; a note under the state line keeps the old one findable.
+export function renumberTaskDocument(text: string, oldId: string, newId: string): string {
+  const all = lines(text);
+  const title = all.find((line) => /^#[ \t]/.test(line.text));
+  let result = text;
+  if (title && idPatternOf(oldId).test(title.text)) {
+    result = text.slice(0, title.start) + text.slice(title.start, title.end).replace(idPatternOf(oldId), newId) + text.slice(title.end);
+  }
+  const note = `Renumbered from ${oldId}.`;
+  const after = lines(result);
+  let anchor: (typeof after)[number] | null = null;
+  let seenTitle = false;
+  for (const line of after) {
+    if (/^#[ \t]/.test(line.text)) {
+      if (seenTitle) break;
+      seenTitle = true;
+      anchor = line;
+      continue;
+    }
+    if (/^#{2,6}[ \t]/.test(line.text)) break;
+    if (/^[ \t]*(?:[-*][ \t]+)?(?:\*\*|__)?(?:Status|Trạng thái|상태)(?:\*\*|__)?[ \t]*:/iu.test(line.text)) {
+      anchor = line;
+      break;
+    }
+  }
+  if (!anchor) return `${note}\n\n${result}`;
+  const newline = result.slice(anchor.start, anchor.end).endsWith('\n') ? '' : '\n';
+  return `${result.slice(0, anchor.end)}${newline}${note}\n${result.slice(anchor.end)}`;
+}
+
+// The STATUS row of the renumbered task: the row naming the old number and the task's title. When
+// none names the title, the row belongs to the other task, so a new row is added instead.
+export function renumberStatusRow(status: string, task: { oldId: string; newId: string; title: string }, word: string, workstreamTitle: string): string {
+  const titleText = task.title
+    .replace(new RegExp(`^${task.oldId}[\\s:.-]*`, 'i'), '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  for (const line of lines(status)) {
+    if (!line.text.trim().startsWith('|')) continue;
+    const cells = line.text.split('|');
+    const first = cells[1] ?? '';
+    if (cells.length < 4 || !idPatternOf(task.oldId).test(first)) continue;
+    if (titleText === '' || !first.replace(/\s+/g, ' ').toLowerCase().includes(titleText)) continue;
+    cells[1] = first.replace(idPatternOf(task.oldId), task.newId);
+    const original = status.slice(line.start, line.end);
+    const newline = original.endsWith('\r\n') ? '\r\n' : original.endsWith('\n') ? '\n' : '';
+    return status.slice(0, line.start) + cells.join('|') + newline + status.slice(line.end);
+  }
+  return setStatusState(status, { id: task.newId, title: task.title.replace(new RegExp(`^${task.oldId}[\\s:.-]*`, 'i'), '') }, word, workstreamTitle);
+}
+
 // --- ADR-023 item 2: the empty layout AgentHub writes when the user creates documents. ---
 
 export const DEFAULT_WORKSTREAM = 'Workstreams/main';

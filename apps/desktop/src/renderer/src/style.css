@@ -2786,6 +2786,26 @@ button.title-button:hover:not(:disabled) {
   padding: 0;
 }
 
+/* ADR-027: a shared number or a STATUS table that disagrees, each with its fix. */
+.task-fixes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+}
+
+.task-fixes .row {
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.task-fixes button {
+  flex-shrink: 0;
+}
+
 .task-panel .refine-box {
   display: flex;
   flex-direction: column;

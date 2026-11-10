@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ContextHandoff, ContextIssue, ContextOverview, ContextTask, ContextWorkstream } from '@agenthub/application';
+import { type ContextHandoff, type ContextIssue, type ContextOverview, type ContextTask, type ContextWorkstream, stateGroup } from '@agenthub/application';
 import { MAX_DOCUMENT_BYTES } from './context-files';
 
 // Reads back what the agents wrote, in the layout of TDD §7.2. The documents are free-form
@@ -156,32 +156,73 @@ export function workstreamFolders(folder: string): string[] {
     .flatMap((group) => subfolders(join(folder, group)).map((name) => `${group}/${name}`));
 }
 
+interface TaskFile {
+  ref: string;
+  id: string;
+  text: string | null;
+  title: string;
+  // ADR-027 item 2: the task file is the source; the table is a summary that may lag behind.
+  fileState: string | null;
+  tableState: string | null;
+}
+
+function readTaskFiles(folder: string, slug: string, status: string | null): TaskFile[] {
+  const states = status ? taskStates(status) : new Map<string, string>();
+  const taskFolder = join(folder, slug, 'Tasks');
+  const files = existsSync(taskFolder) ? readdirSync(taskFolder).filter((name) => TASK_FILE.test(name)).sort() : [];
+  return files.map((name) => {
+    const id = (TASK_FILE.exec(name)?.[1] ?? name).toUpperCase();
+    const text = readSmall(join(taskFolder, name));
+    return {
+      ref: `${slug}/Tasks/${name}`,
+      id,
+      text,
+      title: firstHeading(text) ?? name.replace(/\.md$/i, ''),
+      fileState: text ? taskFileState(text) : null,
+      tableState: states.get(id) ?? null,
+    };
+  });
+}
+
+// The state of each task as its file and the STATUS table write it, for syncing the table.
+export function workstreamStates(folder: string, slug: string): Omit<TaskFile, 'text'>[] {
+  return readTaskFiles(folder, slug, readSmall(join(folder, slug, 'STATUS.md'))).map(({ ref, id, title, fileState, tableState }) => ({ ref, id, title, fileState, tableState }));
+}
+
 function readWorkstream(folder: string, slug: string): { workstream: ContextWorkstream; issues: ContextIssue[] } {
   const base = join(folder, slug);
   const status = readSmall(join(base, 'STATUS.md'));
-  const states = status ? taskStates(status) : new Map<string, string>();
   const taskFolder = join(base, 'Tasks');
-  const files = existsSync(taskFolder) ? readdirSync(taskFolder).filter((name) => TASK_FILE.test(name)).sort() : [];
   const issues: ContextIssue[] = [];
   if (status === null) issues.push({ kind: 'no_status', workstream: slug, taskRef: null });
   // An empty Tasks/ is a workstream just created (ADR-023); only a missing one is reported.
   if (!existsSync(taskFolder)) issues.push({ kind: 'no_tasks', workstream: slug, taskRef: null });
-  const tasks: ContextTask[] = files.map((name) => {
-    const id = (TASK_FILE.exec(name)?.[1] ?? name).toUpperCase();
-    const text = readSmall(join(taskFolder, name));
-    const ref = `${slug}/Tasks/${name}`;
+  const tasks: ContextTask[] = readTaskFiles(folder, slug, status).map(({ ref, id, text, title, fileState, tableState }) => {
     if (text !== null && !HANDOFF_LOG.test(text)) issues.push({ kind: 'no_handoff_log', workstream: slug, taskRef: ref });
+    // Only a different state counts; "in progress" and "Đang làm" say the same.
+    if (fileState !== null && tableState !== null && stateGroup(fileState) !== stateGroup(tableState)) {
+      issues.push({ kind: 'state_mismatch', workstream: slug, taskRef: ref, detail: tableState });
+    }
     return {
       ref,
       id,
-      title: firstHeading(text) ?? name.replace(/\.md$/i, ''),
-      state: (text ? taskFileState(text) : null) ?? states.get(id) ?? null,
+      title,
+      state: fileState ?? tableState,
       criteria: text ? criteriaProgress(text) : null,
       lastHandoff: text ? latestHandoff(text) : null,
     };
   });
   const title = workstreamTitle(firstHeading(status)) ?? slug.split('/').at(-1) ?? slug;
   return { workstream: { slug, title, branch: status ? statusBranch(status) : null, tasks }, issues };
+}
+
+// ADR-027 item 1.4: each task file whose number another one has too, naming the first other one.
+function duplicateIssues(workstreams: ContextWorkstream[]): ContextIssue[] {
+  const tasks = workstreams.flatMap((workstream) => workstream.tasks.map((task) => ({ workstream: workstream.slug, ref: task.ref, id: task.id })));
+  return tasks.flatMap((task) => {
+    const other = tasks.find((item) => item.id === task.id && item.ref !== task.ref);
+    return other ? [{ kind: 'duplicate_task_id' as const, workstream: task.workstream, taskRef: task.ref, detail: other.ref }] : [];
+  });
 }
 
 export function readContextOverview(folder: string): ContextOverview {
@@ -192,6 +233,7 @@ export function readContextOverview(folder: string): ContextOverview {
     if (!existsSync(join(folder, 'PROJECT_CONTEXT.md'))) issues.push({ kind: 'no_project_context', workstream: null, taskRef: null });
     if (read.length === 0) issues.push({ kind: 'no_workstream', workstream: null, taskRef: null });
     issues.push(...read.flatMap((item) => item.issues));
+    issues.push(...duplicateIssues(read.map((item) => item.workstream)));
   }
   const projectContext = readSmall(join(folder, 'PROJECT_CONTEXT.md'));
   // The scaffold AgentHub writes has headings only (ADR-023 item 2).

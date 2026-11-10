@@ -17,12 +17,12 @@ Find it as in the reference. AgentHub may already have written the empty layout 
 
 - **The brief:** GDD, spec, Notion export, PDF, images, links the user gives. Keep links to the originals; do not copy whole sources.
 - **The codebase:** a read-only survey of structure, build and test commands, conventions, risky areas. Never change code in this skill.
-- **Existing docs** the opening prompt lists: read them, link to them from `PROJECT_CONTEXT.md` or the workstream `BRIEF.md` with a short summary, do not copy them, and ask which are still current.
+- **Existing docs:** the ones the opening prompt lists, and the repository's own `README.md`, `AGENTS.md`/`CLAUDE.md`, `docs/`, ADR folders (`docs/decisions/`, `adr/`) and status or roadmap files. Read only their titles and first lines unless the work needs more. List them under `## Existing documents` in `PROJECT_CONTEXT.md` (path and when to read it), summarise only what the repository does not say anywhere, do not copy them, and ask which are still current. See "A repository that already has documents" in the reference.
 - **Questions:** ask about anything the brief leaves open or contradicts, all together rather than one at a time.
 
 ## Write
 
-Fill the layout of the reference: `README.md` for people, `PROJECT_CONTEXT.md`, optional `<TOPIC>.md` survey notes, and for each workstream `BRIEF.md`, `STATUS.md` (task table), `DECISIONS.md` and tasks with testable acceptance criteria. Every task starts with the "not started" state in both places. Write in the language the prompt asks for (English by default).
+Fill the layout of the reference: `README.md` for people, `PROJECT_CONTEXT.md`, optional `<TOPIC>.md` survey notes, and for each workstream `BRIEF.md`, `STATUS.md` (task table), `DECISIONS.md` (only decisions the repository does not already record) and tasks with testable acceptance criteria. Create each task with `context_create_task` when the AgentHub MCP tools are available (it picks the number and adds the `STATUS.md` row), otherwise as the reference says; every task starts "not started". Write in the language the prompt asks for (English by default).
 
 ## Instruction files
 

@@ -17,11 +17,12 @@ import { MIGRATIONS } from './migrations';
 
 export { type SessionLocation, newestSession } from './session-locator';
 export { type Note, type NoteWithContent, listNotes, moveNote, readNote, saveNote } from './notes';
-export { DEFAULT_WORKSTREAM_FOLDER, criteriaProgress, handoffTime, latestHandoff, readContextOverview, statusBranch, taskFileState, taskStates, workstreamFolders, workstreamTitle } from './context-overview';
+export { DEFAULT_WORKSTREAM_FOLDER, criteriaProgress, handoffTime, latestHandoff, readContextOverview, statusBranch, taskFileState, taskStates, workstreamFolders, workstreamStates, workstreamTitle } from './context-overview';
+export { type CreateTaskInput, type LockOptions, contextLockPath, createContextTask, renumberContextTask, syncStatusTable, withContextLock } from './context-tasks';
 export { MAX_SCANNED_FOLDERS, detectContext, isContextFolder } from './context-detect';
 export { conflictingFiles, contextFiles, copyContextFiles } from './context-move';
 export { CONTEXT_CATALOG_SCHEMA, type ContextProjectEntry, contextProjectsFor, defaultContextFolder, handoffFolder, looseChatFolder } from './context-catalog';
-export { type ContextEntry, MAX_DOCUMENT_BYTES, appendHandoff, insertHandoff, listContext, makeContextFolder, readContext, sha256, writeContext } from './context-files';
+export { type ContextEntry, MAX_DOCUMENT_BYTES, appendHandoff, insertHandoff, listContext, makeContextFolder, readContext, renameContext, sha256, writeContext } from './context-files';
 
 interface ProjectRow {
   id: string;

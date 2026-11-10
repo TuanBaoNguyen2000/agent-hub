@@ -1,4 +1,5 @@
 import { appendFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { contextProjectsFor, looseChatFolder } from '@agenthub/persistence';
 import { createServer } from './server';
 
@@ -31,6 +32,7 @@ function log(message: string): void {
 const server = createServer({
   projects: () => (account && dataDirectory ? contextProjectsFor(dataDirectory, account) : []),
   looseChats: looseChatFolder(dataDirectory || '/nonexistent'),
+  locks: join(dataDirectory || '/nonexistent', 'locks'),
   now: () => new Date(),
   version: process.env['AGENTHUB_VERSION'] ?? '0.0.0',
   log,

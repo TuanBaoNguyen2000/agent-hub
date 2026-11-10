@@ -37,9 +37,14 @@ import {
   readNote,
   saveNote,
   writeContext,
+  createContextTask,
+  renumberContextTask,
+  syncStatusTable,
 } from '@agenthub/persistence';
 import { createMacPlatform, createPathInspector, createSkillInstaller, readSkillManifest } from '@agenthub/platform';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+const testLocks = join(tmpdir(), 'agenthub-test-locks');
 
 const documentPorts = {
   overview: readContextOverview,
@@ -52,6 +57,10 @@ const documentPorts = {
   write: writeContext,
   makeFolder: makeContextFolder,
   isContextFolder,
+  // ADR-027: tasks numbered under a lock, kept out of the documents.
+  createTask: (folder: string, input: Parameters<typeof createContextTask>[2]) => createContextTask(folder, testLocks, input),
+  renumberTask: (folder: string, ref: string, language: Parameters<typeof renumberContextTask>[3]) => renumberContextTask(folder, testLocks, ref, language),
+  syncStatus: syncStatusTable,
 };
 
 // Real persistence with a scripted launcher: this tests the rules around a launch.

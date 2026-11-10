@@ -301,6 +301,7 @@ export function ProjectTasks(props: Props) {
           launch={launchFor?.ref === open ? launchFor.purpose : null}
           onLaunch={(purpose) => setLaunchFor(purpose ? { ref: open, purpose } : null)}
           onClose={() => setViewing(null)}
+          onRenumbered={setViewing}
           panelWidth={panelWidth}
           onPanelWidth={setPanelWidth}
         />
@@ -419,6 +420,8 @@ interface DetailProps extends Props {
   onLaunch: (purpose: 'resume' | 'refine' | null) => void;
   panelWidth: number | null;
   onPanelWidth: (width: number | null) => void;
+  // After "Renumber" (ADR-027): the task lives at a new path.
+  onRenumbered: (ref: string) => void;
   onClose: () => void;
 }
 
@@ -469,7 +472,7 @@ function handoffEntries(body: string): { heading: string; body: string }[] {
 type Editing = { kind: 'section'; id: number } | { kind: 'add'; section: EditableKind } | { kind: 'title' } | { kind: 'markdown' } | null;
 
 function TaskDetail(props: DetailProps) {
-  const { project, taskRef, task: listed, workstreamTitle, branch, active, selected, onSelect, onReload, onShowFile, onError, launch, onLaunch, onClose } = props;
+  const { project, context, taskRef, task: listed, workstreamTitle, branch, active, selected, onSelect, onReload, onShowFile, onError, launch, onLaunch, onRenumbered, onClose } = props;
   const { accounts, usages, history, onOpenSettings, onOpenTools, onLaunched, panelWidth, onPanelWidth } = props;
   // ADR-024 item 10: "Continue this task" opens the project's usual account right away.
   const [resumeRequest, setResumeRequest] = useState<LaunchRequestView | null>(null);
@@ -480,6 +483,9 @@ function TaskDetail(props: DetailProps) {
   const [draft, setDraft] = useState('');
   const [criteriaDraft, setCriteriaDraft] = useState<Criterion[] | null>(null);
   const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<string>();
+  // ADR-027: problems only the user can settle, with the button that settles them.
+  const fixes = context?.warnings.filter((warning) => warning.taskRef === taskRef && (warning.kind === 'duplicate_task_id' || warning.kind === 'state_mismatch')) ?? [];
 
   async function load(): Promise<void> {
     try {
@@ -560,6 +566,35 @@ function TaskDetail(props: DetailProps) {
 
   const saveEdit = (edit: { title?: string; bodies?: { id: number; body: string }[]; added?: { kind: EditableKind; body: string }[] }, base = task) =>
     run(() => unwrap(api.saveTask({ id: project.id, ref: taskRef, baseSha256: base.sha256, edit: { title: edit.title ?? base.document.title, bodies: edit.bodies ?? [], added: edit.added ?? [] } })));
+
+  async function renumber(): Promise<void> {
+    setSaving(true);
+    onError(undefined);
+    try {
+      const moved = await unwrap(api.renumberTask({ id: project.id, ref: taskRef }));
+      if (taskRef === selected) onSelect(moved.ref);
+      await onReload();
+      onRenumbered(moved.ref);
+    } catch (reason) {
+      onError((reason as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function syncTable(): Promise<void> {
+    setSaving(true);
+    onError(undefined);
+    try {
+      const { changed } = await unwrap(api.syncStatusTable({ id: project.id, workstream: workstreamOf(taskRef) }));
+      setNotice(t('tasks.synced', { count: changed }));
+      await onReload();
+    } catch (reason) {
+      onError((reason as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   function startSection(section: TaskSectionDto): void {
     setDraft(section.body);
@@ -731,6 +766,30 @@ function TaskDetail(props: DetailProps) {
           <dt>Handoff</dt>
           <dd>{listed ? handoffText(i18n, listed) : t('tasks.noHandoff')}</dd>
         </dl>
+
+        {fixes.length > 0 && (
+          <ul className="task-fixes" aria-label={t('docs.warnings')}>
+            {fixes.map((warning, index) => (
+              <li key={index} className="row nowrap">
+                <span className="warning-text grow">{i18n.tr(warning.message)}</span>
+                {warning.kind === 'duplicate_task_id' ? (
+                  <button type="button" className="small" disabled={saving || editing !== null} title={t('tasks.renumberHint')} onClick={() => void renumber()}>
+                    {t('tasks.renumber')}
+                  </button>
+                ) : (
+                  <button type="button" className="small" disabled={saving} title={t('tasks.syncTableHint')} onClick={() => void syncTable()}>
+                    {t('tasks.syncTable')}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        {notice && (
+          <p className="hint" role="status">
+            {notice}
+          </p>
+        )}
 
         <div className="row task-actions">
           <button type="button" className={launch === 'resume' ? '' : 'primary'} aria-expanded={launch === 'resume'} onClick={() => openLaunch('resume')}>

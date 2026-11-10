@@ -2,7 +2,7 @@
 
 > **Project:** AgentHub — Cross-platform AI Agent Workspace & Context Manager  
 > **Version:** 0.1.26 (ADR-023: thêm project có hỏi tài liệu, khung tài liệu, trạng thái task trong file, màn Task theo trạng thái, panel Tài liệu; ADR-020: sửa Phase 3 theo đánh giá, bước 1–4 đã triển khai; ADR-021: quản lý tài liệu và task; ADR-009, ADR-013–019: terminal, Desktop account instances, Codex profiles, macOS-first, tooling, Git MVP, login, context do agent duy trì; Phase 0 macOS exit review; Phase 1 và 2 trên macOS; FR-018 usage limit; Phase 3 đủ deliverables trên macOS, đang sửa theo đánh giá)  
-> **Updated:** 2026-11-09 (ADR-024, ADR-026 Accepted; ADR-025 Open)  
+> **Updated:** 2026-11-09 (ADR-024, ADR-026, ADR-027 Accepted; ADR-025 Open)  
 > **Status:** Draft for implementation review  
 > **Platforms:** macOS and Windows  
 > **Language:** Vietnamese (technical identifiers in English)  
@@ -622,6 +622,8 @@ Thiết kế theo [ADR-019](decisions/019-agent-maintained-context.md) (2026-11-
 - Dùng ngày tuyệt đối. Ngôn ngữ chọn theo project, mặc định tiếng Anh.
 - Được thêm file tự do; AgentHub chỉ hiển thị task và handoff với tài liệu đúng khuôn.
 - **Từ ADR-023 (2026-11-06):** file task có dòng `Status: <chữ>` ngay dưới tiêu đề, là nguồn chính của trạng thái; bảng trong `STATUS.md` là bảng tóm tắt, AgentHub và skill ghi cả hai. Thiếu dòng `Status:` thì đọc từ bảng. Khi tạo bộ mới, AgentHub ghi khung (`README.md`, `PROJECT_CONTEXT.md`, `Workstreams/main/STATUS.md`, `Tasks/`), không ghi đè file có sẵn; nơi lưu mặc định trong repo là `AgentContext/`.
+- **`Inbox/` (2026-11-09):** chat rời mà người dùng chuyển vào project nằm ở `Inbox/`; `context-capture` biến note thành task rồi chuyển note sang `Inbox/archive/`.
+- **ADR-027 (Accepted 2026-11-09, sửa đổi ADR-023 mục 4; đã triển khai 2026-11-10):** số task do một chỗ cấp có khoá (tool MCP `context_create_task`, khoá ở `<userData>/locks/`), cảnh báo khi trùng số; agent chỉ bắt buộc ghi dòng `Status:`, bảng `STATUS.md` là tóm tắt, AgentHub cảnh báo khi lệch và đồng bộ khi người dùng bấm; repo đã có tài liệu thì `PROJECT_CONTEXT.md` dẫn link thay vì chép (mục `## Existing documents`). Chi tiết ở mục Triển khai của ADR-027.
 
 ### 7.3. Nơi lưu và quyền ghi
 

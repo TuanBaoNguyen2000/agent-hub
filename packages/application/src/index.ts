@@ -23,8 +23,6 @@ import {
   type TaskState,
   applyTaskEdit,
   contextScaffold,
-  newTaskDocument,
-  nextTaskId,
   parseTaskDocument,
   setStatusState,
   setTaskFileState,
@@ -151,13 +149,16 @@ export interface ContextWorkstream {
 }
 
 // What "Kiểm tra tài liệu" finds missing from the layout of TDD §7.2 (ADR-020 item 3).
-export type ContextIssueKind = 'no_project_context' | 'no_workstream' | 'no_status' | 'no_tasks' | 'no_handoff_log';
+// ADR-027: two task files with one number, and a task file whose state the STATUS table contradicts.
+export type ContextIssueKind = 'no_project_context' | 'no_workstream' | 'no_status' | 'no_tasks' | 'no_handoff_log' | 'duplicate_task_id' | 'state_mismatch';
 
 export interface ContextIssue {
   kind: ContextIssueKind;
   // The workstream's slug, or null for the whole set of documents.
   workstream: string | null;
   taskRef: string | null;
+  // duplicate_task_id: the other task file; state_mismatch: the state the STATUS table writes.
+  detail?: string | null;
 }
 
 export interface ContextOverview {
@@ -193,6 +194,11 @@ export interface ContextDocuments {
   write(folder: string, path: string, content: string, baseSha256: string | null): { sha256: string };
   makeFolder(folder: string, path: string): void;
   isContextFolder(path: string): boolean;
+  // ADR-027 item 1: numbers handed out under the lock the MCP server uses too.
+  createTask(folder: string, input: { workstream: string; title: string; goal: string; language: ContextLanguage }): { ref: string; id: string };
+  renumberTask(folder: string, ref: string, language: ContextLanguage): { ref: string; id: string };
+  // ADR-027 item 2: the STATUS table written back from the task files; the rows changed.
+  syncStatus(folder: string, workstream: string): number;
 }
 
 export interface DocumentEntry {
@@ -504,6 +510,16 @@ export function createWorkspace({
       if (error instanceof DomainError && error.code === 'CONTEXT_CONFLICT') {
         throw new DomainError('CONTEXT_CONFLICT', baseSha256 === null ? 'documents.exists' : 'documents.changed', { path });
       }
+      throw error;
+    }
+  }
+
+  // The lock or STATUS.md stayed busy: another agent is writing; the user can simply try again.
+  function busyAsMessage<T>(work: () => T): T {
+    try {
+      return work();
+    } catch (error) {
+      if (error instanceof DomainError && error.code === 'CONTEXT_CONFLICT') throw new DomainError('CONTEXT_CONFLICT', 'tasks.busy');
       throw error;
     }
   }
@@ -869,12 +885,24 @@ export function createWorkspace({
       const workstream = overview.workstreams.find((item) => item.slug === input.workstream);
       if (!workstream) throw new DomainError('NOT_FOUND', 'tasks.noWorkstream');
       const title = requireLabel(input.title, 'field.taskTitle');
-      const taskId = nextTaskId(overview.workstreams.flatMap((item) => item.tasks.map((task) => task.id)));
-      const ref = `${workstream.slug}/Tasks/${taskId}-${taskSlug(title)}.md`;
-      const language = project.context.language;
-      guardedWrite(folder, ref, newTaskDocument({ id: taskId, title, goal: input.goal, language }), null);
-      writeStatus(folder, workstream.slug, workstream.title, { id: taskId, title }, STATE_WORDS[language].todo);
+      const { ref } = busyAsMessage(() => documents.createTask(folder, { workstream: workstream.slug, title, goal: input.goal, language: project.context.language }));
       return readTask(input.id, ref);
+    },
+
+    // ADR-027 item 1.4: for a task that shares its number with another one.
+    renumberTask(input: { id: string; ref: string }): TaskView {
+      const project = requireProject(input.id);
+      const folder = contextFolder(input.id);
+      if (!findTask(documents.overview(folder), input.ref)) throw new DomainError('NOT_FOUND', 'project.taskNotFound');
+      const { ref } = busyAsMessage(() => documents.renumberTask(folder, input.ref, project.context.language));
+      return readTask(input.id, ref);
+    },
+
+    // ADR-027 item 2: only when the user asks, so reading never changes files in the repo.
+    syncStatusTable(input: { id: string; workstream: string }): { changed: number } {
+      const folder = contextFolder(input.id);
+      if (!documents.overview(folder).workstreams.some((item) => item.slug === input.workstream)) throw new DomainError('NOT_FOUND', 'tasks.noWorkstream');
+      return { changed: busyAsMessage(() => documents.syncStatus(folder, input.workstream)) };
     },
 
     // A new workstream beside the others (ADR-023 item 5): its STATUS.md and an empty Tasks/.

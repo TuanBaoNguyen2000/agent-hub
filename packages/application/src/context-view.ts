@@ -39,6 +39,14 @@ function issueMessage(issue: ContextIssue, overview: ContextOverview): Message {
       const task = workstream?.tasks.find((item) => item.ref === issue.taskRef);
       return msg('context.issue.noHandoffLog', { task: task?.id ?? issue.taskRef ?? '' });
     }
+    case 'duplicate_task_id': {
+      const task = workstream?.tasks.find((item) => item.ref === issue.taskRef);
+      return msg('context.issue.duplicateTaskId', { task: task?.id ?? issue.taskRef ?? '', other: issue.detail ?? '' });
+    }
+    case 'state_mismatch': {
+      const task = workstream?.tasks.find((item) => item.ref === issue.taskRef);
+      return msg('context.issue.stateMismatch', { task: task?.id ?? issue.taskRef ?? '', file: task?.state ?? '', table: issue.detail ?? '' });
+    }
   }
 }
 

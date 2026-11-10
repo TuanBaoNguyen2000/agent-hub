@@ -170,6 +170,8 @@ export const ipcInput = {
   [IpcChannel.tasksSetState]: z.strictObject({ id: idSchema, ref: taskRefSchema, state: z.enum(TASK_STATES) }),
   [IpcChannel.tasksCreate]: z.strictObject({ id: idSchema, workstream: documentPathSchema, title: labelSchema.min(1), goal: z.string().max(20_000) }),
   [IpcChannel.tasksCreateWorkstream]: z.strictObject({ id: idSchema, title: labelSchema.min(1) }),
+  [IpcChannel.tasksRenumber]: z.strictObject({ id: idSchema, ref: taskRefSchema }),
+  [IpcChannel.tasksSyncStatus]: z.strictObject({ id: idSchema, workstream: documentPathSchema }),
 } as const;
 
 export type IpcInput<C extends keyof typeof ipcInput> = z.infer<(typeof ipcInput)[C]>;
@@ -321,13 +323,13 @@ export interface ContextTaskDto {
   lastHandoff: { heading: string; at: string | null } | null;
 }
 
-export type ContextIssueKindDto = 'no_project_context' | 'no_workstream' | 'no_status' | 'no_tasks' | 'no_handoff_log';
+export type ContextIssueKindDto = 'no_project_context' | 'no_workstream' | 'no_status' | 'no_tasks' | 'no_handoff_log' | 'duplicate_task_id' | 'state_mismatch';
 
 export interface ContextOverviewDto {
   initialized: boolean;
   filled: boolean;
   workstreams: { slug: string; title: string; branch: string | null; tasks: ContextTaskDto[] }[];
-  issues: { kind: ContextIssueKindDto; workstream: string | null; taskRef: string | null }[];
+  issues: { kind: ContextIssueKindDto; workstream: string | null; taskRef: string | null; detail?: string | null }[];
 }
 
 export interface NoteDto {
@@ -592,6 +594,8 @@ export interface IpcOutput {
   [IpcChannel.tasksSetState]: TaskViewDto;
   [IpcChannel.tasksCreate]: TaskViewDto;
   [IpcChannel.tasksCreateWorkstream]: ContextOverviewDto;
+  [IpcChannel.tasksRenumber]: TaskViewDto;
+  [IpcChannel.tasksSyncStatus]: { changed: number };
 }
 
 export interface IpcErrorDto {
@@ -676,4 +680,6 @@ export interface AgentHubApi {
   setTaskState(input: IpcInput<typeof IpcChannel.tasksSetState>): Reply<typeof IpcChannel.tasksSetState>;
   createTask(input: IpcInput<typeof IpcChannel.tasksCreate>): Reply<typeof IpcChannel.tasksCreate>;
   createWorkstream(input: IpcInput<typeof IpcChannel.tasksCreateWorkstream>): Reply<typeof IpcChannel.tasksCreateWorkstream>;
+  renumberTask(input: IpcInput<typeof IpcChannel.tasksRenumber>): Reply<typeof IpcChannel.tasksRenumber>;
+  syncStatusTable(input: IpcInput<typeof IpcChannel.tasksSyncStatus>): Reply<typeof IpcChannel.tasksSyncStatus>;
 }

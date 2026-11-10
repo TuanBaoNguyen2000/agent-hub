@@ -21,9 +21,15 @@ import {
   readNote,
   saveNote,
   writeContext,
+  contextLockPath,
+  createContextTask,
+  renumberContextTask,
+  syncStatusTable,
 } from '@agenthub/persistence';
 import { createGitObserver, createMacPlatform, createPathInspector } from '@agenthub/platform';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+const testLocks = join(tmpdir(), 'agenthub-test-locks');
 
 const documentPorts = {
   overview: readContextOverview,
@@ -36,6 +42,10 @@ const documentPorts = {
   write: writeContext,
   makeFolder: makeContextFolder,
   isContextFolder,
+  // ADR-027: tasks numbered under a lock, kept out of the documents.
+  createTask: (folder: string, input: Parameters<typeof createContextTask>[2]) => createContextTask(folder, testLocks, input),
+  renumberTask: (folder: string, ref: string, language: Parameters<typeof renumberContextTask>[3]) => renumberContextTask(folder, testLocks, ref, language),
+  syncStatus: syncStatusTable,
 };
 
 // Real persistence and platform adapters on temporary folders; only Electron is absent.
@@ -690,6 +700,39 @@ describe('managing tasks and documents (ADR-021)', () => {
     expect(readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toContain('| TASK-001 | in progress |\n| TASK-017 Đếm combo trên màn hình | Cần làm |\n');
     expect(codeOf(() => workspace.createTask({ id, workstream: 'Workstreams/none', title: 'x', goal: '' }))).toBe('NOT_FOUND');
     expect(codeOf(() => workspace.createTask({ id, workstream: 'Workstreams/combo', title: '  ', goal: '' }))).toBe('VALIDATION_FAILED');
+  });
+
+  it('renumbers a task that shares its number, and syncs the STATUS table only when asked (ADR-027)', async () => {
+    const { id, folder } = withDocuments();
+    writeFileSync(join(folder, 'Workstreams', 'intro', 'Tasks', 'TASK-001-copy.md'), '# TASK-001 Copy\n\nStatus: Blocked\n\n## Handoff log\n');
+    const kinds = async () => (await workspace.projectContext(id)).warnings.map((warning) => warning.kind);
+    expect((await kinds()).filter((kind) => kind === 'duplicate_task_id')).toHaveLength(2);
+    {
+      const moved = workspace.renumberTask({ id, ref: 'Workstreams/intro/Tasks/TASK-001-copy.md' });
+      expect(moved).toMatchObject({ ref: 'Workstreams/intro/Tasks/TASK-017-copy.md', id: 'TASK-017', state: 'Blocked' });
+      expect(readFileSync(join(folder, 'Workstreams', 'intro', 'STATUS.md'), 'utf8')).toContain('| TASK-017 Copy | Blocked |');
+      expect(await kinds()).not.toContain('duplicate_task_id');
+
+      // The task file says Blocked, the table still says in progress: shown, not fixed by reading.
+      writeFileSync(join(folder, REF), '# TASK-001 Counter\n\nStatus: Blocked\n\n## Handoff log\n');
+      expect(await kinds()).toContain('state_mismatch');
+      expect(readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toContain('| TASK-001 | in progress |');
+      expect(workspace.syncStatusTable({ id, workstream: 'Workstreams/combo' })).toEqual({ changed: 1 });
+      expect(readFileSync(join(folder, 'Workstreams', 'combo', 'STATUS.md'), 'utf8')).toContain('| TASK-001 | Blocked |');
+      expect(await kinds()).not.toContain('state_mismatch');
+      expect(codeOf(() => workspace.syncStatusTable({ id, workstream: 'Workstreams/none' }))).toBe('NOT_FOUND');
+    }
+  });
+
+  it('tells the user to try again while another process holds the task lock', () => {
+    const { id, folder } = withDocuments();
+    const lock = contextLockPath(testLocks, folder);
+    mkdirSync(lock, { recursive: true });
+    try {
+      expect(detailOf(() => workspace.createTask({ id, workstream: 'Workstreams/combo', title: 'Busy', goal: '' }))).toBe('tasks.busy');
+    } finally {
+      rmSync(lock, { recursive: true, force: true });
+    }
   });
 
   it('saves edited sections, and refuses when the file changed since it was read', () => {
